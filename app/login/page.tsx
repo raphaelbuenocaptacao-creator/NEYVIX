@@ -9,7 +9,7 @@ export default function LoginPage() {
         <h1>Welcome back.</h1>
         <p className="muted">One identity for Mail and the entire NEYVIX ecosystem.</p>
 
-        <form className="auth-form">
+        <form className="auth-form" action="/api/auth/login" method="post">
           <label>
             Email
             <input type="email" name="email" placeholder="you@neyvix.com" autoComplete="email" required />
@@ -22,7 +22,7 @@ export default function LoginPage() {
         </form>
 
         <div className="auth-links">
-          <a href="#">Forgot password?</a>
+          <span className="muted">Password recovery will require the production identity database.</span>
           <span>·</span>
           <Link href="/register">Create NEYVIX ID</Link>
         </div>
