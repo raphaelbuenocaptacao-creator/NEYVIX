@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
+import styles from "./page.module.css";
 
 type Message = {
   role: "user" | "assistant";
@@ -64,26 +65,26 @@ export default function AiPage() {
   }
 
   return (
-    <main className="ai-shell">
-      <header className="ai-header">
+    <main className={styles.shell}>
+      <header className={styles.header}>
         <div>
           <p className="eyebrow">NEYVIX AI</p>
           <h1>Sua inteligência dentro do ecossistema.</h1>
           <p className="muted">Gemini conectado via NEYVIX AI Gateway.</p>
         </div>
-        <Link className="secondary-button" href="/dashboard">Voltar ao painel</Link>
+        <Link className={styles.back} href="/dashboard">Voltar ao painel</Link>
       </header>
 
-      <section className="ai-layout">
-        <aside className="ai-sidebar">
+      <section className={styles.layout}>
+        <aside className={styles.sidebar}>
           <p className="eyebrow">Comece por aqui</p>
           <h2>O que você quer fazer?</h2>
-          <div className="ai-suggestions">
+          <div className={styles.suggestions}>
             {suggestions.map((suggestion) => (
               <button
                 key={suggestion}
                 type="button"
-                className="ai-suggestion"
+                className={styles.suggestion}
                 onClick={() => void sendPrompt(suggestion)}
                 disabled={loading}
               >
@@ -93,23 +94,26 @@ export default function AiPage() {
           </div>
         </aside>
 
-        <section className="ai-chat-card">
-          <div className="ai-messages" aria-live="polite">
+        <section className={styles.chat}>
+          <div className={styles.messages} aria-live="polite">
             {messages.map((message, index) => (
-              <article key={`${message.role}-${index}`} className={`ai-message ${message.role}`}>
+              <div
+                key={`${message.role}-${index}`}
+                className={`${styles.message} ${message.role === "user" ? styles.user : ""}`}
+              >
                 <span>{message.role === "assistant" ? "N" : "Você"}</span>
                 <p>{message.content}</p>
-              </article>
+              </div>
             ))}
             {loading ? (
-              <article className="ai-message assistant">
+              <div className={styles.message}>
                 <span>N</span>
                 <p>Processando sua ideia...</p>
-              </article>
+              </div>
             ) : null}
           </div>
 
-          <form className="ai-composer" onSubmit={submit}>
+          <form className={styles.composer} onSubmit={submit}>
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
@@ -117,13 +121,13 @@ export default function AiPage() {
               maxLength={4000}
               rows={4}
             />
-            <div className="ai-composer-footer">
+            <div className={styles.footer}>
               <span>{prompt.length}/4000</span>
-              <button className="primary-button" type="submit" disabled={loading || !prompt.trim()}>
+              <button className={styles.send} type="submit" disabled={loading || !prompt.trim()}>
                 {loading ? "Pensando..." : "Enviar para NEYVIX AI"}
               </button>
             </div>
-            {error ? <p className="ai-error">{error}</p> : null}
+            {error ? <p className={styles.error}>{error}</p> : null}
           </form>
         </section>
       </section>
