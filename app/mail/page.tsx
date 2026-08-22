@@ -1,14 +1,14 @@
 const inbox = [
-  { sender: "ZYVO", subject: "Welcome to ZYVO Mail", preview: "Your inbox is ready. This is the beginning of your connected workspace.", time: "09:42" },
-  { sender: "Security", subject: "Protect your ZYVO ID", preview: "Add recovery methods and review recent devices.", time: "Yesterday" },
-  { sender: "ZYVO AI", subject: "Meet your future mail assistant", preview: "Summaries, smart replies and search will live directly inside your inbox.", time: "Aug 20" },
+  { sender: "NEYVIX", subject: "Welcome to NEYVIX Mail", preview: "Your inbox is ready. This is the beginning of your connected digital world.", time: "09:42" },
+  { sender: "Security", subject: "Protect your NEYVIX ID", preview: "Add recovery methods and review recent devices.", time: "Yesterday" },
+  { sender: "NEYVIX AI", subject: "Meet your future mail assistant", preview: "Summaries, smart replies and search will live directly inside your inbox.", time: "Aug 20" },
 ];
 
 export default function MailPage() {
   return (
     <main className="mail-app">
       <aside className="mail-sidebar">
-        <div className="mail-brand">ZYVO <span>Mail</span></div>
+        <div className="mail-brand">NEYVIX <span>Mail</span></div>
         <button className="compose-button">＋ Compose</button>
         <nav>
           <a className="active" href="#">Inbox <strong>3</strong></a>
@@ -18,7 +18,7 @@ export default function MailPage() {
           <a href="#">Spam</a>
           <a href="#">Trash</a>
         </nav>
-        <div className="sidebar-footer">ZYVO ID<br/><span>demo@zyvo.com</span></div>
+        <div className="sidebar-footer">NEYVIX ID<br/><span>demo@neyvix.com</span></div>
       </aside>
 
       <section className="mail-main">
