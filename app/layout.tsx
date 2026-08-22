@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'ZYVO',
-  description: 'One account. Everything connected.',
+  title: 'NEYVIX',
+  description: 'One identity. Your digital world.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
