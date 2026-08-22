@@ -5,10 +5,12 @@ export async function POST(request: Request) {
   try {
     const form = await request.formData();
     const name = String(form.get("name") ?? "");
-    const email = String(form.get("email") ?? "");
+    const handle = String(form.get("handle") ?? "").trim().toLowerCase();
     const password = String(form.get("password") ?? "");
+    const safeHandle = /^[a-z0-9][a-z0-9._-]{2,31}$/.test(handle);
+    const email = `${handle}@neyvix.com`;
 
-    if (name.trim().length < 2 || !email.includes("@") || password.length < 8) {
+    if (name.trim().length < 2 || !safeHandle || password.length < 8) {
       return NextResponse.redirect(new URL("/register?error=invalid", request.url), 303);
     }
 
