@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 export const ACCOUNT_COOKIE = "neyvix_account";
 export const SESSION_COOKIE = "neyvix_session";
@@ -23,6 +23,10 @@ function getSecret() {
   if (configured) return configured;
   if (process.env.NODE_ENV !== "production") return "neyvix-development-only-secret-change-me";
   throw new Error("NEYVIX_SESSION_SECRET is required in production");
+}
+
+function encryptionKey() {
+  return createHash("sha256").update(getSecret()).digest();
 }
 
 function encode(value: unknown) {
@@ -58,6 +62,39 @@ function verify<T>(token?: string | null): T | null {
   return decode<T>(payload);
 }
 
+function encrypt<T>(value: T) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(value), "utf8"),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, ciphertext].map((part) => part.toString("base64url")).join(".");
+}
+
+function decrypt<T>(token?: string | null): T | null {
+  if (!token) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [ivPart, tagPart, ciphertextPart] = parts;
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      encryptionKey(),
+      Buffer.from(ivPart, "base64url"),
+    );
+    decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(ciphertextPart, "base64url")),
+      decipher.final(),
+    ]).toString("utf8");
+    return JSON.parse(plaintext) as T;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
@@ -75,11 +112,11 @@ export function createAccount(name: string, email: string, password: string) {
     passwordHash: hashPassword(password, salt),
     createdAt: new Date().toISOString(),
   };
-  return { account, token: sign(account) };
+  return { account, token: encrypt(account) };
 }
 
 export function readAccount(token?: string | null) {
-  return verify<AccountRecord>(token);
+  return decrypt<AccountRecord>(token);
 }
 
 export function passwordMatches(account: AccountRecord, password: string) {
