@@ -9,15 +9,15 @@ export default function RegisterPage() {
         <h1>Your identity starts here.</h1>
         <p className="muted">Create one account for NEYVIX Mail and every future NEYVIX product.</p>
 
-        <form className="auth-form">
+        <form className="auth-form" action="/api/auth/register" method="post">
           <label>
             Full name
-            <input type="text" name="name" placeholder="Your name" autoComplete="name" required />
+            <input type="text" name="name" placeholder="Your name" autoComplete="name" minLength={2} required />
           </label>
           <label>
             NEYVIX address
             <div className="address-field">
-              <input type="text" name="handle" placeholder="yourname" autoComplete="username" required />
+              <input type="text" name="handle" placeholder="yourname" autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}" required />
               <span>@neyvix.com</span>
             </div>
           </label>
@@ -28,7 +28,7 @@ export default function RegisterPage() {
           <button type="submit" className="primary-button">Create account</button>
         </form>
 
-        <p className="legal-copy">By creating an account, you agree to the future NEYVIX Terms and Privacy Policy.</p>
+        <p className="legal-copy">Preview identity is stored in a signed, HttpOnly browser cookie until the dedicated NEYVIX database is provisioned.</p>
         <div className="auth-links"><Link href="/login">I already have a NEYVIX ID</Link></div>
       </section>
     </main>
