@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { SESSION_COOKIE, readSession } from "@/lib/auth";
 
 const modules = [
+  ["AI", "/ai", "Create, plan and build with NEYVIX AI"],
   ["Mail", "/mail", "Inbox and communication"],
   ["Admin", "/admin", "Users, roles and operations"],
   ["Deploy", "/deploy", "Projects and releases"],
