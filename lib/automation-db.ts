@@ -22,18 +22,21 @@ function getSql() {
   return neon(url);
 }
 
-export async function listAutomationWorkspace(email: string) {
-  const sql = getSql();
-  if (!sql) return { automations: [] as AutomationSummary[], approvals: [] as ApprovalSummary[], schemaReady: false };
-
+async function schemaReady(sql: ReturnType<typeof neon>) {
   const registry = await sql`
     SELECT
       to_regclass('public.neyvix_automations')::text AS automations_table,
       to_regclass('public.neyvix_approval_requests')::text AS approvals_table
   `;
+  return Boolean(registry[0]?.automations_table && registry[0]?.approvals_table);
+}
 
-  const schemaReady = Boolean(registry[0]?.automations_table && registry[0]?.approvals_table);
-  if (!schemaReady) return { automations: [], approvals: [], schemaReady: false };
+export async function listAutomationWorkspace(email: string) {
+  const sql = getSql();
+  if (!sql) return { automations: [] as AutomationSummary[], approvals: [] as ApprovalSummary[], schemaReady: false };
+
+  const ready = await schemaReady(sql);
+  if (!ready) return { automations: [], approvals: [], schemaReady: false };
 
   const normalizedEmail = email.trim().toLowerCase();
   const [automationRows, approvalRows] = await Promise.all([
@@ -73,5 +76,73 @@ export async function listAutomationWorkspace(email: string) {
       status: String(row.status),
       createdAt: String(row.created_at),
     })),
+  };
+}
+
+export async function createAutomation(email: string, input: {
+  name: string;
+  description?: string;
+  triggerType?: string;
+  actionType?: string;
+}) {
+  const sql = getSql();
+  if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
+  if (!(await schemaReady(sql))) return { ok: false as const, reason: "schema_unavailable" as const };
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const rows = await sql`
+    INSERT INTO public.neyvix_automations (user_id, name, description, trigger_type, action_type)
+    SELECT u.id, ${input.name}, ${input.description ?? ""}, ${input.triggerType ?? "manual"}, ${input.actionType ?? "workflow"}
+    FROM public.users u
+    WHERE lower(u.email) = ${normalizedEmail}
+      AND COALESCE(u.is_active, true) = true
+    RETURNING id, name, status, trigger_type, action_type, updated_at
+  `;
+
+  if (!rows[0]) return { ok: false as const, reason: "user_not_found" as const };
+  const row = rows[0];
+  return {
+    ok: true as const,
+    automation: {
+      id: String(row.id),
+      name: String(row.name),
+      status: String(row.status),
+      triggerType: String(row.trigger_type),
+      actionType: String(row.action_type),
+      updatedAt: String(row.updated_at),
+    },
+  };
+}
+
+export async function decideApproval(email: string, approvalId: string, decision: "approved" | "rejected", note = "") {
+  const sql = getSql();
+  if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
+  if (!(await schemaReady(sql))) return { ok: false as const, reason: "schema_unavailable" as const };
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const rows = await sql`
+    UPDATE public.neyvix_approval_requests r
+    SET status = ${decision},
+        decided_by = u.id,
+        decision_note = ${note},
+        decided_at = now()
+    FROM public.users u
+    WHERE r.id::text = ${approvalId}
+      AND r.status = 'pending'
+      AND lower(u.email) = ${normalizedEmail}
+      AND COALESCE(u.is_active, true) = true
+      AND (r.assigned_to IS NULL OR r.assigned_to = u.id)
+    RETURNING r.id, r.title, r.status, r.created_at
+  `;
+
+  if (!rows[0]) return { ok: false as const, reason: "not_found_or_forbidden" as const };
+  return {
+    ok: true as const,
+    approval: {
+      id: String(rows[0].id),
+      title: String(rows[0].title),
+      status: String(rows[0].status),
+      createdAt: String(rows[0].created_at),
+    },
   };
 }
