@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
       const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
       response.cookies.set(SESSION_COOKIE, createSession(user), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
-      response.cookies.delete(ACCOUNT_COOKIE);
+      response.cookies.set(ACCOUNT_COOKIE, "", { ...authCookieOptions, maxAge: 0 });
       return response;
     }
 
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set(SESSION_COOKIE, createSession(account), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
     return response;
   } catch (error) {
-    console.error("NEYVIX ID login failed", error);
+    console.error("Falha no login do NEYVIX ID", error);
     return NextResponse.redirect(new URL("/login?error=config", request.url), 303);
   }
 }
