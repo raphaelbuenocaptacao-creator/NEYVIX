@@ -1,12 +1,32 @@
 -- Runtime compatibility and product core for the current NEYVIX application.
 -- Additive/idempotent: intended to bring an existing NEYVIX database up to the
--- model used by lib/db.ts without dropping legacy columns or data.
+-- model used by lib/db.ts without dropping data.
 
 create extension if not exists pgcrypto;
 
 alter table public.users add column if not exists name text;
 alter table public.users add column if not exists is_active boolean not null default true;
 alter table public.users add column if not exists is_superadmin boolean not null default false;
+
+-- Older NEYVIX schema versions required handle/display_name on every insert,
+-- while the current NEYVIX ID runtime uses email + name. Preserve the legacy
+-- columns and data, but remove their NOT NULL requirement when they exist.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'users' and column_name = 'handle'
+  ) then
+    execute 'alter table public.users alter column handle drop not null';
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'users' and column_name = 'display_name'
+  ) then
+    execute 'alter table public.users alter column display_name drop not null';
+  end if;
+end $$;
 
 update public.users
 set name = split_part(email, '@', 1)
