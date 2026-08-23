@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { createAutomation, listAutomationWorkspace } from "@/lib/automation-db";
+import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_NAME = 120;
 const MAX_DESCRIPTION = 1000;
@@ -14,9 +15,16 @@ async function getSession() {
   return readActiveSession(store.get(SESSION_COOKIE)?.value);
 }
 
+async function checkAccess(email: string) {
+  const access = await getProductAccess(email, "automation");
+  return access.allowed ? null : NextResponse.json(upgradeRequiredPayload("automation", "Pro"), { status: 402, headers: { "Cache-Control": "no-store" } });
+}
+
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+  const denied = await checkAccess(session.email);
+  if (denied) return denied;
 
   try {
     const workspace = await listAutomationWorkspace(session.email);
@@ -30,6 +38,8 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+  const denied = await checkAccess(session.email);
+  if (denied) return denied;
 
   let body: unknown;
   try {
