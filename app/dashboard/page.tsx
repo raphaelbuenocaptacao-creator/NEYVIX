@@ -9,6 +9,7 @@ const modules = [
   ["Studio", "/studio", "Transforme ideias em blueprints de produto", "Construir"],
   ["Content", "/content", "Crie campanhas, roteiros e materiais de lançamento", "Criar"],
   ["Automation", "/automation", "Crie fluxos e mantenha ações sensíveis sob aprovação", "Automatizar"],
+  ["Estate", "/estate", "Crie sites imobiliários profissionais prontos para divulgação", "Criar site"],
   ["Mail", "/mail", "Comunique-se dentro da mesma identidade", "Conectar"],
   ["Deploy", "/deploy", "Projetos, versões e publicação", "Publicar"],
   ["Admin", "/admin", "Usuários, acesso, uso e operação", "Controlar"],
@@ -106,6 +107,7 @@ export default async function DashboardPage() {
         </Link>
         <div className="quick-command-row">
           <Link href="/studio">Criar um app</Link>
+          <Link href="/estate">Criar site imobiliário</Link>
           <Link href="/content">Criar uma campanha</Link>
           <Link href="/automation">Planejar uma automação</Link>
           <Link href="/deploy">Publicar um projeto</Link>
