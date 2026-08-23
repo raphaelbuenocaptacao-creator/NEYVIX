@@ -22,13 +22,16 @@ function getSql() {
   return neon(url);
 }
 
-async function schemaReady(sql: ReturnType<typeof neon>) {
+type SqlClient = NonNullable<ReturnType<typeof getSql>>;
+
+async function schemaReady(sql: SqlClient) {
   const registry = await sql`
     SELECT
       to_regclass('public.neyvix_automations')::text AS automations_table,
       to_regclass('public.neyvix_approval_requests')::text AS approvals_table
   `;
-  return Boolean(registry[0]?.automations_table && registry[0]?.approvals_table);
+  const row = registry[0] as { automations_table?: string | null; approvals_table?: string | null } | undefined;
+  return Boolean(row?.automations_table && row?.approvals_table);
 }
 
 export async function listAutomationWorkspace(email: string) {
