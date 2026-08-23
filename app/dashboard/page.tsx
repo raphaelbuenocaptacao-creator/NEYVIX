@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SESSION_COOKIE, readSession } from "@/lib/auth";
-import { getRecentActivity, getTrialStatus } from "@/lib/db";
+import { getDatabaseUserByEmail, getRecentActivity, getTrialStatus } from "@/lib/db";
 
 const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar"],
@@ -52,17 +52,21 @@ export default async function DashboardPage() {
 
   let activity: ActivityRow[] = [];
   let trial: { status?: string; trial_ends_at?: string } | null = null;
+  let isSuperadmin = false;
   try {
-    const [recent, trialStatus] = await Promise.all([
+    const [recent, trialStatus, currentUser] = await Promise.all([
       getRecentActivity(session.email, 8),
       getTrialStatus(session.email),
+      getDatabaseUserByEmail(session.email),
     ]);
     activity = recent as unknown as ActivityRow[];
     trial = trialStatus as { status?: string; trial_ends_at?: string } | null;
+    isSuperadmin = Boolean(currentUser?.is_active && currentUser?.is_superadmin);
   } catch (error) {
     console.error("Falha ao carregar atividade do Command Center", error);
   }
 
+  const visibleModules = isSuperadmin ? modules : modules.filter(([name]) => name !== "Admin");
   const trialLabel = trial?.status === "trialing" && trial.trial_ends_at
     ? `Trial até ${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(trial.trial_ends_at))}`
     : trial?.status
@@ -114,9 +118,9 @@ export default async function DashboardPage() {
             <h2>Tudo funciona como um só workspace.</h2>
           </div>
           <div className="command-module-grid">
-            {modules.map(([name, href, description, action], index) => (
+            {visibleModules.map(([name, href, description, action], index) => (
               <Link key={name} href={href} className="command-module-card">
-                <div className="module-card-topline"><span>0{index + 1}</span><em>{action}</em></div>
+                <div className="module-card-topline"><span>{String(index + 1).padStart(2, "0")}</span><em>{action}</em></div>
                 <div>
                   <h3>{name}</h3>
                   <p>{description}</p>
@@ -160,7 +164,7 @@ export default async function DashboardPage() {
           <div className="activity-note">
             <span>Base conectada</span>
             <strong>Identidade + AI + Studio + Content</strong>
-            <p>O Command Center agora lê atividade persistida no Neon e apresenta o histórico real desta identidade NEYVIX.</p>
+            <p>O Command Center lê atividade persistida no Neon e apresenta o histórico desta identidade NEYVIX.</p>
           </div>
         </aside>
       </section>
