@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
 import { createAutomation, listAutomationWorkspace } from "@/lib/automation-db";
 
 const MAX_NAME = 120;
@@ -10,16 +11,12 @@ const ALLOWED_ACTION_TYPES = new Set(["workflow", "ai", "mail", "content", "stud
 
 async function getSession() {
   const store = await cookies();
-  try {
-    return readSession(store.get(SESSION_COOKIE)?.value);
-  } catch {
-    return null;
-  }
+  return readActiveSession(store.get(SESSION_COOKIE)?.value);
 }
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   try {
     const workspace = await listAutomationWorkspace(session.email);
@@ -32,7 +29,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   let body: unknown;
   try {
