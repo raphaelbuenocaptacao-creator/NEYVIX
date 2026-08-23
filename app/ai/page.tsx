@@ -7,9 +7,9 @@ import styles from "./page.module.css";
 type Message = { role: "user" | "assistant"; content: string };
 
 const suggestions = [
-  ["BUILD", "Crie uma ideia de aplicativo para uma pizzaria."],
-  ["LAUNCH", "Escreva um plano de lançamento para meu negócio."],
-  ["AUTOMATE", "Explique como posso automatizar meu atendimento."],
+  ["CRIAR", "Crie uma ideia de aplicativo para uma pizzaria."],
+  ["LANÇAR", "Escreva um plano de lançamento para meu negócio."],
+  ["AUTOMATIZAR", "Explique como posso automatizar meu atendimento."],
 ] as const;
 
 export default function AiPage() {
@@ -50,20 +50,20 @@ export default function AiPage() {
       <div className={styles.aurora} aria-hidden="true" />
       <header className={styles.topbar}>
         <Link className={styles.brand} href="/dashboard">NEYVIX</Link>
-        <div className={styles.status}><span /> AI CORE ONLINE</div>
-        <Link className={styles.back} href="/dashboard">Command Center</Link>
+        <div className={styles.status}><span /> NÚCLEO DE IA ONLINE</div>
+        <Link className={styles.back} href="/dashboard">Central de Comando</Link>
       </header>
 
       <section className={styles.hero}>
-        <p className="eyebrow">NEYVIX AI · INTELLIGENCE LAYER</p>
-        <h1>Ask once. Move everything.</h1>
+        <p className="eyebrow">NEYVIX AI · CAMADA DE INTELIGÊNCIA</p>
+        <h1>Pergunte uma vez. Mova tudo.</h1>
         <p>Planeje, escreva, crie, analise e transforme intenção em ação dentro do ecossistema.</p>
       </section>
 
       <section className={styles.workspace}>
         <aside className={styles.sidebar}>
           <div className={styles.orb}><span>N</span></div>
-          <p className={styles.sideTitle}>Quick intents</p>
+          <p className={styles.sideTitle}>Atalhos rápidos</p>
           <div className={styles.suggestions}>
             {suggestions.map(([label, suggestion]) => (
               <button key={label} type="button" className={styles.suggestion} onClick={() => void sendPrompt(suggestion)} disabled={loading}>
@@ -72,8 +72,8 @@ export default function AiPage() {
             ))}
           </div>
           <div className={styles.metaCard}>
-            <span>SESSION</span>
-            <strong>{turns} requests</strong>
+            <span>SESSÃO</span>
+            <strong>{turns} solicitações</strong>
             <small>Gemini via NEYVIX AI Gateway</small>
           </div>
         </aside>
@@ -82,19 +82,19 @@ export default function AiPage() {
           <div className={styles.messages} aria-live="polite">
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} className={`${styles.message} ${message.role === "user" ? styles.user : ""}`}>
-                <span>{message.role === "assistant" ? "N" : "YOU"}</span>
-                <div><small>{message.role === "assistant" ? "NEYVIX AI" : "YOUR REQUEST"}</small><p>{message.content}</p></div>
+                <span>{message.role === "assistant" ? "N" : "VOCÊ"}</span>
+                <div><small>{message.role === "assistant" ? "NEYVIX AI" : "SUA SOLICITAÇÃO"}</small><p>{message.content}</p></div>
               </div>
             ))}
-            {loading ? <div className={styles.thinking}><i/><i/><i/><span>NEYVIX is thinking</span></div> : null}
+            {loading ? <div className={styles.thinking}><i/><i/><i/><span>NEYVIX está pensando</span></div> : null}
           </div>
 
           <form className={styles.composer} onSubmit={submit}>
             <div className={styles.inputFrame}>
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Tell NEYVIX what you want to make happen..." maxLength={4000} rows={4} />
+              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Diga à NEYVIX o que você quer fazer acontecer..." maxLength={4000} rows={4} />
               <div className={styles.footer}>
                 <span>{prompt.length}/4000</span>
-                <button className={styles.send} type="submit" disabled={loading || !prompt.trim()}>{loading ? "Processing" : "Send to NEYVIX AI →"}</button>
+                <button className={styles.send} type="submit" disabled={loading || !prompt.trim()}>{loading ? "Processando" : "Enviar para a NEYVIX AI →"}</button>
               </div>
             </div>
             {error ? <p className={styles.error}>{error}</p> : null}
