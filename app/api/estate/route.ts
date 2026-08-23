@@ -65,7 +65,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await saveEstateSite(session.email, { brand, slug, city, whatsapp, creci, headline, status, customDomain, properties });
-    if (!result.ok) return NextResponse.json({ error: "Persistência do Estate ainda não está disponível", reason: result.reason }, { status: result.reason === "user_not_found" ? 403 : 503 });
+    if (!result.ok) {
+      if (result.reason === "slug_unavailable") return NextResponse.json({ error: "Esse endereço já está em uso. Escolha outro nome para a marca.", reason: result.reason }, { status: 409 });
+      return NextResponse.json({ error: "Persistência do Estate ainda não está disponível", reason: result.reason }, { status: result.reason === "user_not_found" ? 403 : 503 });
+    }
     return NextResponse.json(result.site, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Falha ao salvar projeto Estate", error);
