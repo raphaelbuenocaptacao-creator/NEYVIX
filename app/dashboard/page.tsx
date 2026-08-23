@@ -8,6 +8,7 @@ const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar"],
   ["Studio", "/studio", "Transforme ideias em blueprints de produto", "Construir"],
   ["Content", "/content", "Crie campanhas, roteiros e materiais de lançamento", "Criar"],
+  ["Automation", "/automation", "Crie fluxos e mantenha ações sensíveis sob aprovação", "Automatizar"],
   ["Mail", "/mail", "Comunique-se dentro da mesma identidade", "Conectar"],
   ["Deploy", "/deploy", "Projetos, versões e publicação", "Publicar"],
   ["Admin", "/admin", "Usuários, acesso, uso e operação", "Controlar"],
@@ -106,7 +107,7 @@ export default async function DashboardPage() {
         <div className="quick-command-row">
           <Link href="/studio">Criar um app</Link>
           <Link href="/content">Criar uma campanha</Link>
-          <Link href="/ai">Planejar uma automação</Link>
+          <Link href="/automation">Planejar uma automação</Link>
           <Link href="/deploy">Publicar um projeto</Link>
         </div>
       </section>
