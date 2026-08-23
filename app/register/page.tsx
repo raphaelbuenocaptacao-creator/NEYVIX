@@ -1,6 +1,15 @@
 import Link from "next/link";
 
-export default function RegisterPage() {
+const errors: Record<string, string> = {
+  invalid: "Revise seu nome, endereço NEYVIX e use uma senha com pelo menos 8 caracteres.",
+  taken: "Esse endereço NEYVIX já está em uso. Escolha outro identificador.",
+  config: "O cadastro está temporariamente indisponível. A infraestrutura de identidade precisa estar conectada.",
+};
+
+export default async function RegisterPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const params = await searchParams;
+  const errorMessage = params.error ? errors[params.error] : null;
+
   return (
     <main className="auth-shell">
       <section className="auth-card">
@@ -8,6 +17,8 @@ export default function RegisterPage() {
         <p className="eyebrow">CRIAR NEYVIX ID</p>
         <h1>Sua identidade começa aqui.</h1>
         <p className="muted">Crie uma única conta para acessar o Mail e todo o ecossistema NEYVIX.</p>
+
+        {errorMessage ? <p className="legal-copy" role="alert">{errorMessage}</p> : null}
 
         <form className="auth-form" action="/api/auth/register" method="post">
           <label>
