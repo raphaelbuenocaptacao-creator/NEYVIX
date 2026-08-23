@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 
 export const ACCOUNT_COOKIE = "neyvix_account";
 export const SESSION_COOKIE = "neyvix_session";
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 export type AccountRecord = {
   email: string;
@@ -131,7 +132,7 @@ export function createSession(account: Pick<AccountRecord, "email" | "name">) {
     email: account.email,
     name: account.name,
     iat: now,
-    exp: now + 60 * 60 * 24 * 7,
+    exp: now + SESSION_MAX_AGE_SECONDS,
   };
   return sign(session);
 }
@@ -147,4 +148,5 @@ export const authCookieOptions = {
   sameSite: "lax" as const,
   secure: process.env.NODE_ENV === "production",
   path: "/",
+  maxAge: SESSION_MAX_AGE_SECONDS,
 };
