@@ -90,6 +90,82 @@ export async function saveAiMessage(email: string, role: "user" | "assistant" | 
   `;
 }
 
+export async function saveStudioProject(email: string, prompt: string, blueprintText: string) {
+  const sql = getSql();
+  if (!sql) return null;
+  const cleanPrompt = prompt.trim();
+  const title = cleanPrompt.slice(0, 80) || "Projeto NEYVIX Studio";
+  const rows = await sql`
+    INSERT INTO public.neyvix_studio_projects (user_id, title, prompt, blueprint, status)
+    SELECT id, ${title}, ${cleanPrompt}, jsonb_build_object('text', ${blueprintText}), 'generated'
+    FROM public.users
+    WHERE email = ${email.trim().toLowerCase()}
+    RETURNING id, title, status, created_at, updated_at
+  `;
+  return rows[0] ?? null;
+}
+
+export async function listStudioProjects(email: string, limit = 8) {
+  const sql = getSql();
+  if (!sql) return [];
+  return sql`
+    SELECT p.id, p.title, p.prompt, p.blueprint, p.status, p.created_at, p.updated_at
+    FROM public.neyvix_studio_projects p
+    JOIN public.users u ON u.id = p.user_id
+    WHERE u.email = ${email.trim().toLowerCase()}
+    ORDER BY p.updated_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 20))}
+  `;
+}
+
+export async function saveContentItem(email: string, kind: string, prompt: string, content: string) {
+  const sql = getSql();
+  if (!sql) return null;
+  const rows = await sql`
+    INSERT INTO public.neyvix_content_items (user_id, kind, prompt, content)
+    SELECT id, ${kind.trim().slice(0, 80)}, ${prompt.trim()}, ${content}
+    FROM public.users
+    WHERE email = ${email.trim().toLowerCase()}
+    RETURNING id, kind, created_at
+  `;
+  return rows[0] ?? null;
+}
+
+export async function listContentItems(email: string, limit = 8) {
+  const sql = getSql();
+  if (!sql) return [];
+  return sql`
+    SELECT c.id, c.kind, c.prompt, c.content, c.created_at
+    FROM public.neyvix_content_items c
+    JOIN public.users u ON u.id = c.user_id
+    WHERE u.email = ${email.trim().toLowerCase()}
+    ORDER BY c.created_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 20))}
+  `;
+}
+
+export async function getRecentActivity(email: string, limit = 12) {
+  const sql = getSql();
+  if (!sql) return [];
+  return sql`
+    SELECT * FROM (
+      SELECT 'ai'::text AS source, role::text AS kind, left(content, 180) AS summary, created_at
+      FROM public.neyvix_ai_messages m JOIN public.users u ON u.id = m.user_id
+      WHERE u.email = ${email.trim().toLowerCase()}
+      UNION ALL
+      SELECT 'studio'::text AS source, status::text AS kind, title AS summary, updated_at AS created_at
+      FROM public.neyvix_studio_projects p JOIN public.users u ON u.id = p.user_id
+      WHERE u.email = ${email.trim().toLowerCase()}
+      UNION ALL
+      SELECT 'content'::text AS source, kind::text AS kind, left(content, 180) AS summary, created_at
+      FROM public.neyvix_content_items c JOIN public.users u ON u.id = c.user_id
+      WHERE u.email = ${email.trim().toLowerCase()}
+    ) activity
+    ORDER BY created_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 30))}
+  `;
+}
+
 export async function getTrialStatus(email: string) {
   const sql = getSql();
   if (!sql) return null;
@@ -151,7 +227,7 @@ export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummar
 
     return {
       id: String(row.id),
-      name: String(row.name ?? "NEYVIX User"),
+      name: String(row.name ?? "Usuário NEYVIX"),
       email: String(row.email),
       active: Boolean(row.is_active),
       superadmin: Boolean(row.is_superadmin),
