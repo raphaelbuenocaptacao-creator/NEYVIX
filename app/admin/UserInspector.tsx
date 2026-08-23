@@ -13,6 +13,12 @@ function formatDate(value: string | null) {
   }
 }
 
+const sourceLabel: Record<string, string> = {
+  ai: "NEYVIX AI",
+  studio: "NEYVIX Studio",
+  content: "NEYVIX Content",
+};
+
 export default function UserInspector({ users }: { users: AdminUserSummary[] }) {
   const [selectedId, setSelectedId] = useState(users[0]?.id ?? "");
   const [copied, setCopied] = useState("");
@@ -36,7 +42,8 @@ export default function UserInspector({ users }: { users: AdminUserSummary[] }) 
   function printResponse(text: string) {
     const popup = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
     if (!popup) return;
-    popup.document.write(`<!doctype html><html><head><title>NEYVIX AI Response</title><style>body{font-family:Inter,Arial,sans-serif;background:#060912;color:#f5f8ff;padding:48px;line-height:1.7}main{max-width:760px;margin:auto;border:1px solid #24324a;border-radius:24px;padding:32px;background:#0b1220}small{color:#67dfff;letter-spacing:.16em}h1{font-size:24px;margin:10px 0 28px}p{white-space:pre-wrap;color:#dfe7f4}</style></head><body><main><small>NEYVIX AI</small><h1>Resposta</h1><p>${text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</p></main><script>window.onload=()=>window.print()</script></body></html>`);
+    const safe = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    popup.document.write(`<!doctype html><html lang="pt-BR"><head><title>Resposta NEYVIX AI</title><style>body{font-family:Inter,Arial,sans-serif;background:#060912;color:#f5f8ff;padding:48px;line-height:1.7}main{max-width:760px;margin:auto;border:1px solid #24324a;border-radius:24px;padding:32px;background:#0b1220}small{color:#67dfff;letter-spacing:.16em}h1{font-size:24px;margin:10px 0 28px}p{white-space:pre-wrap;color:#dfe7f4}</style></head><body><main><small>NEYVIX AI</small><h1>Resposta</h1><p>${safe}</p></main><script>window.onload=()=>window.print()</script></body></html>`);
     popup.document.close();
   }
 
@@ -45,7 +52,7 @@ export default function UserInspector({ users }: { users: AdminUserSummary[] }) 
       <section className={styles.user360Empty}>
         <p className="eyebrow">USER 360</p>
         <h2>Aguardando usuários reais</h2>
-        <p>Quando o DATABASE_URL estiver ativo no ambiente de produção, os perfis, trials e históricos da NEYVIX AI aparecerão aqui.</p>
+        <p>Quando o banco estiver disponível no ambiente, perfis, trials e históricos NEYVIX aparecerão aqui.</p>
       </section>
     );
   }
@@ -73,7 +80,7 @@ export default function UserInspector({ users }: { users: AdminUserSummary[] }) 
                 <strong>{user.name}</strong>
                 <small>{user.email}</small>
               </span>
-              <span className={styles.userState}>{user.subscriptionStatus ?? "no plan"}</span>
+              <span className={styles.userState}>{user.subscriptionStatus ?? "sem plano"}</span>
             </button>
           ))}
         </div>
@@ -90,19 +97,41 @@ export default function UserInspector({ users }: { users: AdminUserSummary[] }) 
                 <p>{selected.email}</p>
               </div>
             </div>
-            <span className={selected.active ? styles.badgeOk : styles.badgeMuted}>{selected.active ? "ACTIVE" : "INACTIVE"}</span>
+            <span className={selected.active ? styles.badgeOk : styles.badgeMuted}>{selected.active ? "ATIVO" : "INATIVO"}</span>
           </div>
 
           <div className={styles.userStats}>
             <div><span>Plano</span><strong>{selected.subscriptionStatus ?? "Sem assinatura"}</strong></div>
             <div><span>Trial termina</span><strong>{formatDate(selected.trialEndsAt)}</strong></div>
-            <div><span>AI messages</span><strong>{selected.aiMessages}</strong></div>
+            <div><span>Mensagens AI</span><strong>{selected.aiMessages}</strong></div>
+            <div><span>Projetos Studio</span><strong>{selected.studioProjects}</strong></div>
+            <div><span>Conteúdos</span><strong>{selected.contentItems}</strong></div>
             <div><span>Criado em</span><strong>{formatDate(selected.createdAt)}</strong></div>
           </div>
 
           <div className={styles.responseHeader}>
             <div>
-              <p className="eyebrow">AI HISTORY</p>
+              <p className="eyebrow">LINHA DO TEMPO</p>
+              <h3>Atividade NEYVIX</h3>
+            </div>
+            <small>AI · Studio · Content</small>
+          </div>
+
+          <div className={styles.responseList}>
+            {selected.recentActivity.length ? selected.recentActivity.map((item, index) => (
+              <article key={`${selected.id}-activity-${index}`} className={styles.responseCard}>
+                <div className={styles.responseMeta}>
+                  <span>{sourceLabel[item.source] ?? "NEYVIX"}</span>
+                  <small>{formatDate(item.createdAt)}</small>
+                </div>
+                <p>{item.summary}</p>
+              </article>
+            )) : <p className={styles.noHistory}>Esse usuário ainda não possui atividade salva no ecossistema.</p>}
+          </div>
+
+          <div className={styles.responseHeader}>
+            <div>
+              <p className="eyebrow">HISTÓRICO DA AI</p>
               <h3>Respostas recentes</h3>
             </div>
             <small>Copiar · Print/PDF · Voz</small>
