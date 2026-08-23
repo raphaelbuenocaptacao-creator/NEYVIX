@@ -1,6 +1,14 @@
 import Link from "next/link";
 
-export default function LoginPage() {
+const errors: Record<string, string> = {
+  invalid: "E-mail ou senha inválidos. Confira seus dados e tente novamente.",
+  config: "O login está temporariamente indisponível. A infraestrutura de identidade precisa estar conectada.",
+};
+
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const params = await searchParams;
+  const errorMessage = params.error ? errors[params.error] : null;
+
   return (
     <main className="auth-shell">
       <section className="auth-card">
@@ -8,6 +16,8 @@ export default function LoginPage() {
         <p className="eyebrow">NEYVIX ID</p>
         <h1>Bem-vindo de volta.</h1>
         <p className="muted">Uma identidade para o Mail e todo o ecossistema NEYVIX.</p>
+
+        {errorMessage ? <p className="legal-copy" role="alert">{errorMessage}</p> : null}
 
         <form className="auth-form" action="/api/auth/login" method="post">
           <label>
