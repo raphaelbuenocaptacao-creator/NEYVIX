@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
 import { saveAiMessage } from "@/lib/db";
 
 const MAX_PROMPT_LENGTH = 4000;
@@ -21,15 +22,9 @@ function getGatewayUrl() {
 
 export async function POST(request: Request) {
   const store = await cookies();
-  let session;
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
 
-  try {
-    session = readSession(store.get(SESSION_COOKIE)?.value);
-  } catch {
-    session = null;
-  }
-
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   let body: unknown;
   try {
