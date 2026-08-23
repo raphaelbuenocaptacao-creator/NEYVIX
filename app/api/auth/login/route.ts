@@ -24,6 +24,11 @@ export async function POST(request: Request) {
       return response;
     }
 
+    if (process.env.NODE_ENV === "production") {
+      console.error("NEYVIX ID login blocked: DATABASE_URL is not configured in production");
+      return NextResponse.redirect(new URL("/login?error=config", request.url), 303);
+    }
+
     const store = await cookies();
     const account = readAccount(store.get(ACCOUNT_COOKIE)?.value);
 
