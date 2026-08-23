@@ -17,6 +17,7 @@ const modules = {
   drive: "schema-ready",
   docs: "schema-ready",
   business: "schema-ready",
+  plans: "commercial-surface-ready",
   pay: "architecture-only",
   cloud: "architecture-only",
 } as const;
@@ -29,9 +30,11 @@ export async function GET() {
   const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
   const aiGatewayConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim());
   const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim());
+  const paymentProviderConfigured = Boolean(process.env.NEYVIX_PAYMENT_PROVIDER?.trim());
   const runningOnVercel = Boolean(process.env.VERCEL);
 
   const ok = health.ok && (!production || sessionSecretConfigured);
+  const commercialReady = ok && paymentProviderConfigured;
 
   return Response.json({
     ok,
@@ -47,6 +50,8 @@ export async function GET() {
       sessionSecretConfigured,
       aiGatewayConfigured,
       mailDomainConfigured,
+      paymentProviderConfigured,
+      commercialReady,
       runningOnVercel,
       pwaManifestReady: true,
       serviceWorkerReady: true,
