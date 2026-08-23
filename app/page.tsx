@@ -1,35 +1,101 @@
-import Link from 'next/link';
+import Link from "next/link";
+
+const orbit = [
+  ["AI", "/ai", "Think"],
+  ["Studio", "/studio", "Build"],
+  ["Content", "/content", "Create"],
+  ["Mail", "/mail", "Connect"],
+  ["Deploy", "/deploy", "Ship"],
+  ["Admin", "/admin", "Control"],
+];
 
 export default function Home() {
   return (
-    <main className="shell">
-      <section className="hero">
-        <div className="brand">NEYVIX</div>
-        <p className="eyebrow">ONE IDENTITY. YOUR DIGITAL WORLD.</p>
-        <h1>Everything you use, connected by one identity.</h1>
-        <p className="lead">
-          NEYVIX connects identity, communication, AI, productivity, business and developer infrastructure through one shared platform core.
-        </p>
-        <div className="actions">
-          <Link className="primary" href="/register">Create NEYVIX ID</Link>
-          <Link className="secondary" href="/mail">Open NEYVIX Mail</Link>
-          <Link className="secondary" href="/ecosystem">View Ecosystem</Link>
-          <Link className="secondary" href="/deploy">Open Deploy</Link>
+    <main className="experience-shell">
+      <section className="experience-hero">
+        <nav className="experience-nav">
+          <Link href="/" className="brand-lockup">NEYVIX</Link>
+          <div className="nav-actions">
+            <Link href="/ecosystem">Ecosystem</Link>
+            <Link href="/login">Sign in</Link>
+            <Link className="nav-cta" href="/register">Create NEYVIX ID</Link>
+          </div>
+        </nav>
+
+        <div className="hero-grid">
+          <div className="hero-copy">
+            <div className="live-pill"><span /> NEYVIX CORE ONLINE</div>
+            <p className="eyebrow">ONE ID. ONE INTELLIGENCE. ONE ECOSYSTEM.</p>
+            <h1>Your digital world, finally working as one.</h1>
+            <p className="lead">
+              Identity, AI, creation, communication and deployment connected by a single intelligent layer.
+            </p>
+            <div className="actions">
+              <Link className="primary hero-primary" href="/register">Enter NEYVIX</Link>
+              <Link className="secondary" href="/ecosystem">Explore the ecosystem</Link>
+            </div>
+            <div className="hero-signals">
+              <div><strong>1</strong><span>Identity</span></div>
+              <div><strong>1</strong><span>Command center</span></div>
+              <div><strong>∞</strong><span>Ways to build</span></div>
+            </div>
+          </div>
+
+          <div className="ecosystem-orbit" aria-label="NEYVIX ecosystem map">
+            <div className="orbit-glow" />
+            <div className="core-sphere"><span>N</span><small>CORE</small></div>
+            {orbit.map(([name, href, action], index) => (
+              <Link
+                key={name}
+                href={href}
+                className={`orbit-node orbit-node-${index + 1}`}
+              >
+                <small>{action}</small>
+                <strong>{name}</strong>
+              </Link>
+            ))}
+          </div>
         </div>
       </section>
 
-      <section id="products" className="grid">
-        <article><span>01</span><h2>NEYVIX ID</h2><p>One secure identity for every NEYVIX product.</p></article>
-        <article><span>02</span><h2>NEYVIX Mail</h2><p>A focused communication layer built on the shared identity.</p></article>
-        <article><span>03</span><h2>NEYVIX Admin</h2><p>Operations, security, audit and platform visibility.</p></article>
-        <article><span>04</span><h2>NEYVIX Deploy</h2><p>Git-connected projects, deployments and future cloud orchestration.</p></article>
-        <article><span>05</span><h2>NEYVIX Chat + Meet</h2><p>Private messaging, groups, meetings and calls on the shared platform.</p></article>
-        <article><span>06</span><h2>NEYVIX AI</h2><p>A provider-neutral intelligence layer across products.</p></article>
-        <article><span>07</span><h2>NEYVIX Drive + Docs</h2><p>Files, folders and collaborative documents connected by one storage model.</p></article>
-        <article><span>08</span><h2>NEYVIX Social</h2><p>Profiles, posts and relationships connected to NEYVIX ID.</p></article>
-        <article><span>09</span><h2>NEYVIX Business</h2><p>Organizations, members and roles for company workspaces.</p></article>
-        <article><span>10</span><h2>NEYVIX Pay</h2><p>Wallet and ledger architecture designed for future regulated integrations.</p></article>
-        <article><span>11</span><h2>NEYVIX Cloud</h2><p>Developer infrastructure abstractions connected to NEYVIX Deploy.</p></article>
+      <section className="experience-section">
+        <div className="section-heading">
+          <p className="eyebrow">THE OPERATING LAYER</p>
+          <h2>Ask once. NEYVIX coordinates the rest.</h2>
+        </div>
+        <div className="command-preview">
+          <div className="command-topline"><span className="command-dot" /> Command Center</div>
+          <div className="command-input">“Create a launch campaign, generate the content and prepare the app.”</div>
+          <div className="command-flow">
+            <span>AI understands</span><i>→</i><span>Studio builds</span><i>→</i><span>Content creates</span><i>→</i><span>Deploy ships</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="experience-section product-showcase">
+        <div className="section-heading">
+          <p className="eyebrow">CONNECTED PRODUCTS</p>
+          <h2>One account. Every capability.</h2>
+        </div>
+        <div className="premium-grid">
+          {[
+            ["NEYVIX AI", "Your intelligence layer for thinking, planning and execution.", "/ai"],
+            ["NEYVIX Studio", "Turn a prompt into a product blueprint and a build plan.", "/studio"],
+            ["NEYVIX Content", "Create campaigns, posts, scripts, ads and launch material.", "/content"],
+            ["NEYVIX Mail", "Communication connected to the same identity and workspace.", "/mail"],
+            ["NEYVIX Deploy", "Projects, releases and future cloud orchestration.", "/deploy"],
+            ["NEYVIX Admin", "Operate users, access, usage and the health of the ecosystem.", "/admin"],
+          ].map(([name, description, href], index) => (
+            <Link href={href} className="premium-card" key={name}>
+              <div className="card-index">0{index + 1}</div>
+              <div>
+                <h3>{name}</h3>
+                <p>{description}</p>
+              </div>
+              <span className="card-arrow">↗</span>
+            </Link>
+          ))}
+        </div>
       </section>
     </main>
   );
