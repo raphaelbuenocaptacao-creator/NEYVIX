@@ -5,7 +5,7 @@ create table if not exists public.neyvix_estate_sites (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
   brand text not null,
-  slug text not null,
+  slug text not null unique,
   city text not null,
   whatsapp text,
   creci text,
@@ -15,8 +15,7 @@ create table if not exists public.neyvix_estate_sites (
   published_at timestamptz,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique(user_id, slug)
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.neyvix_estate_properties (
