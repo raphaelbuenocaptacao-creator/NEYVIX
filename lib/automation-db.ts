@@ -46,11 +46,12 @@ export async function listAutomationWorkspace(email: string) {
       LIMIT 20
     `,
     sql`
-      SELECT r.id, r.title, r.status, r.created_at
+      SELECT DISTINCT r.id, r.title, r.status, r.created_at
       FROM public.neyvix_approval_requests r
-      JOIN public.users u ON u.id = r.requested_by
-      WHERE lower(u.email) = ${normalizedEmail}
-         OR r.assigned_to = u.id
+      JOIN public.users requester ON requester.id = r.requested_by
+      LEFT JOIN public.users assignee ON assignee.id = r.assigned_to
+      WHERE lower(requester.email) = ${normalizedEmail}
+         OR lower(COALESCE(assignee.email, '')) = ${normalizedEmail}
       ORDER BY r.created_at DESC
       LIMIT 20
     `,
