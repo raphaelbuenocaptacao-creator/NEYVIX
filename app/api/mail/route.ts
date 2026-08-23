@@ -1,18 +1,14 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
 import { listMailMessages } from "@/lib/mail-db";
 
 export async function GET(request: Request) {
   const store = await cookies();
-  let session = null;
-  try {
-    session = readSession(store.get(SESSION_COOKIE)?.value);
-  } catch {
-    session = null;
-  }
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
 
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   const url = new URL(request.url);
   const requestedLimit = Number(url.searchParams.get("limit") ?? 30);
