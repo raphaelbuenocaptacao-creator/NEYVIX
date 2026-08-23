@@ -19,18 +19,24 @@ export default function AiPage() {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [needsLogin, setNeedsLogin] = useState(false);
   const turns = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
 
   async function sendPrompt(value: string) {
     const clean = value.trim();
     if (!clean || loading) return;
     setError("");
+    setNeedsLogin(false);
     setPrompt("");
     setMessages((current) => [...current, { role: "user", content: clean }]);
     setLoading(true);
     try {
       const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: clean }) });
       const data = (await response.json()) as { answer?: string; error?: string };
+      if (response.status === 401) {
+        setNeedsLogin(true);
+        throw new Error("Sua sessão expirou ou sua conta precisa ser validada novamente.");
+      }
       if (!response.ok || !data.answer) throw new Error(data.error || "Não foi possível obter uma resposta.");
       setMessages((current) => [...current, { role: "assistant", content: data.answer ?? "" }]);
     } catch (err) {
@@ -66,7 +72,7 @@ export default function AiPage() {
           <p className={styles.sideTitle}>Atalhos rápidos</p>
           <div className={styles.suggestions}>
             {suggestions.map(([label, suggestion]) => (
-              <button key={label} type="button" className={styles.suggestion} onClick={() => void sendPrompt(suggestion)} disabled={loading}>
+              <button key={label} type="button" className={styles.suggestion} onClick={() => void sendPrompt(suggestion)} disabled={loading || needsLogin}>
                 <span>{label}</span><strong>{suggestion}</strong>
               </button>
             ))}
@@ -74,7 +80,7 @@ export default function AiPage() {
           <div className={styles.metaCard}>
             <span>SESSÃO</span>
             <strong>{turns} solicitações</strong>
-            <small>Gemini via NEYVIX AI Gateway</small>
+            <small>NEYVIX AI Gateway</small>
           </div>
         </aside>
 
@@ -91,10 +97,10 @@ export default function AiPage() {
 
           <form className={styles.composer} onSubmit={submit}>
             <div className={styles.inputFrame}>
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Diga à NEYVIX o que você quer fazer acontecer..." maxLength={4000} rows={4} />
+              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Diga à NEYVIX o que você quer fazer acontecer..." maxLength={4000} rows={4} disabled={needsLogin} />
               <div className={styles.footer}>
                 <span>{prompt.length}/4000</span>
-                <button className={styles.send} type="submit" disabled={loading || !prompt.trim()}>{loading ? "Processando" : "Enviar para a NEYVIX AI →"}</button>
+                {needsLogin ? <Link className={styles.send} href="/login?next=/ai">Entrar novamente →</Link> : <button className={styles.send} type="submit" disabled={loading || !prompt.trim()}>{loading ? "Processando" : "Enviar para a NEYVIX AI →"}</button>}
               </div>
             </div>
             {error ? <p className={styles.error}>{error}</p> : null}
