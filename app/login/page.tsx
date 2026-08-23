@@ -6,25 +6,25 @@ export default function LoginPage() {
       <section className="auth-card">
         <Link href="/" className="brand">NEYVIX</Link>
         <p className="eyebrow">NEYVIX ID</p>
-        <h1>Welcome back.</h1>
-        <p className="muted">One identity for Mail and the entire NEYVIX ecosystem.</p>
+        <h1>Bem-vindo de volta.</h1>
+        <p className="muted">Uma identidade para o Mail e todo o ecossistema NEYVIX.</p>
 
         <form className="auth-form" action="/api/auth/login" method="post">
           <label>
-            Email
-            <input type="email" name="email" placeholder="you@neyvix.com" autoComplete="email" required />
+            E-mail
+            <input type="email" name="email" placeholder="voce@neyvix.com" autoComplete="email" required />
           </label>
           <label>
-            Password
+            Senha
             <input type="password" name="password" placeholder="••••••••" autoComplete="current-password" required />
           </label>
-          <button type="submit" className="primary-button">Continue</button>
+          <button type="submit" className="primary-button">Continuar</button>
         </form>
 
         <div className="auth-links">
-          <span className="muted">Password recovery will require the production identity database.</span>
+          <span className="muted">A recuperação de senha será habilitada na camada de identidade de produção.</span>
           <span>·</span>
-          <Link href="/register">Create NEYVIX ID</Link>
+          <Link href="/register">Criar NEYVIX ID</Link>
         </div>
       </section>
     </main>
