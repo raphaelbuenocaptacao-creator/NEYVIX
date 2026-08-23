@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import styles from "./admin.module.css";
 import UserInspector from "./UserInspector";
-import { getAdminUserSummaries } from "@/lib/db";
+import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { getAdminUserSummaries, getDatabaseUserByEmail } from "@/lib/db";
 
 const modules = [
   { label: "IDENTIDADE", title: "NEYVIX ID", state: "Conectado", text: "Contas, sessões, trial e identidade da organização." },
@@ -13,6 +16,27 @@ const modules = [
 ];
 
 export default async function AdminPage() {
+  const store = await cookies();
+  let session = null;
+  try {
+    session = readSession(store.get(SESSION_COOKIE)?.value);
+  } catch {
+    session = null;
+  }
+
+  if (!session) redirect("/login");
+
+  let currentUser = null;
+  try {
+    currentUser = await getDatabaseUserByEmail(session.email);
+  } catch (error) {
+    console.error("Falha ao validar acesso administrativo", error);
+  }
+
+  if (!currentUser?.is_superadmin || !currentUser.is_active) {
+    redirect("/dashboard?error=admin_access");
+  }
+
   let users = [];
   try {
     users = await getAdminUserSummaries();
