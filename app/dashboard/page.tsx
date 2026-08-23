@@ -5,6 +5,8 @@ import { SESSION_COOKIE, readSession } from "@/lib/auth";
 
 const modules = [
   ["AI", "/ai", "Create, plan and build with NEYVIX AI"],
+  ["Studio", "/studio", "Turn a prompt into an MVP blueprint"],
+  ["Content", "/content", "Generate posts, scripts, ads and copy"],
   ["Mail", "/mail", "Inbox and communication"],
   ["Admin", "/admin", "Users, roles and operations"],
   ["Deploy", "/deploy", "Projects and releases"],
