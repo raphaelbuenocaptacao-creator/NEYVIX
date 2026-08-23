@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { saveAiMessage } from "@/lib/db";
 
 const MAX_PROMPT_LENGTH = 4000;
 const TIMEOUT_MS = 45_000;
@@ -66,6 +67,12 @@ export async function POST(request: Request) {
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
+    try {
+      await saveAiMessage(session.email, "user", prompt);
+    } catch (dbError) {
+      console.warn("Unable to persist NEYVIX AI user message", dbError);
+    }
+
     const upstream = await fetch(gatewayUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -88,6 +95,12 @@ export async function POST(request: Request) {
         { error: "AI service is temporarily unavailable" },
         { status: 502 },
       );
+    }
+
+    try {
+      await saveAiMessage(session.email, "assistant", text);
+    } catch (dbError) {
+      console.warn("Unable to persist NEYVIX AI assistant message", dbError);
     }
 
     return NextResponse.json({ answer: text });
