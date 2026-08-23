@@ -18,9 +18,7 @@ export default function ContentPage() {
     const clean = brief.trim();
     if (!clean || loading) return;
     setLoading(true); setError(""); setResult("");
-
     const prompt = `Você é o NEYVIX Content. Crie um ${format} em português do Brasil a partir deste briefing: ${clean}. Entregue texto pronto para uso, com título/gancho, corpo, CTA e, quando fizer sentido, hashtags. Seja persuasivo sem prometer resultados irreais.`;
-
     try {
       const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
       const data = (await response.json()) as { answer?: string; error?: string };
@@ -33,20 +31,46 @@ export default function ContentPage() {
 
   return (
     <main className={styles.shell}>
-      <header className={styles.header}>
-        <div><p className={styles.eyebrow}>NEYVIX CONTENT · BETA</p><h1>Crie conteúdo sem sair do ecossistema.</h1><p>Use a mesma NEYVIX AI para produzir peças de comunicação em segundos.</p></div>
-        <Link href="/dashboard" className={styles.back}>Voltar ao painel</Link>
+      <header className={styles.topbar}>
+        <Link href="/dashboard" className={styles.brand}>NEYVIX</Link>
+        <div className={styles.status}><span/> CONTENT ENGINE READY</div>
+        <Link href="/dashboard" className={styles.back}>Command Center</Link>
       </header>
+
+      <section className={styles.hero}>
+        <div>
+          <p className={styles.eyebrow}>NEYVIX CONTENT · CREATIVE LAYER</p>
+          <h1>Turn one brief into ready-to-use content.</h1>
+          <p>Escolha o formato, descreva a intenção e deixe a NEYVIX organizar a peça com gancho, corpo, CTA e linguagem pronta para publicação.</p>
+        </div>
+        <div className={styles.engineOrb}><span>CREATE</span></div>
+      </section>
+
+      <section className={styles.templateRow}>
+        {formats.map((item) => <button key={item} type="button" onClick={() => setFormat(item)}>{item}</button>)}
+      </section>
+
       <section className={styles.grid}>
-        <form className={styles.card} onSubmit={generate}>
+        <form className={`${styles.card} ${styles.inputCard}`} onSubmit={generate}>
+          <div className={styles.cardTop}><span>01</span><strong>Define the brief</strong></div>
           <label htmlFor="format">Formato</label>
-          <select id="format" value={format} onChange={(e)=>setFormat(e.target.value)} style={{width:"100%",padding:"14px",marginBottom:"16px",borderRadius:"14px",background:"#080d14",color:"#f5f7fb",border:"1px solid rgba(255,255,255,.08)"}}>{formats.map((item)=><option key={item}>{item}</option>)}</select>
+          <select id="format" value={format} onChange={(e) => setFormat(e.target.value)} style={{width:"100%",padding:"14px 16px",marginBottom:"16px",borderRadius:"16px",background:"rgba(2,6,12,.72)",color:"#f5f7fb",border:"1px solid rgba(255,255,255,.08)",outline:"none"}}>
+            {formats.map((item)=><option key={item}>{item}</option>)}
+          </select>
           <label htmlFor="brief">Briefing</label>
           <textarea id="brief" value={brief} onChange={(e)=>setBrief(e.target.value)} placeholder="Ex.: lançamento do NEYVIX, público empreendedor, tom futurista e objetivo." maxLength={2000} rows={10}/>
-          <div className={styles.footer}><span>{brief.length}/2000</span><button type="submit" disabled={loading || !brief.trim()}>{loading ? "Gerando..." : "Gerar conteúdo"}</button></div>
+          <div className={styles.footer}><span>{brief.length}/2000</span><button type="submit" disabled={loading || !brief.trim()}>{loading ? "Creating..." : "Generate content →"}</button></div>
           {error ? <p className={styles.error}>{error}</p> : null}
         </form>
-        <section className={`${styles.card} ${styles.result}`}><div className={styles.resultHeader}><div><p className={styles.eyebrow}>RESULTADO</p><h2>Conteúdo pronto</h2></div><span>{result ? format : "Aguardando briefing"}</span></div>{result ? <pre>{result}</pre> : <p className={styles.placeholder}>O conteúdo gerado aparecerá aqui.</p>}</section>
+
+        <section className={`${styles.card} ${styles.result}`}>
+          <div className={styles.resultHeader}>
+            <div><p className={styles.eyebrow}>02 · OUTPUT</p><h2>Content ready</h2></div>
+            <span className={result ? styles.ready : styles.waiting}>{result ? format : "Waiting"}</span>
+          </div>
+          {loading ? <div className={styles.pipeline}><i/><i/><i/><i/><span>Writing and structuring</span></div> : null}
+          {result ? <pre>{result}</pre> : <div className={styles.emptyState}><strong>Your content will appear here.</strong><p>Choose a format and send a briefing to generate the first draft.</p></div>}
+        </section>
       </section>
     </main>
   );
