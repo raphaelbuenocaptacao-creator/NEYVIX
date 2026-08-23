@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
 import { getDatabaseUserByEmail, getTrialStatus } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = readSession(request.cookies.get(SESSION_COOKIE)?.value);
+    const session = await readActiveSession(request.cookies.get(SESSION_COOKIE)?.value);
     if (!session) {
       return NextResponse.json({ authenticated: false }, { status: 401, headers: { "Cache-Control": "no-store" } });
     }
@@ -25,8 +26,8 @@ export async function GET(request: NextRequest) {
       user: {
         email: session.email,
         name: session.name,
-        active: account?.is_active ?? true,
-        role: account?.is_superadmin ? "superadmin" : "member",
+        active: true,
+        role: session.isSuperadmin || account?.is_superadmin ? "superadmin" : "member",
       },
       subscription: trial ? {
         status: trial.status ?? null,
