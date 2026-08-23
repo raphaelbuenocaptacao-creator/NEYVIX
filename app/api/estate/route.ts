@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
 import { listEstateSites, saveEstateSite, type EstatePropertyInput } from "@/lib/estate-db";
 
 const MAX_PROPERTIES = 50;
@@ -8,7 +9,7 @@ const MAX_IMAGES_PER_PROPERTY = 12;
 
 async function getSession() {
   const store = await cookies();
-  try { return readSession(store.get(SESSION_COOKIE)?.value); } catch { return null; }
+  return readActiveSession(store.get(SESSION_COOKIE)?.value);
 }
 
 function cleanSlug(value: string) {
@@ -17,7 +18,7 @@ function cleanSlug(value: string) {
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
   try {
     const sites = await listEstateSites(session.email, 20);
     return NextResponse.json({ sites }, { headers: { "Cache-Control": "no-store" } });
@@ -29,7 +30,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Corpo JSON inválido" }, { status: 400 }); }
