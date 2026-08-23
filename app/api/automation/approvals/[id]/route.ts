@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
 import { decideApproval } from "@/lib/automation-db";
 
 const MAX_NOTE = 1000;
@@ -9,14 +10,9 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 async function handleDecision(request: Request, context: RouteContext) {
   const store = await cookies();
-  let session = null;
-  try {
-    session = readSession(store.get(SESSION_COOKIE)?.value);
-  } catch {
-    session = null;
-  }
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
 
-  if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   const { id } = await context.params;
   if (!id || id.length > 100) return NextResponse.json({ error: "Aprovação inválida" }, { status: 400 });
