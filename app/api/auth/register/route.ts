@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createAccount, createSession } from "@/lib/auth";
+import { createDatabaseUser, hasDatabase } from "@/lib/db";
 
 export async function POST(request: Request) {
   try {
@@ -14,6 +15,19 @@ export async function POST(request: Request) {
       return NextResponse.redirect(new URL("/register?error=invalid", request.url), 303);
     }
 
+    if (hasDatabase()) {
+      const user = await createDatabaseUser(name, email, password);
+      if (!user) {
+        return NextResponse.redirect(new URL("/register?error=taken", request.url), 303);
+      }
+
+      const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
+      response.cookies.set(SESSION_COOKIE, createSession(user), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
+      response.cookies.delete(ACCOUNT_COOKIE);
+      return response;
+    }
+
+    // Preview fallback for environments where DATABASE_URL is not configured yet.
     const { account, token } = createAccount(name, email, password);
     const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
     response.cookies.set(ACCOUNT_COOKIE, token, { ...authCookieOptions, maxAge: 60 * 60 * 24 * 365 });
