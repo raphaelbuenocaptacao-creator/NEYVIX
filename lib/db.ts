@@ -180,6 +180,13 @@ export async function getTrialStatus(email: string) {
   return rows[0] ?? null;
 }
 
+export type AdminActivityItem = {
+  source: string;
+  kind: string;
+  summary: string;
+  createdAt: string;
+};
+
 export type AdminUserSummary = {
   id: string;
   name: string;
@@ -190,7 +197,10 @@ export type AdminUserSummary = {
   subscriptionStatus: string | null;
   trialEndsAt: string | null;
   aiMessages: number;
+  studioProjects: number;
+  contentItems: number;
   recentAi: { role: string; content: string; createdAt: string }[];
+  recentActivity: AdminActivityItem[];
 };
 
 export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummary[]> {
@@ -207,7 +217,9 @@ export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummar
       u.created_at,
       s.status AS subscription_status,
       s.trial_ends_at,
-      (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages
+      (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages,
+      (SELECT count(*)::int FROM public.neyvix_studio_projects p WHERE p.user_id = u.id) AS studio_projects,
+      (SELECT count(*)::int FROM public.neyvix_content_items c WHERE c.user_id = u.id) AS content_items
     FROM public.users u
     LEFT JOIN public.subscriptions s
       ON s.user_id = u.id
@@ -225,6 +237,21 @@ export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummar
       LIMIT 8
     `;
 
+    const activity = await sql`
+      SELECT * FROM (
+        SELECT 'ai'::text AS source, role::text AS kind, left(content, 160) AS summary, created_at
+        FROM public.neyvix_ai_messages WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'studio'::text AS source, status::text AS kind, title AS summary, updated_at AS created_at
+        FROM public.neyvix_studio_projects WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'content'::text AS source, kind::text AS kind, left(content, 160) AS summary, created_at
+        FROM public.neyvix_content_items WHERE user_id = ${String(row.id)}
+      ) timeline
+      ORDER BY created_at DESC
+      LIMIT 12
+    `;
+
     return {
       id: String(row.id),
       name: String(row.name ?? "Usuário NEYVIX"),
@@ -235,9 +262,17 @@ export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummar
       subscriptionStatus: row.subscription_status ? String(row.subscription_status) : null,
       trialEndsAt: row.trial_ends_at ? String(row.trial_ends_at) : null,
       aiMessages: Number(row.ai_messages ?? 0),
+      studioProjects: Number(row.studio_projects ?? 0),
+      contentItems: Number(row.content_items ?? 0),
       recentAi: recent.map((item) => ({
         role: String(item.role),
         content: String(item.content),
+        createdAt: String(item.created_at),
+      })),
+      recentActivity: activity.map((item) => ({
+        source: String(item.source),
+        kind: String(item.kind),
+        summary: String(item.summary),
         createdAt: String(item.created_at),
       })),
     } satisfies AdminUserSummary;
