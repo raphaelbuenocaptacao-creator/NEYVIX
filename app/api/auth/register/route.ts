@@ -27,7 +27,12 @@ export async function POST(request: Request) {
       return response;
     }
 
-    // Preview fallback for environments where DATABASE_URL is not configured yet.
+    if (process.env.NODE_ENV === "production") {
+      console.error("NEYVIX ID registration blocked: DATABASE_URL is not configured in production");
+      return NextResponse.redirect(new URL("/register?error=config", request.url), 303);
+    }
+
+    // Preview-only fallback for non-production environments without DATABASE_URL.
     const { account, token } = createAccount(name, email, password);
     const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
     response.cookies.set(ACCOUNT_COOKIE, token, { ...authCookieOptions, maxAge: 60 * 60 * 24 * 365 });
