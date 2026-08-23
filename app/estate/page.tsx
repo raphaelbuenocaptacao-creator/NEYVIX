@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import EstateBuilder from "@/components/estate-builder";
 import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import "./estate.css";
 
 export default async function EstatePage() {
   const store = await cookies();
