@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import styles from "./admin.module.css";
 import UserInspector from "./UserInspector";
 import { SESSION_COOKIE, readSession } from "@/lib/auth";
-import { getAdminUserSummaries, getDatabaseUserByEmail } from "@/lib/db";
+import { getAdminUserSummaries, getDatabaseUserByEmail, type AdminUserSummary } from "@/lib/db";
 
 const modules = [
   { label: "IDENTIDADE", title: "NEYVIX ID", state: "Conectado", text: "Contas, sessões, trial e identidade da organização." },
@@ -37,7 +37,7 @@ export default async function AdminPage() {
     redirect("/dashboard?error=admin_access");
   }
 
-  let users = [];
+  let users: AdminUserSummary[] = [];
   try {
     users = await getAdminUserSummaries();
   } catch (error) {
