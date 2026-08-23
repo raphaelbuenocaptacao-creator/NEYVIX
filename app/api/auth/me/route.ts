@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getDatabaseUserByEmail, getTrialStatus } from "@/lib/db";
+import { getEntitlements } from "@/lib/entitlements";
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,10 +13,12 @@ export async function GET(request: NextRequest) {
 
     let account = null;
     let trial = null;
+    let entitlements = null;
     try {
-      [account, trial] = await Promise.all([
+      [account, trial, entitlements] = await Promise.all([
         getDatabaseUserByEmail(session.email),
         getTrialStatus(session.email),
+        getEntitlements(session.email),
       ]);
     } catch (error) {
       console.warn("NEYVIX ID metadata is temporarily unavailable", error);
@@ -34,6 +37,13 @@ export async function GET(request: NextRequest) {
         trialStartsAt: trial.trial_started_at ?? null,
         trialEndsAt: trial.trial_ends_at ?? null,
         project: trial.project_slug ?? "neyvix",
+      } : null,
+      access: entitlements ? {
+        plan: entitlements.plan,
+        status: entitlements.status,
+        features: entitlements.features,
+        enforcementEnabled: entitlements.enforcementEnabled,
+        source: entitlements.source,
       } : null,
       expiresAt: new Date(session.exp * 1000).toISOString(),
     }, { headers: { "Cache-Control": "no-store" } });
