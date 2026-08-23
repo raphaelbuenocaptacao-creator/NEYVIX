@@ -1,51 +1,43 @@
-import Link from 'next/link';
+import Link from "next/link";
 
 const modules = [
-  { name: 'NEYVIX ID', status: 'Foundation', detail: 'Identity, sessions and security data model.', href: '/login' },
-  { name: 'NEYVIX Mail', status: 'Foundation', detail: 'Mailbox, threads, messages, attachments and contacts.', href: '/mail' },
-  { name: 'NEYVIX Admin', status: 'Foundation', detail: 'Operations, security, audit and platform visibility.', href: '/admin' },
-  { name: 'NEYVIX Deploy', status: 'MVP', detail: 'Git-to-deploy product surface and deployment data model.', href: '/deploy' },
-  { name: 'NEYVIX Chat', status: 'Schema ready', detail: 'Conversations, members and messages are database-ready.' },
-  { name: 'NEYVIX Meet', status: 'Schema ready', detail: 'Meeting room and scheduling foundation is defined.' },
-  { name: 'NEYVIX Social', status: 'Schema ready', detail: 'Profiles, posts and follow graph foundation.' },
-  { name: 'NEYVIX AI', status: 'Integration ready', detail: 'Provider/model interaction audit layer without provider lock-in.' },
-  { name: 'NEYVIX Drive', status: 'Schema ready', detail: 'Files, folders, storage keys and metadata model.' },
-  { name: 'NEYVIX Docs', status: 'Schema ready', detail: 'Versioned document model connected to Drive.' },
-  { name: 'NEYVIX Business', status: 'Schema ready', detail: 'Organizations, members and roles foundation.' },
-  { name: 'NEYVIX Pay', status: 'Architecture only', detail: 'Wallet and double-entry ledger foundation. No regulated money movement.' },
-  { name: 'NEYVIX Cloud', status: 'Architecture only', detail: 'Cloud resource abstraction connected to deploy projects.' },
+  { name: "NEYVIX ID", status: "Beta", detail: "Identidade única, sessão assinada, trial e validação de conta ativa.", href: "/login" },
+  { name: "NEYVIX AI", status: "Beta", detail: "Assistente com gateway configurável, persistência e histórico de mensagens.", href: "/ai" },
+  { name: "NEYVIX Studio", status: "Beta", detail: "Transforma ideias em blueprints e mantém uma biblioteca persistida de projetos.", href: "/studio" },
+  { name: "NEYVIX Content", status: "Beta", detail: "Geração de campanhas e conteúdo com histórico persistido.", href: "/content" },
+  { name: "NEYVIX Automation", status: "Beta", detail: "Workflows, execuções e aprovações para ações sensíveis.", href: "/automation" },
+  { name: "NEYVIX Estate", status: "Beta", detail: "Builder imobiliário com múltiplos imóveis, publicação e página pública.", href: "/estate" },
+  { name: "NEYVIX Mail", status: "MVP", detail: "Base autenticada de caixa postal e mensagens; transporte externo ainda será conectado.", href: "/mail" },
+  { name: "NEYVIX Admin", status: "Beta", detail: "User 360, operação, acesso, atividade e visibilidade administrativa.", href: "/admin" },
+  { name: "NEYVIX Deploy", status: "MVP", detail: "Superfície de publicação e acompanhamento da camada de deploy.", href: "/deploy" },
+  { name: "NEYVIX PWA", status: "Installable-ready", detail: "Manifest, service worker, modo standalone e atalhos do ecossistema.", href: "/dashboard" },
+  { name: "NEYVIX Drive", status: "Planejado", detail: "Arquivos, pastas, mídia e armazenamento compartilhado entre produtos." },
+  { name: "NEYVIX Docs", status: "Planejado", detail: "Documentos colaborativos e versionados conectados ao Drive." },
+  { name: "NEYVIX Calendar", status: "Planejado", detail: "Agenda compartilhada para pessoas, equipes e automações." },
+  { name: "NEYVIX Meet", status: "Planejado", detail: "Reuniões e salas conectadas ao NEYVIX ID e Calendar." },
+  { name: "NEYVIX Business", status: "Planejado", detail: "Organizações, membros, funções e administração empresarial." },
+  { name: "NEYVIX Pay", status: "Arquitetura", detail: "Camada futura de cobrança e ledger; sem movimentação financeira regulada neste estágio." },
+  { name: "NEYVIX Cloud", status: "Arquitetura", detail: "Abstração futura de recursos de infraestrutura conectados ao Deploy." },
 ];
 
 export default function EcosystemPage() {
   return (
     <main className="shell">
       <section className="hero">
-        <div className="brand">NEYVIX <span>Ecosystem</span></div>
-        <p className="eyebrow">ONE IDENTITY. SHARED PLATFORM.</p>
-        <h1>One core, multiple products.</h1>
-        <p className="lead">This page tracks the real implementation state of the NEYVIX product family. Foundation means an actual route or core data model exists; schema-ready means the backend contract is defined but the full product is not yet launched.</p>
+        <div className="brand">NEYVIX <span>ECOSSISTEMA</span></div>
+        <p className="eyebrow">UMA IDENTIDADE. UMA PLATAFORMA.</p>
+        <h1>Um núcleo. Produtos que trabalham juntos.</h1>
+        <p className="lead">Este mapa mostra o estado real da família NEYVIX. Beta indica produto funcional em evolução; MVP indica a primeira experiência utilizável; Planejado e Arquitetura identificam os próximos produtos sem apresentá-los como concluídos.</p>
         <div className="actions">
-          <Link className="primary" href="/deploy">Open Deploy</Link>
-          <Link className="secondary" href="/">Back to NEYVIX</Link>
+          <Link className="primary" href="/dashboard">Abrir Central de Comando</Link>
+          <Link className="secondary" href="/">Voltar ao NEYVIX</Link>
         </div>
       </section>
 
       <section className="grid">
         {modules.map((module, index) => {
-          const content = (
-            <>
-              <span>{String(index + 1).padStart(2, '0')}</span>
-              <h2>{module.name}</h2>
-              <p><strong>{module.status}</strong></p>
-              <p>{module.detail}</p>
-            </>
-          );
-
-          return module.href ? (
-            <article key={module.name}><Link href={module.href}>{content}</Link></article>
-          ) : (
-            <article key={module.name}>{content}</article>
-          );
+          const content = <><span>{String(index + 1).padStart(2, "0")}</span><h2>{module.name}</h2><p><strong>{module.status}</strong></p><p>{module.detail}</p></>;
+          return module.href ? <article key={module.name}><Link href={module.href}>{content}</Link></article> : <article key={module.name}>{content}</article>;
         })}
       </section>
     </main>
