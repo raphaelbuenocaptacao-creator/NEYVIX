@@ -103,3 +103,67 @@ export async function getTrialStatus(email: string) {
   `;
   return rows[0] ?? null;
 }
+
+export type AdminUserSummary = {
+  id: string;
+  name: string;
+  email: string;
+  active: boolean;
+  superadmin: boolean;
+  createdAt: string;
+  subscriptionStatus: string | null;
+  trialEndsAt: string | null;
+  aiMessages: number;
+  recentAi: { role: string; content: string; createdAt: string }[];
+};
+
+export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummary[]> {
+  const sql = getSql();
+  if (!sql) return [];
+
+  const users = await sql`
+    SELECT
+      u.id,
+      COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
+      u.email,
+      u.is_active,
+      u.is_superadmin,
+      u.created_at,
+      s.status AS subscription_status,
+      s.trial_ends_at,
+      (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages
+    FROM public.users u
+    LEFT JOIN public.subscriptions s
+      ON s.user_id = u.id
+     AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
+    ORDER BY u.created_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 100))}
+  `;
+
+  return Promise.all(users.map(async (row) => {
+    const recent = await sql`
+      SELECT role, content, created_at
+      FROM public.neyvix_ai_messages
+      WHERE user_id = ${String(row.id)}
+      ORDER BY created_at DESC
+      LIMIT 8
+    `;
+
+    return {
+      id: String(row.id),
+      name: String(row.name ?? "NEYVIX User"),
+      email: String(row.email),
+      active: Boolean(row.is_active),
+      superadmin: Boolean(row.is_superadmin),
+      createdAt: String(row.created_at),
+      subscriptionStatus: row.subscription_status ? String(row.subscription_status) : null,
+      trialEndsAt: row.trial_ends_at ? String(row.trial_ends_at) : null,
+      aiMessages: Number(row.ai_messages ?? 0),
+      recentAi: recent.map((item) => ({
+        role: String(item.role),
+        content: String(item.content),
+        createdAt: String(item.created_at),
+      })),
+    } satisfies AdminUserSummary;
+  }));
+}
