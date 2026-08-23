@@ -5,7 +5,9 @@ import { decideApproval } from "@/lib/automation-db";
 
 const MAX_NOTE = 1000;
 
-export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+type RouteContext = { params: Promise<{ id: string }> };
+
+async function handleDecision(request: Request, context: RouteContext) {
   const store = await cookies();
   let session = null;
   try {
@@ -52,4 +54,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     console.error("Falha ao decidir aprovação", error);
     return NextResponse.json({ error: "Não foi possível registrar a decisão" }, { status: 503 });
   }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  return handleDecision(request, context);
+}
+
+export async function POST(request: Request, context: RouteContext) {
+  return handleDecision(request, context);
 }
