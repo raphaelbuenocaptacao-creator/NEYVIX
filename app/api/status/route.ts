@@ -4,7 +4,9 @@ const modules = {
   id: "beta",
   mail: "beta-read",
   admin: "beta",
-  automation: "schema-ready",
+  automation: "beta",
+  estate: "beta",
+  pwa: "installable-ready",
   deploy: "mvp",
   chat: "schema-ready",
   meet: "schema-ready",
@@ -27,9 +29,12 @@ export async function GET() {
   const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
   const aiGatewayConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim());
   const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim());
+  const runningOnVercel = Boolean(process.env.VERCEL);
+
+  const ok = health.ok && (!production || sessionSecretConfigured);
 
   return Response.json({
-    ok: health.ok && (!production || sessionSecretConfigured),
+    ok,
     service: "NEYVIX",
     version: "0.1.0",
     environment: production ? "production" : "development",
@@ -42,12 +47,14 @@ export async function GET() {
       sessionSecretConfigured,
       aiGatewayConfigured,
       mailDomainConfigured,
-      vercelProjectVerified: false,
+      runningOnVercel,
+      pwaManifestReady: true,
+      serviceWorkerReady: true,
     },
     modules,
     timestamp: new Date().toISOString(),
   }, {
-    status: health.ok && (!production || sessionSecretConfigured) ? 200 : 503,
+    status: ok ? 200 : 503,
     headers: { "Cache-Control": "no-store" },
   });
 }
