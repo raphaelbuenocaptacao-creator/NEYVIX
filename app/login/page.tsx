@@ -3,6 +3,7 @@ import Link from "next/link";
 const errors: Record<string, string> = {
   invalid: "E-mail ou senha inválidos. Confira seus dados e tente novamente.",
   config: "O login está temporariamente indisponível. A infraestrutura de identidade precisa estar conectada.",
+  rate_limit: "Muitas tentativas de login foram feitas em pouco tempo. Aguarde alguns minutos e tente novamente.",
 };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; reset?: string; next?: string; reason?: string }> }) {
