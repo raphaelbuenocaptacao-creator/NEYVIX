@@ -4,6 +4,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { saveAiMessage } from "@/lib/db";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
+import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
@@ -32,6 +33,11 @@ export async function POST(request: Request) {
     return NextResponse.json(upgradeRequiredPayload("ai", "Start"), { status: 403, headers: { "Cache-Control": "no-store" } });
   }
 
+  const aiBucket = rateLimitBucket(session.email);
+  if (await isRateLimited("ai", aiBucket, 30, 10)) {
+    return NextResponse.json({ error: "Muitas solicitações à NEYVIX AI em pouco tempo. Aguarde alguns minutos e tente novamente.", code: "rate_limited" }, { status: 429, headers: { "Cache-Control": "no-store", "Retry-After": "120" } });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -50,6 +56,8 @@ export async function POST(request: Request) {
 
   const gatewayUrl = getGatewayUrl();
   if (!gatewayUrl) return NextResponse.json({ error: "O gateway da NEYVIX AI não está configurado" }, { status: 503 });
+
+  await recordRateLimitEvent("ai", aiBucket);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
