@@ -35,7 +35,7 @@ export async function consumePasswordResetToken(token: string, password: string)
       FOR UPDATE
     ), updated_user AS (
       UPDATE public.users u
-      SET password_hash = ${passwordHash}
+      SET password_hash = ${passwordHash}, updated_at = now()
       FROM valid_token vt
       WHERE u.id = vt.user_id
       RETURNING u.id
