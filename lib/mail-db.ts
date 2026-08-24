@@ -17,12 +17,14 @@ function getSql() {
   return neon(url);
 }
 
-async function mailSchemaReady(sql: ReturnType<typeof neon>) {
+type MailSql = NonNullable<ReturnType<typeof getSql>>;
+
+async function mailSchemaReady(sql: MailSql) {
   const registry = await sql`
     SELECT
       to_regclass('public.mailboxes')::text AS mailboxes_table,
       to_regclass('public.messages')::text AS messages_table
-  `;
+  ` as Array<{ mailboxes_table: string | null; messages_table: string | null }>;
   return Boolean(registry[0]?.mailboxes_table && registry[0]?.messages_table);
 }
 
@@ -39,7 +41,7 @@ export async function ensureMailbox(email: string, displayName?: string) {
       display_name = COALESCE(EXCLUDED.display_name, public.mailboxes.display_name),
       updated_at = now()
     RETURNING id, address
-  `;
+  ` as Array<{ id: string; address: string }>;
   return rows[0] ?? null;
 }
 
@@ -58,7 +60,7 @@ export async function saveSentMessage(input: { email: string; displayName?: stri
       'sent', 'sent', true, now()
     )
     RETURNING id, created_at
-  `;
+  ` as Array<{ id: string; created_at: string }>;
   return rows[0] ?? null;
 }
 
@@ -83,7 +85,16 @@ export async function listMailMessages(email: string, limit = 30): Promise<MailL
       AND m.folder = 'inbox'
     ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
     LIMIT ${Math.max(1, Math.min(limit, 100))}
-  `;
+  ` as Array<{
+    id: string;
+    sender_address: string;
+    subject: string | null;
+    preview: string | null;
+    folder: string | null;
+    is_read: boolean;
+    is_starred: boolean;
+    occurred_at: string;
+  }>;
 
   return rows.map((row) => ({
     id: String(row.id),
