@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import EstateImageUpload from "@/components/estate-image-upload";
 
 type EstateProperty = {
   title: string;
@@ -77,6 +78,16 @@ export default function EstateBuilder() {
     }));
   }
 
+  function appendPropertyImage(index: number, url: string) {
+    setDraft((current) => ({
+      ...current,
+      properties: current.properties.map((property, propertyIndex) => {
+        if (propertyIndex !== index || property.imageUrls.includes(url) || property.imageUrls.length >= 12) return property;
+        return { ...property, imageUrls: [...property.imageUrls, url] };
+      }),
+    }));
+  }
+
   function addProperty() {
     setDraft((current) => current.properties.length >= 50 ? current : ({ ...current, properties: [...current.properties, blankProperty(current.city)] }));
   }
@@ -124,7 +135,9 @@ export default function EstateBuilder() {
           <div className="estate-two-cols"><label>Preço<input value={property.price} onChange={(e) => updateProperty(index, "price", e.target.value)} maxLength={40} /></label><label>Tipo<input value={property.propertyType} onChange={(e) => updateProperty(index, "propertyType", e.target.value)} maxLength={40} /></label></div>
           <label>Localização<input value={property.location} onChange={(e) => updateProperty(index, "location", e.target.value)} maxLength={120} /></label>
           <label>Descrição<textarea value={property.description} onChange={(e) => updateProperty(index, "description", e.target.value)} maxLength={1200} /></label>
+          <EstateImageUpload onUploaded={(url) => appendPropertyImage(index, url)} />
           <label>Fotos por URL HTTPS<textarea value={property.imageUrls.join("\n")} onChange={(e) => updateProperty(index, "imageUrls", e.target.value.split("\n").map((value) => value.trim()).filter(Boolean).slice(0, 12))} placeholder="https://...\nhttps://..." /></label>
+          {property.imageUrls.length > 0 ? <small>{property.imageUrls.length}/12 foto(s) adicionada(s)</small> : null}
           {draft.properties.length > 1 ? <button className="danger-link" type="button" onClick={() => removeProperty(index)}>Remover imóvel</button> : null}
         </fieldset>)}
 
