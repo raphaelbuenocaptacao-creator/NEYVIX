@@ -36,13 +36,54 @@ export async function ensureMailbox(email: string, displayName?: string) {
     INSERT INTO public.mailboxes (user_id, address, display_name)
     SELECT u.id, ${normalized}, ${displayName?.trim().slice(0, 120) || null}
     FROM public.users u
-    WHERE lower(u.email) = ${normalized}
+    WHERE lower(u.email) = ${normalized} AND u.is_active = true
     ON CONFLICT (address) DO UPDATE SET
       display_name = COALESCE(EXCLUDED.display_name, public.mailboxes.display_name),
       updated_at = now()
     RETURNING id, address
   ` as Array<{ id: string; address: string }>;
   return rows[0] ?? null;
+}
+
+export async function saveInboundMessage(input: {
+  providerMessageId: string;
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  receivedAt?: string;
+}) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return { ok: false as const, reason: "database_unavailable" };
+
+  const mailbox = await ensureMailbox(input.to);
+  if (!mailbox) return { ok: false as const, reason: "recipient_not_found" };
+
+  const receivedAt = input.receivedAt && !Number.isNaN(Date.parse(input.receivedAt)) ? input.receivedAt : null;
+  const rows = await sql`
+    WITH existing AS (
+      SELECT id FROM public.messages WHERE provider_message_id = ${input.providerMessageId} LIMIT 1
+    ), inserted AS (
+      INSERT INTO public.messages (
+        mailbox_id, provider_message_id, sender_address, recipient_address,
+        subject, body_text, body_html, folder, status, is_read, received_at
+      )
+      SELECT
+        ${String(mailbox.id)}, ${input.providerMessageId}, ${input.from}, ${input.to},
+        ${input.subject.slice(0, 240)}, ${input.text}, ${input.html?.trim() || null},
+        'inbox', 'received', false, COALESCE(${receivedAt}::timestamptz, now())
+      WHERE NOT EXISTS (SELECT 1 FROM existing)
+      RETURNING id
+    )
+    SELECT
+      COALESCE((SELECT id FROM inserted), (SELECT id FROM existing)) AS id,
+      EXISTS (SELECT 1 FROM existing) AS duplicate
+  ` as Array<{ id: string | null; duplicate: boolean }>;
+
+  const row = rows[0];
+  if (!row?.id) return { ok: false as const, reason: "persist_failed" };
+  return { ok: true as const, duplicate: Boolean(row.duplicate), messageId: String(row.id) };
 }
 
 export async function saveSentMessage(input: { email: string; displayName?: string; to: string; subject: string; text: string; providerMessageId?: string | null }) {
