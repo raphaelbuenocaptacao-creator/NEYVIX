@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { saveAiMessage } from "@/lib/db";
+import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
@@ -25,6 +26,11 @@ export async function POST(request: Request) {
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
 
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+
+  const access = await getProductAccess(session.email, "ai");
+  if (!access.allowed) {
+    return NextResponse.json(upgradeRequiredPayload("ai", "Start"), { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
 
   let body: unknown;
   try {

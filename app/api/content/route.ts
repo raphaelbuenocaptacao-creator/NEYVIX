@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { listContentItems, saveContentItem } from "@/lib/db";
+import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_KIND_LENGTH = 80;
 const MAX_PROMPT_LENGTH = 8_000;
@@ -13,9 +14,20 @@ async function getSession() {
   return readActiveSession(store.get(SESSION_COOKIE)?.value);
 }
 
+async function ensureContentAccess(email: string) {
+  const access = await getProductAccess(email, "content");
+  return access.allowed ? null : NextResponse.json(
+    upgradeRequiredPayload("content", "Start"),
+    { status: 403, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+
+  const denied = await ensureContentAccess(session.email);
+  if (denied) return denied;
 
   try {
     const items = await listContentItems(session.email, 10);
@@ -29,6 +41,9 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+
+  const denied = await ensureContentAccess(session.email);
+  if (denied) return denied;
 
   const body = await request.json().catch(() => null) as { kind?: unknown; prompt?: unknown; content?: unknown } | null;
   const kind = typeof body?.kind === "string" ? body.kind.trim() : "";
