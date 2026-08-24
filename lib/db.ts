@@ -25,7 +25,7 @@ export function hasDatabase() {
   return Boolean(process.env.DATABASE_URL?.trim());
 }
 
-export async function createDatabaseUser(name: string, email: string, password: string, requestedPlan?: string) {
+export async function createDatabaseUser(name: string, email: string, password: string) {
   const sql = getSql();
   if (!sql) return null;
 
@@ -33,7 +33,6 @@ export async function createDatabaseUser(name: string, email: string, password: 
   const passwordHash = encodePassword(password);
   const normalizedEmail = email.trim().toLowerCase();
   const cleanName = name.trim().slice(0, 80);
-  const plan = ["start", "pro", "business"].includes(requestedPlan ?? "") ? requestedPlan! : "pro";
 
   const users = await sql`
     INSERT INTO public.users (id, email, password_hash, name, is_active, is_superadmin)
@@ -47,16 +46,12 @@ export async function createDatabaseUser(name: string, email: string, password: 
 
   await sql`
     INSERT INTO public.subscriptions (project_id, user_id, status, trial_started_at, trial_ends_at, metadata)
-    SELECT p.id, ${user.id}, 'trialing', now(), now() + (p.trial_days || ' days')::interval,
-      jsonb_build_object('source', 'neyvix-id', 'requested_plan', ${plan})
+    SELECT p.id, ${user.id}, 'trialing', now(), now() + (p.trial_days || ' days')::interval, '{"source":"neyvix-id"}'::jsonb
     FROM public.projects p
     WHERE p.slug = 'neyvix' AND p.is_active = true
-    ON CONFLICT (project_id, user_id) DO UPDATE SET
-      metadata = COALESCE(public.subscriptions.metadata, '{}'::jsonb) || jsonb_build_object('requested_plan', ${plan})
+    ON CONFLICT (project_id, user_id) DO NOTHING
   `;
 
-  -- Commercial migration is additive and may not be applied in every preview yet.
-  -- Plan intent remains safely persisted in metadata until plan_id is available.
   return { id: user.id, email: user.email, name: user.name || cleanName };
 }
 
@@ -156,13 +151,31 @@ export async function getRecentActivity(email: string, limit = 12) {
   return sql`
     SELECT * FROM (
       SELECT 'ai'::text AS source, role::text AS kind, left(content, 180) AS summary, created_at
-      FROM public.neyvix_ai_messages m JOIN public.users u ON u.id = m.user_id WHERE u.email = ${normalizedEmail}
-      UNION ALL SELECT 'studio'::text, status::text, title, updated_at FROM public.neyvix_studio_projects p JOIN public.users u ON u.id = p.user_id WHERE u.email = ${normalizedEmail}
-      UNION ALL SELECT 'content'::text, kind::text, left(content, 180), created_at FROM public.neyvix_content_items c JOIN public.users u ON u.id = c.user_id WHERE u.email = ${normalizedEmail}
-      UNION ALL SELECT 'estate'::text, s.status::text, s.brand || ' · ' || s.city, s.updated_at FROM public.neyvix_estate_sites s JOIN public.users u ON u.id = s.user_id WHERE u.email = ${normalizedEmail}
-      UNION ALL SELECT 'automation'::text, a.status::text, a.name, a.updated_at FROM public.neyvix_automations a JOIN public.users u ON u.id = a.user_id WHERE u.email = ${normalizedEmail}
-      UNION ALL SELECT 'approval'::text, r.status::text, r.title, COALESCE(r.decided_at, r.created_at) FROM public.neyvix_approval_requests r JOIN public.users u ON u.id = r.requested_by WHERE u.email = ${normalizedEmail}
-    ) activity ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(limit, 30))}
+      FROM public.neyvix_ai_messages m JOIN public.users u ON u.id = m.user_id
+      WHERE u.email = ${normalizedEmail}
+      UNION ALL
+      SELECT 'studio'::text AS source, status::text AS kind, title AS summary, updated_at AS created_at
+      FROM public.neyvix_studio_projects p JOIN public.users u ON u.id = p.user_id
+      WHERE u.email = ${normalizedEmail}
+      UNION ALL
+      SELECT 'content'::text AS source, kind::text AS kind, left(content, 180) AS summary, created_at
+      FROM public.neyvix_content_items c JOIN public.users u ON u.id = c.user_id
+      WHERE u.email = ${normalizedEmail}
+      UNION ALL
+      SELECT 'estate'::text AS source, s.status::text AS kind, s.brand || ' · ' || s.city AS summary, s.updated_at AS created_at
+      FROM public.neyvix_estate_sites s JOIN public.users u ON u.id = s.user_id
+      WHERE u.email = ${normalizedEmail}
+      UNION ALL
+      SELECT 'automation'::text AS source, a.status::text AS kind, a.name AS summary, a.updated_at AS created_at
+      FROM public.neyvix_automations a JOIN public.users u ON u.id = a.user_id
+      WHERE u.email = ${normalizedEmail}
+      UNION ALL
+      SELECT 'approval'::text AS source, r.status::text AS kind, r.title AS summary, COALESCE(r.decided_at, r.created_at) AS created_at
+      FROM public.neyvix_approval_requests r JOIN public.users u ON u.id = r.requested_by
+      WHERE u.email = ${normalizedEmail}
+    ) activity
+    ORDER BY created_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 30))}
   `;
 }
 
@@ -171,38 +184,119 @@ export async function getTrialStatus(email: string) {
   if (!sql) return null;
   const rows = await sql`
     SELECT s.status, s.trial_started_at, s.trial_ends_at, p.slug AS project_slug
-    FROM public.subscriptions s JOIN public.users u ON u.id = s.user_id JOIN public.projects p ON p.id = s.project_id
-    WHERE u.email = ${email.trim().toLowerCase()} AND p.slug = 'neyvix' LIMIT 1
+    FROM public.subscriptions s
+    JOIN public.users u ON u.id = s.user_id
+    JOIN public.projects p ON p.id = s.project_id
+    WHERE u.email = ${email.trim().toLowerCase()} AND p.slug = 'neyvix'
+    LIMIT 1
   `;
   return rows[0] ?? null;
 }
 
-export type AdminActivityItem = { source: string; kind: string; summary: string; createdAt: string };
-export type AdminUserSummary = { id: string; name: string; email: string; active: boolean; superadmin: boolean; createdAt: string; subscriptionStatus: string | null; trialEndsAt: string | null; aiMessages: number; studioProjects: number; contentItems: number; recentAi: { role: string; content: string; createdAt: string }[]; recentActivity: AdminActivityItem[] };
+export type AdminActivityItem = {
+  source: string;
+  kind: string;
+  summary: string;
+  createdAt: string;
+};
+
+export type AdminUserSummary = {
+  id: string;
+  name: string;
+  email: string;
+  active: boolean;
+  superadmin: boolean;
+  createdAt: string;
+  subscriptionStatus: string | null;
+  trialEndsAt: string | null;
+  aiMessages: number;
+  studioProjects: number;
+  contentItems: number;
+  recentAi: { role: string; content: string; createdAt: string }[];
+  recentActivity: AdminActivityItem[];
+};
 
 export async function getAdminUserSummaries(limit = 24): Promise<AdminUserSummary[]> {
-  const sql = getSql(); if (!sql) return [];
+  const sql = getSql();
+  if (!sql) return [];
+
   const users = await sql`
-    SELECT u.id, COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name, u.email, u.is_active, u.is_superadmin, u.created_at,
-      s.status AS subscription_status, s.trial_ends_at,
+    SELECT
+      u.id,
+      COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
+      u.email,
+      u.is_active,
+      u.is_superadmin,
+      u.created_at,
+      s.status AS subscription_status,
+      s.trial_ends_at,
       (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages,
       (SELECT count(*)::int FROM public.neyvix_studio_projects p WHERE p.user_id = u.id) AS studio_projects,
       (SELECT count(*)::int FROM public.neyvix_content_items c WHERE c.user_id = u.id) AS content_items
-    FROM public.users u LEFT JOIN public.subscriptions s ON s.user_id = u.id AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
-    ORDER BY u.created_at DESC LIMIT ${Math.max(1, Math.min(limit, 100))}
+    FROM public.users u
+    LEFT JOIN public.subscriptions s
+      ON s.user_id = u.id
+     AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
+    ORDER BY u.created_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 100))}
   `;
+
   return Promise.all(users.map(async (row) => {
-    const recent = await sql`SELECT role, content, created_at FROM public.neyvix_ai_messages WHERE user_id = ${String(row.id)} ORDER BY created_at DESC LIMIT 8`;
+    const recent = await sql`
+      SELECT role, content, created_at
+      FROM public.neyvix_ai_messages
+      WHERE user_id = ${String(row.id)}
+      ORDER BY created_at DESC
+      LIMIT 8
+    `;
+
     const activity = await sql`
       SELECT * FROM (
-        SELECT 'ai'::text AS source, role::text AS kind, left(content, 160) AS summary, created_at FROM public.neyvix_ai_messages WHERE user_id = ${String(row.id)}
-        UNION ALL SELECT 'studio'::text, status::text, title, updated_at FROM public.neyvix_studio_projects WHERE user_id = ${String(row.id)}
-        UNION ALL SELECT 'content'::text, kind::text, left(content, 160), created_at FROM public.neyvix_content_items WHERE user_id = ${String(row.id)}
-        UNION ALL SELECT 'estate'::text, status::text, brand || ' · ' || city, updated_at FROM public.neyvix_estate_sites WHERE user_id = ${String(row.id)}
-        UNION ALL SELECT 'automation'::text, status::text, name, updated_at FROM public.neyvix_automations WHERE user_id = ${String(row.id)}
-        UNION ALL SELECT 'approval'::text, status::text, title, COALESCE(decided_at, created_at) FROM public.neyvix_approval_requests WHERE requested_by = ${String(row.id)}
-      ) timeline ORDER BY created_at DESC LIMIT 12
+        SELECT 'ai'::text AS source, role::text AS kind, left(content, 160) AS summary, created_at
+        FROM public.neyvix_ai_messages WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'studio'::text AS source, status::text AS kind, title AS summary, updated_at AS created_at
+        FROM public.neyvix_studio_projects WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'content'::text AS source, kind::text AS kind, left(content, 160) AS summary, created_at
+        FROM public.neyvix_content_items WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'estate'::text AS source, status::text AS kind, brand || ' · ' || city AS summary, updated_at AS created_at
+        FROM public.neyvix_estate_sites WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'automation'::text AS source, status::text AS kind, name AS summary, updated_at AS created_at
+        FROM public.neyvix_automations WHERE user_id = ${String(row.id)}
+        UNION ALL
+        SELECT 'approval'::text AS source, status::text AS kind, title AS summary, COALESCE(decided_at, created_at) AS created_at
+        FROM public.neyvix_approval_requests WHERE requested_by = ${String(row.id)}
+      ) timeline
+      ORDER BY created_at DESC
+      LIMIT 12
     `;
-    return { id: String(row.id), name: String(row.name ?? "Usuário NEYVIX"), email: String(row.email), active: Boolean(row.is_active), superadmin: Boolean(row.is_superadmin), createdAt: String(row.created_at), subscriptionStatus: row.subscription_status ? String(row.subscription_status) : null, trialEndsAt: row.trial_ends_at ? String(row.trial_ends_at) : null, aiMessages: Number(row.ai_messages ?? 0), studioProjects: Number(row.studio_projects ?? 0), contentItems: Number(row.content_items ?? 0), recentAi: recent.map((item) => ({ role: String(item.role), content: String(item.content), createdAt: String(item.created_at) })), recentActivity: activity.map((item) => ({ source: String(item.source), kind: String(item.kind), summary: String(item.summary), createdAt: String(item.created_at) })) } satisfies AdminUserSummary;
+
+    return {
+      id: String(row.id),
+      name: String(row.name ?? "Usuário NEYVIX"),
+      email: String(row.email),
+      active: Boolean(row.is_active),
+      superadmin: Boolean(row.is_superadmin),
+      createdAt: String(row.created_at),
+      subscriptionStatus: row.subscription_status ? String(row.subscription_status) : null,
+      trialEndsAt: row.trial_ends_at ? String(row.trial_ends_at) : null,
+      aiMessages: Number(row.ai_messages ?? 0),
+      studioProjects: Number(row.studio_projects ?? 0),
+      contentItems: Number(row.content_items ?? 0),
+      recentAi: recent.map((item) => ({
+        role: String(item.role),
+        content: String(item.content),
+        createdAt: String(item.created_at),
+      })),
+      recentActivity: activity.map((item) => ({
+        source: String(item.source),
+        kind: String(item.kind),
+        summary: String(item.summary),
+        createdAt: String(item.created_at),
+      })),
+    } satisfies AdminUserSummary;
   }));
 }
