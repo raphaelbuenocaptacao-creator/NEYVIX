@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { processBillingEvent } from "@/lib/billing-db";
+import { processBillingEvent, type BillingEventInput } from "@/lib/billing-db";
 
 function safeEqual(a: string, b: string) {
   const left = Buffer.from(a);
@@ -38,7 +38,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
     }
 
-    const result = await processBillingEvent({ ...body, payload: body });
+    const event: BillingEventInput = {
+      provider: body.provider,
+      eventId: body.eventId,
+      type: body.type,
+      email: body.email,
+      plan: body.plan,
+      customerId: body.customerId ?? null,
+      subscriptionId: body.subscriptionId ?? null,
+      periodStart: body.periodStart ?? null,
+      periodEnd: body.periodEnd ?? null,
+      cancelAtPeriodEnd: body.cancelAtPeriodEnd ?? false,
+      payload: body,
+    };
+
+    const result = await processBillingEvent(event);
     if (!result.ok) {
       const status = result.reason === "account_or_plan_not_found" ? 404 : 400;
       return NextResponse.json({ ok: false, error: result.reason }, { status });
