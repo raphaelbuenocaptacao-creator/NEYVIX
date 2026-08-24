@@ -3,6 +3,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getDatabaseUserByEmail, getTrialStatus } from "@/lib/db";
 import { getEntitlements } from "@/lib/entitlements";
+import { getUserRole } from "@/lib/user-role";
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,15 +15,19 @@ export async function GET(request: NextRequest) {
     let account = null;
     let trial = null;
     let entitlements = null;
+    let role: "member" | "cro" | "admin" | "superadmin" = "member";
     try {
-      [account, trial, entitlements] = await Promise.all([
+      [account, trial, entitlements, role] = await Promise.all([
         getDatabaseUserByEmail(session.email),
         getTrialStatus(session.email),
         getEntitlements(session.email),
+        getUserRole(session.email),
       ]);
     } catch (error) {
       console.warn("NEYVIX ID metadata is temporarily unavailable", error);
     }
+
+    if (role === "member" && (session.isSuperadmin || account?.is_superadmin)) role = "superadmin";
 
     return NextResponse.json({
       authenticated: true,
@@ -30,7 +35,7 @@ export async function GET(request: NextRequest) {
         email: session.email,
         name: session.name,
         active: true,
-        role: session.isSuperadmin || account?.is_superadmin ? "superadmin" : "member",
+        role,
       },
       subscription: trial ? {
         status: trial.status ?? null,
