@@ -2,10 +2,10 @@ import { getHealthStatus } from "@/lib/health";
 
 const modules = {
   id: "beta",
-  mail: "beta-read",
+  mail: "beta-send-ready",
   admin: "beta",
   automation: "beta",
-  estate: "beta",
+  estate: "beta-persistence-ready",
   pwa: "installable-ready",
   deploy: "mvp",
   chat: "schema-ready",
@@ -18,7 +18,7 @@ const modules = {
   docs: "schema-ready",
   business: "schema-ready",
   plans: "commercial-surface-ready",
-  pay: "architecture-only",
+  pay: "webhook-ready",
   cloud: "architecture-only",
 } as const;
 
@@ -30,11 +30,14 @@ export async function GET() {
   const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
   const aiGatewayConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim());
   const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim());
+  const mailTransportConfigured = Boolean(process.env.NEYVIX_MAIL_TRANSPORT_URL?.trim());
   const paymentProviderConfigured = Boolean(process.env.NEYVIX_PAYMENT_PROVIDER?.trim());
+  const billingWebhookConfigured = Boolean(process.env.NEYVIX_BILLING_WEBHOOK_SECRET?.trim());
+  const storageConfigured = Boolean(process.env.NEYVIX_STORAGE_UPLOAD_URL?.trim());
   const runningOnVercel = Boolean(process.env.VERCEL);
 
   const ok = health.ok && (!production || sessionSecretConfigured);
-  const commercialReady = ok && paymentProviderConfigured;
+  const commercialReady = ok && paymentProviderConfigured && billingWebhookConfigured;
 
   return Response.json({
     ok,
@@ -47,10 +50,16 @@ export async function GET() {
       databaseConfigured: health.database !== "not_configured",
       databaseConnected: health.database === "connected",
       neyvixProjectReady: health.project === "ready",
+      billingDatabaseReady: health.billing === "ready",
+      mailDatabaseReady: health.mail === "ready",
+      estateDatabaseReady: health.estate === "ready",
       sessionSecretConfigured,
       aiGatewayConfigured,
       mailDomainConfigured,
+      mailTransportConfigured,
       paymentProviderConfigured,
+      billingWebhookConfigured,
+      storageConfigured,
       commercialReady,
       runningOnVercel,
       pwaManifestReady: true,
