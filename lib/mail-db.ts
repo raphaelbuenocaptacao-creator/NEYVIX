@@ -1,5 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 
+export type MailFolder = "inbox" | "sent";
+
 export type MailListItem = {
   id: string;
   sender: string;
@@ -105,14 +107,15 @@ export async function saveSentMessage(input: { email: string; displayName?: stri
   return rows[0] ?? null;
 }
 
-export async function listMailMessages(email: string, limit = 30): Promise<MailListItem[]> {
+export async function listMailMessages(email: string, limit = 30, folder: MailFolder = "inbox"): Promise<MailListItem[]> {
   const sql = getSql();
   if (!sql || !(await mailSchemaReady(sql))) return [];
+  const safeFolder: MailFolder = folder === "sent" ? "sent" : "inbox";
 
   const rows = await sql`
     SELECT
       m.id,
-      m.sender_address,
+      CASE WHEN m.folder = 'sent' THEN m.recipient_address ELSE m.sender_address END AS correspondent,
       m.subject,
       left(COALESCE(NULLIF(m.body_text, ''), '[Mensagem sem prévia]'), 180) AS preview,
       m.folder,
@@ -123,12 +126,12 @@ export async function listMailMessages(email: string, limit = 30): Promise<MailL
     JOIN public.mailboxes mb ON mb.id = m.mailbox_id
     JOIN public.users u ON u.id = mb.user_id
     WHERE lower(u.email) = ${email.trim().toLowerCase()}
-      AND m.folder = 'inbox'
+      AND m.folder = ${safeFolder}
     ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
     LIMIT ${Math.max(1, Math.min(limit, 100))}
   ` as Array<{
     id: string;
-    sender_address: string;
+    correspondent: string;
     subject: string | null;
     preview: string | null;
     folder: string | null;
@@ -139,10 +142,10 @@ export async function listMailMessages(email: string, limit = 30): Promise<MailL
 
   return rows.map((row) => ({
     id: String(row.id),
-    sender: String(row.sender_address),
+    sender: String(row.correspondent),
     subject: String(row.subject || "(Sem assunto)"),
     preview: String(row.preview || ""),
-    folder: String(row.folder || "inbox"),
+    folder: String(row.folder || safeFolder),
     isRead: Boolean(row.is_read),
     isStarred: Boolean(row.is_starred),
     occurredAt: String(row.occurred_at),

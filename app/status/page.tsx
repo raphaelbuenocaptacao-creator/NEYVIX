@@ -22,6 +22,7 @@ export default async function StatusPage() {
     ["Checkout", flag(health.integrations.checkout && health.integrations.billingWebhook), "Entrada comercial e confirmação automática"],
     ["Enforcement de planos", flag(health.integrations.planEnforcement), "Bloqueio/liberação de recursos conforme assinatura"],
     ["Envio externo Mail", flag(health.integrations.mailTransport), "Transporte de e-mail para provedores externos"],
+    ["Entrada externa Mail", flag(health.integrations.mailInbound), "Recebimento autenticado de mensagens por webhook"],
     ["Storage", flag(health.integrations.storage), "Upload externo de imagens do Estate"],
   ] as const;
 

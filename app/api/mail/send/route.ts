@@ -43,5 +43,5 @@ export async function POST(request: Request) {
     providerMessageId: result.providerMessageId,
   });
 
-  return NextResponse.redirect(new URL("/mail?sent=1", request.url), 303);
+  return NextResponse.redirect(new URL("/mail?folder=sent&sent=1", request.url), 303);
 }
