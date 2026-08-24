@@ -2,6 +2,7 @@ export type StoredAsset = { url: string; providerId?: string | null };
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxBytes = 8 * 1024 * 1024;
+const STORAGE_TIMEOUT_MS = 20_000;
 
 export function validateImage(file: File) {
   if (!allowedTypes.has(file.type)) return { ok: false as const, reason: "unsupported_type" };
@@ -23,8 +24,11 @@ export async function uploadImage(file: File, owner: string): Promise<{ ok: true
 
   const form = new FormData();
   form.set("file", file, file.name.slice(0, 120));
-  form.set("owner", owner);
+  form.set("owner", owner.slice(0, 240));
   form.set("scope", "neyvix-estate");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), STORAGE_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -32,14 +36,22 @@ export async function uploadImage(file: File, owner: string): Promise<{ ok: true
       headers: { "Authorization": `Bearer ${secret}`, "X-NEYVIX-Source": "estate" },
       body: form,
       cache: "no-store",
+      signal: controller.signal,
     });
     if (!response.ok) return { ok: false, reason: "storage_failed" };
-    const data = await response.json().catch(() => ({})) as { url?: string; id?: string; assetId?: string };
-    if (!data.url) return { ok: false, reason: "storage_invalid_response" };
-    const publicUrl = new URL(data.url);
+    const data = await response.json().catch(() => ({})) as { url?: unknown; id?: unknown; assetId?: unknown };
+    if (typeof data.url !== "string" || data.url.length > 2048) return { ok: false, reason: "storage_invalid_response" };
+
+    let publicUrl: URL;
+    try { publicUrl = new URL(data.url); } catch { return { ok: false, reason: "storage_invalid_response" }; }
     if (publicUrl.protocol !== "https:") return { ok: false, reason: "storage_invalid_response" };
-    return { ok: true, asset: { url: publicUrl.toString(), providerId: data.id ?? data.assetId ?? null } };
-  } catch {
-    return { ok: false, reason: "storage_failed" };
+
+    const rawProviderId = typeof data.id === "string" ? data.id : typeof data.assetId === "string" ? data.assetId : null;
+    return { ok: true, asset: { url: publicUrl.toString(), providerId: rawProviderId?.slice(0, 240) ?? null } };
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    return { ok: false, reason: timedOut ? "storage_timeout" : "storage_failed" };
+  } finally {
+    clearTimeout(timeout);
   }
 }
