@@ -13,6 +13,7 @@ export type HealthStatus = {
     checkout: boolean;
     planEnforcement: boolean;
     mailTransport: boolean;
+    mailInbound: boolean;
     storage: boolean;
   };
   launchReady: boolean;
@@ -33,9 +34,10 @@ function integrationStatus() {
   ].every(validHttps);
   const planEnforcement = process.env.NEYVIX_ENFORCE_PLANS === "true";
   const mailTransport = validHttps(process.env.MAIL_TRANSPORT_URL) && Boolean(process.env.MAIL_TRANSPORT_SECRET?.trim());
+  const mailInbound = Boolean(process.env.MAIL_WEBHOOK_SECRET?.trim());
   const storage = validHttps(process.env.STORAGE_UPLOAD_URL) && Boolean((process.env.STORAGE_UPLOAD_SECRET ?? process.env.STORAGE_TOKEN)?.trim());
 
-  return { aiGateway, billingWebhook, checkout, planEnforcement, mailTransport, storage };
+  return { aiGateway, billingWebhook, checkout, planEnforcement, mailTransport, mailInbound, storage };
 }
 
 export async function getHealthStatus(): Promise<HealthStatus> {
