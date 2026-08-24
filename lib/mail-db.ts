@@ -17,17 +17,54 @@ function getSql() {
   return neon(url);
 }
 
-export async function listMailMessages(email: string, limit = 30): Promise<MailListItem[]> {
-  const sql = getSql();
-  if (!sql) return [];
-
+async function mailSchemaReady(sql: ReturnType<typeof neon>) {
   const registry = await sql`
     SELECT
       to_regclass('public.mailboxes')::text AS mailboxes_table,
       to_regclass('public.messages')::text AS messages_table
   `;
+  return Boolean(registry[0]?.mailboxes_table && registry[0]?.messages_table);
+}
 
-  if (!registry[0]?.mailboxes_table || !registry[0]?.messages_table) return [];
+export async function ensureMailbox(email: string, displayName?: string) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return null;
+  const normalized = email.trim().toLowerCase();
+  const rows = await sql`
+    INSERT INTO public.mailboxes (user_id, address, display_name)
+    SELECT u.id, ${normalized}, ${displayName?.trim().slice(0, 120) || null}
+    FROM public.users u
+    WHERE lower(u.email) = ${normalized}
+    ON CONFLICT (address) DO UPDATE SET
+      display_name = COALESCE(EXCLUDED.display_name, public.mailboxes.display_name),
+      updated_at = now()
+    RETURNING id, address
+  `;
+  return rows[0] ?? null;
+}
+
+export async function saveSentMessage(input: { email: string; displayName?: string; to: string; subject: string; text: string; providerMessageId?: string | null }) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return null;
+  const mailbox = await ensureMailbox(input.email, input.displayName);
+  if (!mailbox) return null;
+  const rows = await sql`
+    INSERT INTO public.messages (
+      mailbox_id, provider_message_id, sender_address, recipient_address,
+      subject, body_text, folder, status, is_read, sent_at
+    ) VALUES (
+      ${String(mailbox.id)}, ${input.providerMessageId ?? null}, ${input.email.trim().toLowerCase()},
+      ${input.to.trim().toLowerCase()}, ${input.subject.trim().slice(0, 240)}, ${input.text.trim()},
+      'sent', 'sent', true, now()
+    )
+    RETURNING id, created_at
+  `;
+  return rows[0] ?? null;
+}
+
+export async function listMailMessages(email: string, limit = 30): Promise<MailListItem[]> {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return [];
 
   const rows = await sql`
     SELECT
