@@ -7,6 +7,17 @@ function getSql() {
   return url ? neon(url) : null;
 }
 
+export function canAccessAdmin(role: NeyvixRole) {
+  return role === "cro" || role === "admin" || role === "superadmin";
+}
+
+export function roleLabel(role: NeyvixRole) {
+  if (role === "cro") return "CRO";
+  if (role === "admin") return "ADMIN";
+  if (role === "superadmin") return "SUPERADMIN";
+  return "MEMBRO";
+}
+
 export async function getUserRole(email: string): Promise<NeyvixRole> {
   const sql = getSql();
   if (!sql) return "member";
