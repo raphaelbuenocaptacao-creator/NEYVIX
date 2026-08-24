@@ -1,15 +1,10 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import EstateBuilder from "@/components/estate-builder";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { requireActiveSession } from "@/lib/require-active-session";
 import "./estate.css";
 
 export default async function EstatePage() {
-  const store = await cookies();
-  let session = null;
-  try { session = readSession(store.get(SESSION_COOKIE)?.value); } catch { session = null; }
-  if (!session) redirect("/login?next=/estate");
+  await requireActiveSession("/estate");
 
   return <main className="shell estate-shell">
     <section className="hero estate-hero">
