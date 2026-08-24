@@ -36,6 +36,25 @@ export function isPlanEnforcementEnabled() {
   return process.env.NEYVIX_ENFORCE_PLANS === "true";
 }
 
+function planFromCode(code?: string | null): "start" | "pro" | "business" {
+  if (code?.startsWith("business")) return "business";
+  if (code?.startsWith("pro")) return "pro";
+  return "start";
+}
+
+function normalizeFeatures(raw: unknown, fallback: EntitlementFeature[]): EntitlementFeature[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is EntitlementFeature => typeof item === "string");
+  }
+  if (raw && typeof raw === "object") {
+    const allowed = new Set<EntitlementFeature>(BUSINESS);
+    return Object.entries(raw as Record<string, unknown>)
+      .filter(([key, value]) => value === true && allowed.has(key as EntitlementFeature))
+      .map(([key]) => key as EntitlementFeature);
+  }
+  return fallback;
+}
+
 export async function getEntitlements(email: string): Promise<Entitlements> {
   const enforcementEnabled = isPlanEnforcementEnabled();
   const sql = getSql();
@@ -48,17 +67,17 @@ export async function getEntitlements(email: string): Promise<Entitlements> {
       SELECT
         s.status,
         s.trial_ends_at,
-        p.slug AS plan_slug,
+        p.code AS plan_code,
         p.features
       FROM public.subscriptions s
       JOIN public.users u ON u.id = s.user_id
       JOIN public.projects pr ON pr.id = s.project_id AND pr.slug = 'neyvix'
-      LEFT JOIN public.neyvix_plans p ON p.id = s.plan_id
-      WHERE u.email = ${email.trim().toLowerCase()}
+      LEFT JOIN public.plans p ON p.id = s.plan_id AND p.project_id = pr.id
+      WHERE lower(u.email) = ${email.trim().toLowerCase()}
       LIMIT 1
     `;
 
-    const row = rows[0] as { status?: string; trial_ends_at?: string; plan_slug?: string; features?: unknown } | undefined;
+    const row = rows[0] as { status?: string; trial_ends_at?: string; plan_code?: string; features?: unknown } | undefined;
     if (!row) return { plan: "legacy", status: null, features: BUSINESS, trialEndsAt: null, enforcementEnabled, source: "fallback" };
 
     const status = row.status ?? null;
@@ -67,9 +86,9 @@ export async function getEntitlements(email: string): Promise<Entitlements> {
     if (trialActive) return { plan: "trial", status, features: PRO, trialEndsAt, enforcementEnabled, source: "database" };
 
     if (status === "active") {
-      const slug = row.plan_slug === "business" ? "business" : row.plan_slug === "pro" ? "pro" : "start";
+      const slug = planFromCode(row.plan_code);
       const fallbackFeatures = slug === "business" ? BUSINESS : slug === "pro" ? PRO : START;
-      const features = Array.isArray(row.features) ? row.features.filter((item): item is EntitlementFeature => typeof item === "string") : fallbackFeatures;
+      const features = normalizeFeatures(row.features, fallbackFeatures);
       return { plan: slug, status, features, trialEndsAt, enforcementEnabled, source: "database" };
     }
 
@@ -79,7 +98,7 @@ export async function getEntitlements(email: string): Promise<Entitlements> {
 
     return { plan: "legacy", status, features: BUSINESS, trialEndsAt, enforcementEnabled, source: "fallback" };
   } catch (error) {
-    console.warn("NEYVIX entitlements schema unavailable; using compatibility access", error);
+    console.warn("NEYVIX entitlements unavailable; using compatibility access", error);
     return { plan: "legacy", status: null, features: BUSINESS, trialEndsAt: null, enforcementEnabled, source: "fallback" };
   }
 }
