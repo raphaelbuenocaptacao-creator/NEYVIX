@@ -16,6 +16,7 @@ export type SessionRecord = {
   email: string;
   name: string;
   iat: number;
+  iatMs?: number;
   exp: number;
 };
 
@@ -74,7 +75,7 @@ function encrypt<T>(value: T) {
   return [iv, tag, ciphertext].map((part) => part.toString("base64url")).join(".");
 }
 
-function decrypt<T>(token?: string | null): T | null {
+function decrypt<T>(token?: string | null) {
   if (!token) return null;
   try {
     const parts = token.split(".");
@@ -127,11 +128,13 @@ export function passwordMatches(account: AccountRecord, password: string) {
 }
 
 export function createSession(account: Pick<AccountRecord, "email" | "name">) {
-  const now = Math.floor(Date.now() / 1000);
+  const issuedAtMs = Date.now();
+  const now = Math.floor(issuedAtMs / 1000);
   const session: SessionRecord = {
     email: account.email,
     name: account.name,
     iat: now,
+    iatMs: issuedAtMs,
     exp: now + SESSION_MAX_AGE_SECONDS,
   };
   return sign(session);
