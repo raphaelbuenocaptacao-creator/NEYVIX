@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { decideApproval } from "@/lib/automation-db";
+import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_NOTE = 1000;
 
@@ -13,6 +14,14 @@ async function handleDecision(request: Request, context: RouteContext) {
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
 
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+
+  const access = await getProductAccess(session.email, "approvals");
+  if (!access.allowed) {
+    return NextResponse.json(
+      upgradeRequiredPayload("approvals", "Business"),
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   const { id } = await context.params;
   if (!id || id.length > 100) return NextResponse.json({ error: "Aprovação inválida" }, { status: 400 });
