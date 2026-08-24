@@ -10,23 +10,38 @@ export type HealthStatus = {
   integrations: {
     aiGateway: boolean;
     billingWebhook: boolean;
+    checkout: boolean;
+    planEnforcement: boolean;
     mailTransport: boolean;
     storage: boolean;
   };
+  launchReady: boolean;
 };
 
+function validHttps(value: string | undefined) {
+  if (!value?.trim()) return false;
+  try { return new URL(value).protocol === "https:"; } catch { return false; }
+}
+
 function integrationStatus() {
-  return {
-    aiGateway: Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim() && process.env.NEYVIX_AI_GATEWAY_SECRET?.trim()),
-    billingWebhook: Boolean(process.env.NEYVIX_BILLING_WEBHOOK_SECRET?.trim()),
-    mailTransport: Boolean(process.env.NEYVIX_MAIL_TRANSPORT_URL?.trim() && process.env.NEYVIX_MAIL_TRANSPORT_SECRET?.trim()),
-    storage: Boolean(process.env.NEYVIX_STORAGE_UPLOAD_URL?.trim() && process.env.NEYVIX_STORAGE_TOKEN?.trim()),
-  };
+  const aiGateway = validHttps(process.env.NEYVIX_AI_GATEWAY_URL);
+  const billingWebhook = Boolean(process.env.NEYVIX_BILLING_WEBHOOK_SECRET?.trim());
+  const checkout = [
+    process.env.NEYVIX_CHECKOUT_START_URL,
+    process.env.NEYVIX_CHECKOUT_PRO_URL,
+    process.env.NEYVIX_CHECKOUT_BUSINESS_URL,
+  ].every(validHttps);
+  const planEnforcement = process.env.NEYVIX_ENFORCE_PLANS === "true";
+  const mailTransport = validHttps(process.env.MAIL_TRANSPORT_URL) && Boolean(process.env.MAIL_TRANSPORT_SECRET?.trim());
+  const storage = validHttps(process.env.STORAGE_UPLOAD_URL) && Boolean((process.env.STORAGE_UPLOAD_SECRET ?? process.env.STORAGE_TOKEN)?.trim());
+
+  return { aiGateway, billingWebhook, checkout, planEnforcement, mailTransport, storage };
 }
 
 export async function getHealthStatus(): Promise<HealthStatus> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   const integrations = integrationStatus();
+  const externalReady = Object.values(integrations).every(Boolean);
 
   if (!databaseUrl) {
     return {
@@ -37,6 +52,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       mail: "unknown",
       estate: "unknown",
       integrations,
+      launchReady: false,
     };
   }
 
@@ -59,15 +75,17 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const billingReady = Boolean(row.billing_ready);
     const mailReady = Boolean(row.mail_ready);
     const estateReady = Boolean(row.estate_ready);
+    const coreReady = projectReady && billingReady && mailReady && estateReady;
 
     return {
-      ok: projectReady && billingReady && mailReady && estateReady,
+      ok: coreReady,
       database: "connected",
       project: projectReady ? "ready" : "missing",
       billing: billingReady ? "ready" : "missing",
       mail: mailReady ? "ready" : "missing",
       estate: estateReady ? "ready" : "missing",
       integrations,
+      launchReady: coreReady && externalReady,
     };
   } catch {
     return {
@@ -78,6 +96,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       mail: "unknown",
       estate: "unknown",
       integrations,
+      launchReady: false,
     };
   }
 }
