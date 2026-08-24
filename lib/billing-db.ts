@@ -1,0 +1,87 @@
+import { neon } from "@neondatabase/serverless";
+
+export type BillingEventInput = {
+  provider: string;
+  eventId: string;
+  type: string;
+  email: string;
+  plan: "start" | "pro" | "business";
+  customerId?: string | null;
+  subscriptionId?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  cancelAtPeriodEnd?: boolean;
+  payload?: unknown;
+};
+
+function getSql() {
+  const url = process.env.DATABASE_URL?.trim();
+  return url ? neon(url) : null;
+}
+
+function normalizeStatus(type: string) {
+  const value = type.toLowerCase();
+  if (["subscription.active", "checkout.completed", "payment.succeeded", "invoice.paid"].includes(value)) return "active";
+  if (["subscription.past_due", "payment.failed", "invoice.payment_failed"].includes(value)) return "past_due";
+  if (["subscription.cancelled", "subscription.canceled"].includes(value)) return "cancelled";
+  if (["subscription.expired"].includes(value)) return "expired";
+  return null;
+}
+
+export async function processBillingEvent(input: BillingEventInput) {
+  const sql = getSql();
+  if (!sql) return { ok: false as const, reason: "database_unavailable" };
+
+  const provider = input.provider.trim().toLowerCase().slice(0, 80);
+  const eventId = input.eventId.trim().slice(0, 180);
+  const email = input.email.trim().toLowerCase();
+  const status = normalizeStatus(input.type);
+  if (!provider || !eventId || !email || !status) return { ok: false as const, reason: "invalid_event" };
+
+  const code = `${input.plan}-monthly`;
+  const payload = JSON.stringify(input.payload ?? input);
+
+  const rows = await sql`
+    WITH target AS (
+      SELECT s.id AS subscription_id, u.id AS user_id, p.id AS project_id, pl.id AS plan_id
+      FROM public.users u
+      JOIN public.projects p ON p.slug = 'neyvix' AND p.is_active = true
+      JOIN public.subscriptions s ON s.user_id = u.id AND s.project_id = p.id
+      JOIN public.plans pl ON pl.project_id = p.id AND pl.code = ${code} AND pl.is_active = true
+      WHERE lower(u.email) = ${email}
+      LIMIT 1
+    ), event_insert AS (
+      INSERT INTO public.neyvix_billing_events (provider, provider_event_id, event_type, subscription_id, payload, processed_at)
+      SELECT ${provider}, ${eventId}, ${input.type}, target.subscription_id, ${payload}::jsonb, now()
+      FROM target
+      ON CONFLICT (provider, provider_event_id) DO NOTHING
+      RETURNING subscription_id
+    ), updated AS (
+      UPDATE public.subscriptions s
+      SET
+        plan_id = target.plan_id,
+        status = ${status},
+        provider = ${provider},
+        provider_customer_id = COALESCE(${input.customerId ?? null}, s.provider_customer_id),
+        provider_subscription_id = COALESCE(${input.subscriptionId ?? null}, s.provider_subscription_id),
+        current_period_start = COALESCE(${input.periodStart ?? null}::timestamptz, s.current_period_start),
+        current_period_end = COALESCE(${input.periodEnd ?? null}::timestamptz, s.current_period_end),
+        cancel_at_period_end = ${Boolean(input.cancelAtPeriodEnd)},
+        canceled_at = CASE WHEN ${status} = 'cancelled' THEN now() ELSE s.canceled_at END,
+        updated_at = now(),
+        metadata = COALESCE(s.metadata, '{}'::jsonb) || jsonb_build_object('last_billing_event', ${eventId})
+      FROM target, event_insert
+      WHERE s.id = target.subscription_id AND event_insert.subscription_id = s.id
+      RETURNING s.id, s.status, s.plan_id
+    )
+    SELECT
+      (SELECT count(*)::int FROM target) AS target_count,
+      (SELECT count(*)::int FROM event_insert) AS event_count,
+      (SELECT count(*)::int FROM updated) AS updated_count
+  `;
+
+  const result = rows[0] as { target_count?: number; event_count?: number; updated_count?: number } | undefined;
+  if (!result || Number(result.target_count ?? 0) === 0) return { ok: false as const, reason: "account_or_plan_not_found" };
+  if (Number(result.event_count ?? 0) === 0) return { ok: true as const, duplicate: true, updated: false };
+  return { ok: true as const, duplicate: false, updated: Number(result.updated_count ?? 0) === 1 };
+}
