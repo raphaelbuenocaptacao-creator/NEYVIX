@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import PwaRegister from "@/components/pwa-register";
+import PwaInstallPrompt from "@/components/pwa-install-prompt";
 import "./globals.css";
 import "./visual-v3.css";
 
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="pt-BR">
       <body>
         <PwaRegister />
+        <PwaInstallPrompt />
         {children}
       </body>
     </html>
