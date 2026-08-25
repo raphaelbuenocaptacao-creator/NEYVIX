@@ -5,6 +5,7 @@ import { readActiveSession } from "@/lib/session";
 import { saveAiMessage } from "@/lib/db";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
+import { getMemoryContext } from "@/lib/memory-db";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
@@ -67,6 +68,16 @@ export async function POST(request: Request) {
     try { await saveAiMessage(session.email, "user", prompt); }
     catch (dbError) { console.warn("Unable to persist NEYVIX AI user message", dbError); }
 
+    let memory: Array<{ key: string; category: string; value: string }> = [];
+    if (process.env.NEYVIX_MEMORY_AI_CONTEXT === "true") {
+      try {
+        const recalled = await getMemoryContext(session.email, 8);
+        memory = recalled.map((item) => ({ ...item, value: item.value.slice(0, 800) }));
+      } catch (memoryError) {
+        console.warn("Unable to load NEYVIX Memory context", memoryError);
+      }
+    }
+
     const upstream = await fetch(gatewayUrl, {
       method: "POST",
       headers: {
@@ -74,7 +85,7 @@ export async function POST(request: Request) {
         "Accept": "text/plain, application/json",
         ...(gatewaySecret ? { "Authorization": `Bearer ${gatewaySecret}` } : {}),
       },
-      body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: session.email } }),
+      body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: session.email, memory } }),
       signal: controller.signal,
       cache: "no-store",
     });
@@ -96,7 +107,7 @@ export async function POST(request: Request) {
     try { await saveAiMessage(session.email, "assistant", text); }
     catch (dbError) { console.warn("Unable to persist NEYVIX AI assistant message", dbError); }
 
-    return NextResponse.json({ answer: text }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ answer: text, memoryUsed: memory.length }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
     return NextResponse.json({ error: timedOut ? "A solicitação da IA excedeu o tempo limite" : "Não foi possível conectar à NEYVIX AI" }, { status: timedOut ? 504 : 502 });

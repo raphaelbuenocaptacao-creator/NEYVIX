@@ -8,13 +8,18 @@ const requiredFiles = [
   "app/api/mail/send/route.ts",
   "app/api/mail/inbound/route.ts",
   "app/api/estate/upload/route.ts",
+  "app/api/memory/route.ts",
+  "app/api/memory/delete/route.ts",
+  "app/memory/page.tsx",
   "app/manifest.ts",
   "components/pwa-register.tsx",
   "public/sw.js",
   "lib/session.ts",
   "lib/entitlements.ts",
   "lib/health.ts",
+  "lib/memory-db.ts",
   "database/010_mail_core.sql",
+  "database/012_memory.sql",
 ];
 
 const missingFiles = requiredFiles.filter((file) => !existsSync(file));
@@ -34,6 +39,7 @@ const requiredEnvKeys = [
   "NEYVIX_BILLING_WEBHOOK_SECRET",
   "NEYVIX_AI_GATEWAY_URL",
   "NEYVIX_AI_GATEWAY_SECRET",
+  "NEYVIX_MEMORY_AI_CONTEXT",
   "MAIL_TRANSPORT_URL",
   "MAIL_TRANSPORT_SECRET",
   "MAIL_WEBHOOK_SECRET",
@@ -58,6 +64,12 @@ for (const signal of ["billingWebhook", "checkout", "mailTransport", "mailInboun
     console.error(`NEYVIX readiness failed: health signal missing: ${signal}`);
     process.exit(1);
   }
+}
+
+const aiRoute = readFileSync("app/api/ai/route.ts", "utf8");
+if (!aiRoute.includes("NEYVIX_MEMORY_AI_CONTEXT") || !aiRoute.includes("getMemoryContext")) {
+  console.error("NEYVIX readiness failed: AI/Memory integration contract is missing.");
+  process.exit(1);
 }
 
 console.log(`NEYVIX readiness PASS: ${requiredFiles.length} critical files and ${requiredEnvKeys.length} configuration keys verified.`);
