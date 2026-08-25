@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { listMemories } from "@/lib/memory-db";
+import SmartMemoryClient from "./smart-memory-client";
 
 export const dynamic = "force-dynamic";
 
@@ -33,8 +34,10 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
 
     {notice ? <section className="hero" style={{ marginTop: "1rem" }}><strong>{notice}</strong></section> : null}
 
+    <SmartMemoryClient />
+
     <section className="hero" style={{ marginTop: "1.5rem" }}>
-      <p className="eyebrow">SALVAR OU ATUALIZAR</p>
+      <p className="eyebrow">SALVAR OU ATUALIZAR MANUALMENTE</p>
       <form className="auth-form" action="/api/memory" method="post">
         <label>Chave<input name="key" maxLength={120} placeholder="ex.: preferencia.idioma" required /></label>
         <label>Categoria<input name="category" maxLength={60} placeholder="preferencia, negocio, projeto..." defaultValue="general" required /></label>
