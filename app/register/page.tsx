@@ -3,7 +3,7 @@ import Link from "next/link";
 const errors: Record<string, string> = {
   invalid: "Revise seu nome, endereço NEYVIX e use uma senha com pelo menos 8 caracteres.",
   taken: "Esse endereço NEYVIX já está em uso. Escolha outro identificador.",
-  config: "O cadastro está temporariamente indisponível. A infraestrutura de identidade precisa estar conectada.",
+  config: "Não foi possível conectar à identidade NEYVIX agora. Tente novamente em instantes.",
 };
 
 const planLabels: Record<string, string> = { start: "Start", pro: "Pro", business: "Business" };
