@@ -2,7 +2,7 @@ import Link from "next/link";
 
 const errors: Record<string, string> = {
   invalid: "E-mail ou senha inválidos. Confira seus dados e tente novamente.",
-  config: "O login está temporariamente indisponível. A infraestrutura de identidade precisa estar conectada.",
+  config: "Não foi possível conectar à identidade NEYVIX agora. Tente novamente em instantes.",
   rate_limit: "Muitas tentativas de login foram feitas em pouco tempo. Aguarde alguns minutos e tente novamente.",
 };
 
