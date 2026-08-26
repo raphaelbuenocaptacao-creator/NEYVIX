@@ -24,6 +24,24 @@ async function schemaReady(sql: NonNullable<ReturnType<typeof getSql>>) {
   return Boolean(rows[0]?.memories && rows[0]?.events);
 }
 
+function normalizeTerms(input: string) {
+  return new Set(input.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter((term) => term.length >= 3));
+}
+
+function relevanceScore(memory: NeyvixMemory, queryTerms: Set<string>) {
+  const keyTerms = normalizeTerms(memory.key);
+  const categoryTerms = normalizeTerms(memory.category);
+  const valueTerms = normalizeTerms(memory.value);
+  let score = Math.max(0, Math.min(memory.confidence || 0, 1));
+  for (const term of queryTerms) {
+    if (keyTerms.has(term)) score += 4;
+    if (categoryTerms.has(term)) score += 3;
+    if (valueTerms.has(term)) score += 1;
+  }
+  if (memory.lastUsedAt) score += 0.15;
+  return score;
+}
+
 export async function listMemories(email: string, limit = 50): Promise<NeyvixMemory[]> {
   const sql = getSql();
   if (!sql || !(await schemaReady(sql))) return [];
@@ -99,17 +117,30 @@ export async function deleteMemory(email: string, id: string) {
   return rows.length === 1;
 }
 
-export async function getMemoryContext(email: string, limit = 12) {
-  const memories = await listMemories(email, limit);
+export async function getRelevantMemoryContext(email: string, query: string, limit = 8) {
+  const memories = await listMemories(email, 100);
   if (memories.length === 0) return [];
+
+  const queryTerms = normalizeTerms(query);
+  const ranked = memories
+    .map((memory) => ({ memory, score: relevanceScore(memory, queryTerms) }))
+    .sort((a, b) => b.score - a.score || b.memory.updatedAt.localeCompare(a.memory.updatedAt))
+    .slice(0, Math.max(1, Math.min(limit, 12)))
+    .map(({ memory }) => memory);
+
   const sql = getSql();
-  if (sql) {
-    const ids = memories.map((m) => m.id);
+  if (sql && ranked.length) {
+    const ids = ranked.map((memory) => memory.id);
     try {
       await sql`UPDATE public.neyvix_memories SET last_used_at = now() WHERE id = ANY(${ids}::uuid[])`;
     } catch {
-      // Memory context should never break the calling product.
+      // Smart recall must never break the calling product.
     }
   }
-  return memories.map((memory) => ({ key: memory.key, category: memory.category, value: memory.value }));
+
+  return ranked.map((memory) => ({ key: memory.key, category: memory.category, value: memory.value }));
+}
+
+export async function getMemoryContext(email: string, limit = 12) {
+  return getRelevantMemoryContext(email, "", limit);
 }
