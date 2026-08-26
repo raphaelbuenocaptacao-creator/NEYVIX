@@ -7,6 +7,7 @@ import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlem
 
 const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar", "ai"],
+  ["Memory", "/memory", "Guarde contexto, preferências e decisões que acompanham você", "Lembrar", null],
   ["Studio", "/studio", "Transforme ideias em blueprints de produto", "Construir", "studio"],
   ["Content", "/content", "Crie campanhas, roteiros e materiais de lançamento", "Criar", "content"],
   ["Automation", "/automation", "Crie fluxos e mantenha ações sensíveis sob aprovação", "Automatizar", "automation"],
@@ -71,9 +72,9 @@ export default async function DashboardPage() {
       </header>
 
       <section className="command-hero-card">
-        <div className="command-hero-copy"><div className="live-pill"><span /> NEYVIX PRONTA</div><h1>O que você quer fazer acontecer?</h1><p className="muted">Comece pela intenção. A NEYVIX conecta você à inteligência, ao workspace e à camada de execução certa.</p></div>
-        <Link href="/ai" className="command-prompt-box"><span className="command-key">N</span><span className="command-placeholder">Peça para a NEYVIX criar, planejar, analisar ou automatizar…</span><span className="command-enter">Abrir AI ↗</span></Link>
-        <div className="quick-command-row"><Link href="/studio">Criar um app</Link><Link href="/estate">Criar site imobiliário</Link><Link href="/content">Criar campanha</Link><Link href="/automation">Planejar automação</Link><Link href="/plans">Ver planos</Link></div>
+        <div className="command-hero-copy"><div className="live-pill"><span /> NEYVIX PRONTA</div><h1>O que você quer fazer acontecer?</h1><p className="muted">Comece pela intenção. A NEYVIX conecta você à inteligência, à memória, ao workspace e à camada de execução certa.</p></div>
+        <Link href="/ai" className="command-prompt-box"><span className="command-key">N</span><span className="command-placeholder">Peça para a NEYVIX criar, lembrar, planejar, analisar ou automatizar…</span><span className="command-enter">Abrir AI ↗</span></Link>
+        <div className="quick-command-row"><Link href="/memory">Minha memória</Link><Link href="/studio">Criar um app</Link><Link href="/estate">Criar site imobiliário</Link><Link href="/content">Criar campanha</Link><Link href="/automation">Planejar automação</Link><Link href="/plans">Ver planos</Link></div>
       </section>
 
       <section className="command-layout">

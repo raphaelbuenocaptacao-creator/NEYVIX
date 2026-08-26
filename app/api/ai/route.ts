@@ -5,7 +5,7 @@ import { readActiveSession } from "@/lib/session";
 import { saveAiMessage } from "@/lib/db";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
-import { getMemoryContext } from "@/lib/memory-db";
+import { getRelevantMemoryContext } from "@/lib/memory-db";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     let memory: Array<{ key: string; category: string; value: string }> = [];
     if (process.env.NEYVIX_MEMORY_AI_CONTEXT === "true") {
       try {
-        const recalled = await getMemoryContext(session.email, 8);
+        const recalled = await getRelevantMemoryContext(session.email, prompt, 8);
         memory = recalled.map((item) => ({ ...item, value: item.value.slice(0, 800) }));
       } catch (memoryError) {
         console.warn("Unable to load NEYVIX Memory context", memoryError);
