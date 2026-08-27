@@ -18,6 +18,7 @@ const requiredFiles = [
   "lib/entitlements.ts",
   "lib/health.ts",
   "lib/memory-db.ts",
+  "proxy.ts",
   "database/010_mail_core.sql",
   "database/012_memory.sql",
 ];
@@ -56,6 +57,14 @@ const serviceWorker = readFileSync("public/sw.js", "utf8");
 if (!serviceWorker.includes("request.method !== \"GET\"") || !serviceWorker.includes("request.mode === \"navigate\"")) {
   console.error("NEYVIX readiness failed: service worker safety rules changed unexpectedly.");
   process.exit(1);
+}
+
+const proxy = readFileSync("proxy.ts", "utf8");
+for (const route of ["/dashboard/:path*", "/ai/:path*", "/memory/:path*", "/studio/:path*", "/content/:path*", "/automation/:path*", "/mail/:path*", "/billing/:path*", "/admin/:path*"]) {
+  if (!proxy.includes(route)) {
+    console.error(`NEYVIX readiness failed: protected route missing from proxy: ${route}`);
+    process.exit(1);
+  }
 }
 
 const health = readFileSync("lib/health.ts", "utf8");
