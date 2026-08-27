@@ -64,6 +64,7 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/ai/:path*",
+    "/memory/:path*",
     "/studio/:path*",
     "/content/:path*",
     "/automation/:path*",
