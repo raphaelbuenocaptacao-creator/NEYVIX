@@ -7,12 +7,16 @@ export async function GET() {
   const health = await getHealthStatus();
   const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
   const authReady = health.database === "connected" && sessionSecretConfigured;
-  const overallReady = health.ok && authReady;
+  const accessReady = authReady && health.project === "ready";
 
   return NextResponse.json(
     {
       service: "NEYVIX",
-      status: overallReady ? "operacional" : "degradado",
+      status: accessReady ? "operacional" : "degradado",
+      readiness: {
+        access: accessReady,
+        ecosystem: health.launchReady && authReady,
+      },
       checks: {
         database: health.database,
         project: health.project,
@@ -33,7 +37,7 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     },
     {
-      status: overallReady ? 200 : 503,
+      status: accessReady ? 200 : 503,
       headers: {
         "Cache-Control": "no-store",
       },
