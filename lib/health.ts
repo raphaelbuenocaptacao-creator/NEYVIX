@@ -7,6 +7,11 @@ export type HealthStatus = {
   billing: "ready" | "missing" | "unknown";
   mail: "ready" | "missing" | "unknown";
   estate: "ready" | "missing" | "unknown";
+  schema: {
+    automation: "ready" | "missing" | "unknown";
+    memory: "ready" | "missing" | "unknown";
+    ecosystem: "ready" | "partial" | "missing" | "unknown";
+  };
   integrations: {
     aiGateway: boolean;
     billingWebhook: boolean;
@@ -40,6 +45,14 @@ function integrationStatus() {
   return { aiGateway, billingWebhook, checkout, planEnforcement, mailTransport, mailInbound, storage };
 }
 
+function unavailableSchema() {
+  return {
+    automation: "unknown" as const,
+    memory: "unknown" as const,
+    ecosystem: "unknown" as const,
+  };
+}
+
 export async function getHealthStatus(): Promise<HealthStatus> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   const integrations = integrationStatus();
@@ -53,6 +66,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       billing: "unknown",
       mail: "unknown",
       estate: "unknown",
+      schema: unavailableSchema(),
       integrations,
       launchReady: false,
     };
@@ -69,7 +83,23 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         to_regclass('public.mailboxes') IS NOT NULL
           AND to_regclass('public.messages') IS NOT NULL AS mail_ready,
         to_regclass('public.neyvix_estate_sites') IS NOT NULL
-          AND to_regclass('public.neyvix_estate_properties') IS NOT NULL AS estate_ready
+          AND to_regclass('public.neyvix_estate_properties') IS NOT NULL AS estate_ready,
+        to_regclass('public.neyvix_automations') IS NOT NULL
+          AND to_regclass('public.neyvix_approval_requests') IS NOT NULL AS automation_ready,
+        to_regclass('public.neyvix_memories') IS NOT NULL
+          AND to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_ready,
+        (
+          (to_regclass('public.conversations') IS NOT NULL)::int +
+          (to_regclass('public.chat_messages') IS NOT NULL)::int +
+          (to_regclass('public.social_profiles') IS NOT NULL)::int +
+          (to_regclass('public.drive_items') IS NOT NULL)::int +
+          (to_regclass('public.documents') IS NOT NULL)::int +
+          (to_regclass('public.meetings') IS NOT NULL)::int +
+          (to_regclass('public.deploy_projects') IS NOT NULL)::int +
+          (to_regclass('public.cloud_resources') IS NOT NULL)::int +
+          (to_regclass('public.organizations') IS NOT NULL)::int +
+          (to_regclass('public.wallets') IS NOT NULL)::int
+        ) AS ecosystem_tables_ready
     `;
 
     const row = rows[0] ?? {};
@@ -77,6 +107,10 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const billingReady = Boolean(row.billing_ready);
     const mailReady = Boolean(row.mail_ready);
     const estateReady = Boolean(row.estate_ready);
+    const automationReady = Boolean(row.automation_ready);
+    const memoryReady = Boolean(row.memory_ready);
+    const ecosystemTablesReady = Number(row.ecosystem_tables_ready ?? 0);
+    const ecosystem = ecosystemTablesReady === 10 ? "ready" : ecosystemTablesReady > 0 ? "partial" : "missing";
     const coreReady = projectReady && billingReady && mailReady && estateReady;
 
     return {
@@ -86,8 +120,13 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       billing: billingReady ? "ready" : "missing",
       mail: mailReady ? "ready" : "missing",
       estate: estateReady ? "ready" : "missing",
+      schema: {
+        automation: automationReady ? "ready" : "missing",
+        memory: memoryReady ? "ready" : "missing",
+        ecosystem,
+      },
       integrations,
-      launchReady: coreReady && externalReady,
+      launchReady: coreReady && automationReady && memoryReady && ecosystem === "ready" && externalReady,
     };
   } catch {
     return {
@@ -97,6 +136,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       billing: "unknown",
       mail: "unknown",
       estate: "unknown",
+      schema: unavailableSchema(),
       integrations,
       launchReady: false,
     };
