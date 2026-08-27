@@ -5,18 +5,23 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const health = await getHealthStatus();
+  const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
+  const authReady = health.database === "connected" && sessionSecretConfigured;
+  const overallReady = health.ok && authReady;
 
   return NextResponse.json(
     {
       service: "NEYVIX",
-      status: health.ok ? "operacional" : "degradado",
+      status: overallReady ? "operacional" : "degradado",
       checks: {
         database: health.database,
         project: health.project,
+        auth: authReady ? "ready" : "degraded",
         billing: health.billing,
         mail: health.mail,
         estate: health.estate,
         integrations: {
+          sessionSecret: sessionSecretConfigured ? "configured" : "not_configured",
           aiGateway: health.integrations.aiGateway ? "configured" : "not_configured",
           billingWebhook: health.integrations.billingWebhook ? "configured" : "not_configured",
           mailTransport: health.integrations.mailTransport ? "configured" : "not_configured",
@@ -26,7 +31,7 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     },
     {
-      status: health.ok ? 200 : 503,
+      status: overallReady ? 200 : 503,
       headers: {
         "Cache-Control": "no-store",
       },
