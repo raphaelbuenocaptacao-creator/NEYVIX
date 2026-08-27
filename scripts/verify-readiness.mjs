@@ -66,6 +66,14 @@ for (const signal of ["billingWebhook", "checkout", "mailTransport", "mailInboun
   }
 }
 
+const healthRoute = readFileSync("app/api/health/route.ts", "utf8");
+for (const signal of ["accessReady", "readiness", "ecosystem"]) {
+  if (!healthRoute.includes(signal)) {
+    console.error(`NEYVIX readiness failed: health route signal missing: ${signal}`);
+    process.exit(1);
+  }
+}
+
 const aiRoute = readFileSync("app/api/ai/route.ts", "utf8");
 if (!aiRoute.includes("NEYVIX_MEMORY_AI_CONTEXT") || !aiRoute.includes("getMemoryContext")) {
   console.error("NEYVIX readiness failed: AI/Memory integration contract is missing.");
