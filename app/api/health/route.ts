@@ -20,6 +20,7 @@ export async function GET() {
         billing: health.billing,
         mail: health.mail,
         estate: health.estate,
+        schema: health.schema,
         integrations: {
           sessionSecret: sessionSecretConfigured ? "configured" : "not_configured",
           aiGateway: health.integrations.aiGateway ? "configured" : "not_configured",
@@ -28,6 +29,7 @@ export async function GET() {
           storage: health.integrations.storage ? "configured" : "not_configured",
         },
       },
+      launchReady: health.launchReady && authReady,
       timestamp: new Date().toISOString(),
     },
     {
