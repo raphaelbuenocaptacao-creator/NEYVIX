@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 const requiredFiles = [
   "app/api/health/route.ts",
+  "app/api/status/route.ts",
   "app/api/auth/login/route.ts",
   "app/api/auth/magic-login/route.ts",
   "app/api/ai/route.ts",
@@ -112,6 +113,26 @@ const healthRoute = readFileSync("app/api/health/route.ts", "utf8");
 for (const signal of ["accessReady", "readiness", "ecosystem"]) {
   if (!healthRoute.includes(signal)) {
     console.error(`NEYVIX readiness failed: health route signal missing: ${signal}`);
+    process.exit(1);
+  }
+}
+
+const statusRoute = readFileSync("app/api/status/route.ts", "utf8");
+for (const contract of [
+  "VERCEL_PROJECT_PRODUCTION_URL",
+  "VERCEL_URL",
+  "canonicalUrl",
+  "loginUrl",
+  "dashboardUrl",
+  "healthUrl",
+  "statusUrl",
+  "productionUrlResolved",
+  "deploymentUrlResolved",
+  '"Cache-Control": "no-store"',
+  '"Referrer-Policy": "no-referrer"',
+]) {
+  if (!statusRoute.includes(contract)) {
+    console.error(`NEYVIX readiness failed: production access contract missing: ${contract}`);
     process.exit(1);
   }
 }
