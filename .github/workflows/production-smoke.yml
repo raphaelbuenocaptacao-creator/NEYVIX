@@ -149,6 +149,42 @@ jobs:
           test "$code" = "200"
           test -s /tmp/login.html
 
+      - name: Check public registration page
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
+            -o /tmp/register.html -w '%{http_code}' \
+            "$base/register")"
+          echo "Register HTTP: $code"
+          test "$code" = "200"
+          test -s /tmp/register.html
+
+      - name: Check magic-login invalid-token boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
+            -D /tmp/magic.headers -o /dev/null -w '%{http_code}' \
+            "$base/api/auth/magic-login")"
+          echo "Magic login boundary HTTP: $code"
+          test "$code" = "303"
+          grep -Eiq '^location: .*\/login\?error=invalid' /tmp/magic.headers
+
       - name: Check unauthenticated session boundary
         shell: bash
         run: |
