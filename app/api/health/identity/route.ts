@@ -28,7 +28,7 @@ export async function GET() {
       database: "not_configured",
       signup: { ready: false },
       session,
-      magicLogin: { tokenStore: false, delivery: false, status: "unavailable" },
+      magicLogin: { tokenStore: false, request: true, consumer: true, delivery: false, audience: "active_users", status: "unavailable" },
       consistency: { activeNonAdminWithoutSubscription: null },
     }, 503);
   }
@@ -68,9 +68,10 @@ export async function GET() {
     const subscriptionsReady = Boolean(row.subscriptions_ready);
     const tokenStore = Boolean(row.token_store_ready);
     const signupReady = projectReady && usersReady && subscriptionsReady && session.ready;
-    const magicStatus = tokenStore && mailTransport && session.ready
+    const magicPipelineReady = tokenStore && usersReady && session.ready;
+    const magicStatus = magicPipelineReady && mailTransport
       ? "ready"
-      : tokenStore && session.ready
+      : magicPipelineReady
         ? "partial"
         : "unavailable";
 
@@ -87,7 +88,10 @@ export async function GET() {
       session,
       magicLogin: {
         tokenStore,
+        request: true,
+        consumer: true,
         delivery: mailTransport,
+        audience: "active_users",
         status: magicStatus,
       },
       consistency: {
@@ -105,7 +109,7 @@ export async function GET() {
       database: "error",
       signup: { ready: false },
       session,
-      magicLogin: { tokenStore: false, delivery: mailTransport, status: "unavailable" },
+      magicLogin: { tokenStore: false, request: true, consumer: true, delivery: mailTransport, audience: "active_users", status: "unavailable" },
       consistency: { activeNonAdminWithoutSubscription: null },
     }, 503);
   }
