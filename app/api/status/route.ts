@@ -1,3 +1,4 @@
+import { getSessionSecretStatus } from "@/lib/auth";
 import { getHealthStatus } from "@/lib/health";
 
 const modules = {
@@ -42,7 +43,7 @@ function getRequestOrigin(request: Request) {
 export async function GET(request: Request) {
   const health = await getHealthStatus();
   const production = process.env.NODE_ENV === "production";
-  const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
+  const sessionKey = getSessionSecretStatus();
   const aiGatewayConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim());
   const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim());
   const mailTransportConfigured = Boolean(process.env.NEYVIX_MAIL_TRANSPORT_URL?.trim());
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
     && authSchemaReady
     && hasActiveUsers
     && passwordDataReady
-    && (!production || sessionSecretConfigured);
+    && (!production || sessionKey.ready);
   const accessReady = authReady && health.project === "ready";
   const ecosystemReady = health.launchReady && authReady;
   const ok = accessReady;
@@ -102,7 +103,8 @@ export async function GET(request: Request) {
       billingDatabaseReady: health.billing === "ready",
       mailDatabaseReady: health.mail === "ready",
       estateDatabaseReady: health.estate === "ready",
-      sessionSecretConfigured,
+      sessionKeyReady: sessionKey.ready,
+      sessionKeySource: sessionKey.source,
       aiGatewayConfigured,
       mailDomainConfigured,
       mailTransportConfigured,
