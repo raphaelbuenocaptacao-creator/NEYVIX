@@ -92,8 +92,6 @@ jobs:
             return 1
           }
 
-          # Prefer the stable production alias users are expected to open. Fall back
-          # to the deployment URL emitted by Vercel for this exact commit.
           if probe "production" "${NEYVIX_PRODUCTION_CANDIDATE%/}"; then
             exit 0
           fi
@@ -131,7 +129,7 @@ jobs:
           jq -e . /tmp/status.json >/dev/null
           jq '{ok,readiness,access}' /tmp/status.json
           test "$code" = "200"
-          jq -e '.ok == true and .readiness.access == true and .access.canonicalUrlResolved == true' /tmp/status.json >/dev/null
+          jq -e '.ok == true and .readiness.access == true and .readiness.canonicalUrlResolved == true' /tmp/status.json >/dev/null
 
       - name: Check login page
         shell: bash
