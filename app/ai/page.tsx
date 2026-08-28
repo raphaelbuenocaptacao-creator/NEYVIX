@@ -5,7 +5,6 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import styles from "./page.module.css";
 
 type Message = { role: "user" | "assistant"; content: string };
-
 type HistoryMessage = { role: "user" | "assistant" | "system"; content: string; createdAt?: string };
 
 const welcomeMessage: Message = {
@@ -26,11 +25,12 @@ export default function AiPage() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState("");
   const [needsLogin, setNeedsLogin] = useState(false);
+  const [useMemory, setUseMemory] = useState(false);
+  const [memoryUsed, setMemoryUsed] = useState<number | null>(null);
   const turns = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
 
   useEffect(() => {
     let active = true;
-
     async function restoreHistory() {
       try {
         const response = await fetch("/api/ai", { method: "GET", cache: "no-store" });
@@ -45,7 +45,6 @@ export default function AiPage() {
           setError(data.error || "Seu histórico não pôde ser carregado agora. Você ainda pode continuar nesta sessão.");
           return;
         }
-
         const restored = (data.messages ?? [])
           .filter((message): message is HistoryMessage & { role: "user" | "assistant" } => message.role === "user" || message.role === "assistant")
           .map((message) => ({ role: message.role, content: message.content }));
@@ -56,7 +55,6 @@ export default function AiPage() {
         if (active) setHistoryLoading(false);
       }
     }
-
     void restoreHistory();
     return () => { active = false; };
   }, []);
@@ -67,16 +65,22 @@ export default function AiPage() {
     setError("");
     setNeedsLogin(false);
     setPrompt("");
+    setMemoryUsed(null);
     setMessages((current) => [...current, { role: "user", content: clean }]);
     setLoading(true);
     try {
-      const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: clean }) });
-      const data = (await response.json()) as { answer?: string; error?: string };
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: clean, useMemory }),
+      });
+      const data = (await response.json()) as { answer?: string; error?: string; memoryUsed?: number };
       if (response.status === 401) {
         setNeedsLogin(true);
         throw new Error("Sua sessão expirou ou sua conta precisa ser validada novamente.");
       }
       if (!response.ok || !data.answer) throw new Error(data.error || "Não foi possível obter uma resposta.");
+      setMemoryUsed(typeof data.memoryUsed === "number" ? data.memoryUsed : 0);
       setMessages((current) => [...current, { role: "assistant", content: data.answer ?? "" }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao conectar com a NEYVIX AI.");
@@ -121,6 +125,11 @@ export default function AiPage() {
             <strong>{historyLoading ? "Sincronizando" : `${turns} solicitações`}</strong>
             <small>{historyLoading ? "Carregando contexto salvo" : "Persistência NEYVIX ativa"}</small>
           </div>
+          <div className={styles.metaCard}>
+            <span>MEMORY</span>
+            <strong>{useMemory ? "Contexto autorizado" : "Privado por padrão"}</strong>
+            <small>{memoryUsed === null ? "Você controla quando usar memória" : `${memoryUsed} memórias usadas na última resposta`}</small>
+          </div>
         </aside>
 
         <section className={styles.chat}>
@@ -138,6 +147,10 @@ export default function AiPage() {
           <form className={styles.composer} onSubmit={submit}>
             <div className={styles.inputFrame}>
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Diga à NEYVIX o que você quer fazer acontecer..." maxLength={4000} rows={4} disabled={needsLogin || historyLoading} />
+              <label style={{ display: "flex", gap: ".55rem", alignItems: "center", padding: ".35rem 0" }}>
+                <input type="checkbox" checked={useMemory} onChange={(event) => setUseMemory(event.target.checked)} disabled={loading || historyLoading} />
+                Usar somente memórias que eu autorizei para a AI nesta solicitação
+              </label>
               <div className={styles.footer}>
                 <span>{prompt.length}/4000</span>
                 {needsLogin ? <Link className={styles.send} href="/login?next=/ai">Entrar novamente →</Link> : <button className={styles.send} type="submit" disabled={loading || historyLoading || !prompt.trim()}>{loading ? "Processando" : historyLoading ? "Sincronizando" : "Enviar para a NEYVIX AI →"}</button>}
