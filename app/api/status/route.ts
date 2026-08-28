@@ -31,7 +31,15 @@ function toHttpsUrl(host?: string) {
   return `https://${value}`;
 }
 
-export async function GET() {
+function getRequestOrigin(request: Request) {
+  try {
+    return new URL(request.url).origin;
+  } catch {
+    return null;
+  }
+}
+
+export async function GET(request: Request) {
   const health = await getHealthStatus();
   const production = process.env.NODE_ENV === "production";
   const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
@@ -45,7 +53,8 @@ export async function GET() {
 
   const productionUrl = toHttpsUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL);
   const deploymentUrl = toHttpsUrl(process.env.VERCEL_URL);
-  const canonicalUrl = productionUrl ?? deploymentUrl;
+  const requestOrigin = getRequestOrigin(request);
+  const canonicalUrl = productionUrl ?? deploymentUrl ?? requestOrigin;
 
   const ok = health.ok && (!production || sessionSecretConfigured);
   const commercialReady = ok && paymentProviderConfigured && billingWebhookConfigured;
@@ -58,6 +67,7 @@ export async function GET() {
     access: {
       canonicalUrl,
       deploymentUrl,
+      requestOrigin,
       loginUrl: canonicalUrl ? `${canonicalUrl}/login` : null,
       dashboardUrl: canonicalUrl ? `${canonicalUrl}/dashboard` : null,
       healthUrl: canonicalUrl ? `${canonicalUrl}/api/health` : null,
@@ -83,6 +93,8 @@ export async function GET() {
       runningOnVercel,
       productionUrlResolved: Boolean(productionUrl),
       deploymentUrlResolved: Boolean(deploymentUrl),
+      requestOriginResolved: Boolean(requestOrigin),
+      canonicalUrlResolved: Boolean(canonicalUrl),
       pwaManifestReady: true,
       serviceWorkerReady: true,
     },
