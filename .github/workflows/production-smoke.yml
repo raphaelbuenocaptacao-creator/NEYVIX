@@ -27,37 +27,54 @@ jobs:
             *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
           esac
           echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Testing deployment host: ${base#https://}"
 
       - name: Check health
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location \
+          code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
-            "${{ steps.target.outputs.base }}/api/health" \
-            -o /tmp/health.json
-          grep -q '"database":"connected"' /tmp/health.json
+            -o /tmp/health.json -w '%{http_code}' \
+            "${{ steps.target.outputs.base }}/api/health")"
+          echo "Health HTTP: $code"
+          if jq -e . /tmp/health.json >/dev/null 2>&1; then
+            jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth,schema:.checks.schema,integrations:.checks.integrations}}' /tmp/health.json
+          else
+            echo "Health response was not JSON (possible deployment protection or routing issue)." >&2
+            exit 1
+          fi
+          test "$code" = "200"
+          jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .readiness.access == true' /tmp/health.json >/dev/null
 
       - name: Check access readiness
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location \
+          code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
-            "${{ steps.target.outputs.base }}/api/status" \
-            -o /tmp/status.json
-          grep -q '"ok":true' /tmp/status.json
-          grep -q '"access":true' /tmp/status.json
-          grep -q '"canonicalUrlResolved":true' /tmp/status.json
+            -o /tmp/status.json -w '%{http_code}' \
+            "${{ steps.target.outputs.base }}/api/status")"
+          echo "Status HTTP: $code"
+          if jq -e . /tmp/status.json >/dev/null 2>&1; then
+            jq '{ok,readiness,access}' /tmp/status.json
+          else
+            echo "Status response was not JSON." >&2
+            exit 1
+          fi
+          test "$code" = "200"
+          jq -e '.ok == true and .readiness.access == true and .access.canonicalUrlResolved == true' /tmp/status.json >/dev/null
 
       - name: Check login page
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location \
+          code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
-            "${{ steps.target.outputs.base }}/login" \
-            -o /tmp/login.html
+            -o /tmp/login.html -w '%{http_code}' \
+            "${{ steps.target.outputs.base }}/login")"
+          echo "Login HTTP: $code"
+          test "$code" = "200"
           test -s /tmp/login.html
 
       - name: Check unauthenticated session boundary
@@ -68,5 +85,6 @@ jobs:
             --retry 3 --retry-delay 2 --max-time 20 \
             -o /tmp/me.json -w '%{http_code}' \
             "${{ steps.target.outputs.base }}/api/auth/me")"
+          echo "Session boundary HTTP: $code"
           test "$code" = "401"
-          grep -q '"authenticated":false' /tmp/me.json
+          jq -e '.authenticated == false' /tmp/me.json >/dev/null
