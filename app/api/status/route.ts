@@ -56,8 +56,14 @@ export async function GET(request: Request) {
   const requestOrigin = getRequestOrigin(request);
   const canonicalUrl = productionUrl ?? deploymentUrl ?? requestOrigin;
 
-  const ok = health.ok && (!production || sessionSecretConfigured);
-  const commercialReady = ok && paymentProviderConfigured && billingWebhookConfigured;
+  const authReady = health.database === "connected" && (!production || sessionSecretConfigured);
+  const accessReady = authReady && health.project === "ready";
+  const ecosystemReady = health.launchReady && authReady;
+  const ok = accessReady;
+  const commercialReady = accessReady
+    && health.billing === "ready"
+    && paymentProviderConfigured
+    && billingWebhookConfigured;
 
   return Response.json({
     ok,
@@ -74,6 +80,8 @@ export async function GET(request: Request) {
       statusUrl: canonicalUrl ? `${canonicalUrl}/api/status` : null,
     },
     readiness: {
+      access: accessReady,
+      ecosystem: ecosystemReady,
       application: true,
       ciConfigured: true,
       databaseConfigured: health.database !== "not_configured",
