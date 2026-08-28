@@ -9,6 +9,12 @@ function fromBase64Url(value: string) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+function toBase64Url(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 function decodePayload<T>(value: string): T | null {
   try {
     return JSON.parse(new TextDecoder().decode(fromBase64Url(value))) as T;
@@ -17,10 +23,31 @@ function decodePayload<T>(value: string): T | null {
   }
 }
 
+async function sha256Base64Url(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return toBase64Url(new Uint8Array(digest));
+}
+
+async function getSessionSecret() {
+  const configured = process.env.NEYVIX_SESSION_SECRET?.trim();
+  if (configured) return configured;
+
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (databaseUrl) {
+    return sha256Base64Url(`NEYVIX_SESSION_KEY_V1\0${databaseUrl}`);
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return "neyvix-development-only-secret-change-me";
+  }
+
+  return null;
+}
+
 async function hasValidSession(token?: string) {
   if (!token) return false;
-  const secret = process.env.NEYVIX_SESSION_SECRET;
-  if (!secret) return process.env.NODE_ENV !== "production";
+  const secret = await getSessionSecret();
+  if (!secret) return false;
 
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return false;
