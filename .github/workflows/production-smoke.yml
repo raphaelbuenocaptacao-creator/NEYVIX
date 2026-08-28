@@ -131,6 +131,26 @@ jobs:
           test "$code" = "200"
           jq -e '.ok == true and .readiness.access == true and .readiness.canonicalUrlResolved == true' /tmp/status.json >/dev/null
 
+      - name: Check account integrity health
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
+            -o /tmp/accounts-health.json -w '%{http_code}' \
+            "$base/api/health/accounts")"
+          echo "Accounts health HTTP: $code"
+          jq -e . /tmp/accounts-health.json >/dev/null
+          jq '{service,status,checks}' /tmp/accounts-health.json
+          test "$code" = "200"
+          jq -e '.service == "NEYVIX" and .checks.database == "connected" and .checks.accountIntegrity == "verified" and (.checks.subscriptionCoverage == "consistent" or .checks.subscriptionCoverage == "legacy_accounts_need_review")' /tmp/accounts-health.json >/dev/null
+
       - name: Check login page
         shell: bash
         run: |
