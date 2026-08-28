@@ -6,6 +6,7 @@ import { saveAiMessage } from "@/lib/db";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 import { getMemoryContext } from "@/lib/memory-db";
+import { listAiHistory } from "@/lib/ai-history";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
@@ -20,6 +21,22 @@ function getGatewayUrl() {
     return parsed.toString();
   } catch {
     return null;
+  }
+}
+
+export async function GET() {
+  const store = await cookies();
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
+  if (!session) {
+    return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+  }
+
+  try {
+    const messages = await listAiHistory(session.email, 40);
+    return NextResponse.json({ messages, count: messages.length }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    console.warn("Unable to load NEYVIX AI history", error);
+    return NextResponse.json({ error: "Não foi possível carregar o histórico da NEYVIX AI" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }
 
