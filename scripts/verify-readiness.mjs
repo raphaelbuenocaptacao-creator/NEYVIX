@@ -4,6 +4,7 @@ const requiredFiles = [
   "app/api/health/route.ts",
   "app/api/status/route.ts",
   "app/api/auth/login/route.ts",
+  "app/api/auth/register/route.ts",
   "app/api/auth/magic-login/route.ts",
   "app/api/ai/route.ts",
   "app/api/billing/checkout/route.ts",
@@ -13,6 +14,7 @@ const requiredFiles = [
   "app/api/estate/upload/route.ts",
   "app/api/memory/route.ts",
   "app/api/memory/delete/route.ts",
+  "app/register/page.tsx",
   "app/memory/page.tsx",
   "app/manifest.ts",
   "components/pwa-register.tsx",
@@ -67,6 +69,40 @@ const proxy = readFileSync("proxy.ts", "utf8");
 for (const route of ["/dashboard/:path*", "/ai/:path*", "/memory/:path*", "/studio/:path*", "/content/:path*", "/automation/:path*", "/mail/:path*", "/billing/:path*", "/admin/:path*"]) {
   if (!proxy.includes(route)) {
     console.error(`NEYVIX readiness failed: protected route missing from proxy: ${route}`);
+    process.exit(1);
+  }
+}
+for (const contract of ["NEYVIX_SESSION_SECRET", "DATABASE_URL", "NEYVIX_SESSION_KEY_V1", "crypto.subtle.verify"]) {
+  if (!proxy.includes(contract)) {
+    console.error(`NEYVIX readiness failed: session verification contract missing from proxy: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const registration = readFileSync("app/api/auth/register/route.ts", "utf8");
+for (const contract of [
+  "createDatabaseUser",
+  "password.length < 8",
+  "response.cookies.set(SESSION_COOKIE",
+  'new URL("/dashboard", request.url)',
+]) {
+  if (!registration.includes(contract)) {
+    console.error(`NEYVIX readiness failed: public registration contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const database = readFileSync("lib/db.ts", "utf8");
+for (const contract of [
+  "export async function createDatabaseUser",
+  "INSERT INTO public.users",
+  "true, false",
+  "INSERT INTO public.subscriptions",
+  "'trialing'",
+  "ON CONFLICT (project_id, user_id) DO NOTHING",
+]) {
+  if (!database.includes(contract)) {
+    console.error(`NEYVIX readiness failed: persisted registration contract missing: ${contract}`);
     process.exit(1);
   }
 }
