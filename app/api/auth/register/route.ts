@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createAccount, createSession } from "@/lib/auth";
 import { createDatabaseUser, hasDatabase } from "@/lib/db";
+import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 function hardenedRedirect(response: NextResponse) {
   response.headers.set("Cache-Control", "no-store, max-age=0");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;
+}
+
+function errorUrl(request: Request, code: "invalid" | "taken" | "config" | "rate_limit") {
+  const url = new URL("/register", request.url);
+  url.searchParams.set("error", code);
+  return url;
 }
 
 export async function POST(request: Request) {
@@ -16,15 +23,23 @@ export async function POST(request: Request) {
     const password = String(form.get("password") ?? "");
     const safeHandle = /^[a-z0-9][a-z0-9._-]{2,31}$/.test(handle);
     const email = `${handle}@neyvix.com`;
+    const bucket = rateLimitBucket(clientAddress(request));
+
+    if (await isRateLimited("register", bucket, 8, 30)) {
+      return hardenedRedirect(NextResponse.redirect(errorUrl(request, "rate_limit"), 303));
+    }
 
     if (name.trim().length < 2 || !safeHandle || password.length < 8) {
-      return hardenedRedirect(NextResponse.redirect(new URL("/register?error=invalid", request.url), 303));
+      await recordRateLimitEvent("register", bucket);
+      return hardenedRedirect(NextResponse.redirect(errorUrl(request, "invalid"), 303));
     }
+
+    await recordRateLimitEvent("register", bucket);
 
     if (hasDatabase()) {
       const user = await createDatabaseUser(name, email, password);
       if (!user) {
-        return hardenedRedirect(NextResponse.redirect(new URL("/register?error=taken", request.url), 303));
+        return hardenedRedirect(NextResponse.redirect(errorUrl(request, "taken"), 303));
       }
 
       const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
@@ -35,7 +50,7 @@ export async function POST(request: Request) {
 
     if (process.env.NODE_ENV === "production") {
       console.error("NEYVIX ID registration blocked: DATABASE_URL is not configured in production");
-      return hardenedRedirect(NextResponse.redirect(new URL("/register?error=config", request.url), 303));
+      return hardenedRedirect(NextResponse.redirect(errorUrl(request, "config"), 303));
     }
 
     // Preview-only fallback for non-production environments without DATABASE_URL.
@@ -46,6 +61,6 @@ export async function POST(request: Request) {
     return hardenedRedirect(response);
   } catch (error) {
     console.error("NEYVIX ID registration failed", error);
-    return hardenedRedirect(NextResponse.redirect(new URL("/register?error=config", request.url), 303));
+    return hardenedRedirect(NextResponse.redirect(errorUrl(request, "config"), 303));
   }
 }
