@@ -1,0 +1,72 @@
+name: NEYVIX Production Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve production URL
+        id: target
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          base="${DEPLOYMENT_URL%/}"
+          case "$base" in
+            https://*) ;;
+            *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
+          esac
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Check health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${{ steps.target.outputs.base }}/api/health" \
+            -o /tmp/health.json
+          grep -q '"database":"connected"' /tmp/health.json
+
+      - name: Check access readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${{ steps.target.outputs.base }}/api/status" \
+            -o /tmp/status.json
+          grep -q '"ok":true' /tmp/status.json
+          grep -q '"access":true' /tmp/status.json
+          grep -q '"canonicalUrlResolved":true' /tmp/status.json
+
+      - name: Check login page
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${{ steps.target.outputs.base }}/login" \
+            -o /tmp/login.html
+          test -s /tmp/login.html
+
+      - name: Check unauthenticated session boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            -o /tmp/me.json -w '%{http_code}' \
+            "${{ steps.target.outputs.base }}/api/auth/me")"
+          test "$code" = "401"
+          grep -q '"authenticated":false' /tmp/me.json
