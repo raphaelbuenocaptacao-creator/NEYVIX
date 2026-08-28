@@ -56,7 +56,14 @@ export async function GET(request: Request) {
   const requestOrigin = getRequestOrigin(request);
   const canonicalUrl = productionUrl ?? deploymentUrl ?? requestOrigin;
 
-  const authReady = health.database === "connected" && (!production || sessionSecretConfigured);
+  const authSchemaReady = health.auth.schema === "ready";
+  const hasActiveUsers = Number(health.auth.activeUsers ?? 0) > 0;
+  const passwordDataReady = Number(health.auth.usersWithoutPassword ?? 1) === 0;
+  const authReady = health.database === "connected"
+    && authSchemaReady
+    && hasActiveUsers
+    && passwordDataReady
+    && (!production || sessionSecretConfigured);
   const accessReady = authReady && health.project === "ready";
   const ecosystemReady = health.launchReady && authReady;
   const ok = accessReady;
@@ -87,6 +94,11 @@ export async function GET(request: Request) {
       databaseConfigured: health.database !== "not_configured",
       databaseConnected: health.database === "connected",
       neyvixProjectReady: health.project === "ready",
+      authSchemaReady,
+      activeUsers: health.auth.activeUsers,
+      usersWithoutPassword: health.auth.usersWithoutPassword,
+      hasActiveUsers,
+      passwordDataReady,
       billingDatabaseReady: health.billing === "ready",
       mailDatabaseReady: health.mail === "ready",
       estateDatabaseReady: health.estate === "ready",
