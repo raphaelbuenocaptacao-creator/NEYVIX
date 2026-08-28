@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createAccount, createSession } from "@/lib/auth";
 import { createDatabaseUser, hasDatabase } from "@/lib/db";
 
+function hardenedRedirect(response: NextResponse) {
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
+}
+
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
@@ -12,24 +18,24 @@ export async function POST(request: Request) {
     const email = `${handle}@neyvix.com`;
 
     if (name.trim().length < 2 || !safeHandle || password.length < 8) {
-      return NextResponse.redirect(new URL("/register?error=invalid", request.url), 303);
+      return hardenedRedirect(NextResponse.redirect(new URL("/register?error=invalid", request.url), 303));
     }
 
     if (hasDatabase()) {
       const user = await createDatabaseUser(name, email, password);
       if (!user) {
-        return NextResponse.redirect(new URL("/register?error=taken", request.url), 303);
+        return hardenedRedirect(NextResponse.redirect(new URL("/register?error=taken", request.url), 303));
       }
 
       const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
       response.cookies.set(SESSION_COOKIE, createSession(user), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
       response.cookies.delete(ACCOUNT_COOKIE);
-      return response;
+      return hardenedRedirect(response);
     }
 
     if (process.env.NODE_ENV === "production") {
       console.error("NEYVIX ID registration blocked: DATABASE_URL is not configured in production");
-      return NextResponse.redirect(new URL("/register?error=config", request.url), 303);
+      return hardenedRedirect(NextResponse.redirect(new URL("/register?error=config", request.url), 303));
     }
 
     // Preview-only fallback for non-production environments without DATABASE_URL.
@@ -37,9 +43,9 @@ export async function POST(request: Request) {
     const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
     response.cookies.set(ACCOUNT_COOKIE, token, { ...authCookieOptions, maxAge: 60 * 60 * 24 * 365 });
     response.cookies.set(SESSION_COOKIE, createSession(account), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
-    return response;
+    return hardenedRedirect(response);
   } catch (error) {
     console.error("NEYVIX ID registration failed", error);
-    return NextResponse.redirect(new URL("/register?error=config", request.url), 303);
+    return hardenedRedirect(NextResponse.redirect(new URL("/register?error=config", request.url), 303));
   }
 }
