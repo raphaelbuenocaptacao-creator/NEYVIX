@@ -35,17 +35,27 @@ jobs:
           set -euo pipefail
           code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
-            -o /tmp/health.json -w '%{http_code}' \
+            -D /tmp/health.headers \
+            -o /tmp/health.body -w '%{http_code}' \
             "${{ steps.target.outputs.base }}/api/health")"
+          content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); value=$0} END{print value}' /tmp/health.headers)"
           echo "Health HTTP: $code"
-          if jq -e . /tmp/health.json >/dev/null 2>&1; then
-            jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth,schema:.checks.schema,integrations:.checks.integrations}}' /tmp/health.json
+          echo "Health content-type: ${content_type:-unknown}"
+
+          if jq -e . /tmp/health.body >/dev/null 2>&1; then
+            jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth,schema:.checks.schema,integrations:.checks.integrations}}' /tmp/health.body
+            test "$code" = "200"
+            jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .readiness.access == true' /tmp/health.body >/dev/null
           else
-            echo "Health response was not JSON (possible deployment protection or routing issue)." >&2
+            if grep -Eiq 'vercel|authentication|required|deployment protection|log in|sign in' /tmp/health.body; then
+              echo "NEYVIX_BLOCKER=VERCEL_DEPLOYMENT_PROTECTION" >&2
+              echo "Deployment responded, but Vercel authentication/protection intercepted /api/health before the app." >&2
+              exit 2
+            fi
+            echo "NEYVIX_BLOCKER=NON_JSON_HEALTH_RESPONSE" >&2
+            echo "Health endpoint returned HTTP $code with content-type ${content_type:-unknown}, but the body was not NEYVIX JSON." >&2
             exit 1
           fi
-          test "$code" = "200"
-          jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .readiness.access == true' /tmp/health.json >/dev/null
 
       - name: Check access readiness
         shell: bash
