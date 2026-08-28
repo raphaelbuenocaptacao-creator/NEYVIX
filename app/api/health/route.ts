@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
+import { getSessionSecretStatus } from "@/lib/auth";
 import { getHealthStatus } from "@/lib/health";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const health = await getHealthStatus();
-  const sessionSecretConfigured = Boolean(process.env.NEYVIX_SESSION_SECRET?.trim());
-  const authReady = health.database === "connected" && sessionSecretConfigured;
+  const sessionKey = getSessionSecretStatus();
+  const authReady = health.database === "connected" && sessionKey.ready;
   const accessReady = authReady && health.project === "ready";
 
   return NextResponse.json(
@@ -26,7 +27,7 @@ export async function GET() {
         estate: health.estate,
         schema: health.schema,
         integrations: {
-          sessionSecret: sessionSecretConfigured ? "configured" : "not_configured",
+          sessionSecret: sessionKey.ready ? sessionKey.source : "not_configured",
           aiGateway: health.integrations.aiGateway ? "configured" : "not_configured",
           billingWebhook: health.integrations.billingWebhook ? "configured" : "not_configured",
           mailTransport: health.integrations.mailTransport ? "configured" : "not_configured",
