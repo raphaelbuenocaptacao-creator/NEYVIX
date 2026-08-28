@@ -1,0 +1,44 @@
+name: NEYVIX Intelligence Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  intelligence:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify AI and Memory readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_CANDIDATE%/}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --location --retry 3 --retry-delay 2 --max-time 20 "${headers[@]}" -o /tmp/intelligence.json -w '%{http_code}' "$base/api/health/intelligence")"
+          echo "Intelligence HTTP: $code"
+          jq '{ok,service,status,database,ai,memory}' /tmp/intelligence.json
+          test "$code" = "200"
+          jq -e '.ok == true and .database == "connected" and .ai.messageStore == true and .memory.store == true and .memory.events == true' /tmp/intelligence.json >/dev/null
