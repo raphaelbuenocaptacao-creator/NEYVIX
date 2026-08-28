@@ -1,0 +1,52 @@
+name: NEYVIX ID Production Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  identity:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Check NEYVIX ID readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          code="$(curl --silent --show-error --location \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
+            -o /tmp/identity.json -w '%{http_code}' \
+            "${NEYVIX_PRODUCTION_URL%/}/api/health/identity")"
+
+          echo "NEYVIX ID readiness HTTP: $code"
+          jq -e . /tmp/identity.json >/dev/null
+          jq '{ok,service,database,signup,session,magicLogin,consistency}' /tmp/identity.json
+          test "$code" = "200"
+          jq -e '.ok == true and .database == "connected" and .signup.ready == true and .session.ready == true' /tmp/identity.json >/dev/null
