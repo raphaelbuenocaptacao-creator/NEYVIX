@@ -20,11 +20,34 @@ export type SessionRecord = {
   exp: number;
 };
 
+export function getSessionSecretStatus() {
+  const configured = process.env.NEYVIX_SESSION_SECRET?.trim();
+  if (configured) return { ready: true, source: "configured" as const };
+
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (databaseUrl) return { ready: true, source: "database_derived" as const };
+
+  if (process.env.NODE_ENV !== "production") {
+    return { ready: true, source: "development" as const };
+  }
+
+  return { ready: false, source: "missing" as const };
+}
+
 function getSecret() {
-  const configured = process.env.NEYVIX_SESSION_SECRET;
+  const configured = process.env.NEYVIX_SESSION_SECRET?.trim();
   if (configured) return configured;
+
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (databaseUrl) {
+    return createHash("sha256")
+      .update("NEYVIX_SESSION_KEY_V1\0")
+      .update(databaseUrl)
+      .digest("base64url");
+  }
+
   if (process.env.NODE_ENV !== "production") return "neyvix-development-only-secret-change-me";
-  throw new Error("NEYVIX_SESSION_SECRET is required in production");
+  throw new Error("A production session key source is required");
 }
 
 function encryptionKey() {
