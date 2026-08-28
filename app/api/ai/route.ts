@@ -66,6 +66,9 @@ export async function POST(request: Request) {
   const prompt = typeof body === "object" && body !== null && "prompt" in body
     ? String((body as { prompt?: unknown }).prompt ?? "").trim()
     : "";
+  const useMemory = typeof body === "object" && body !== null && "useMemory" in body
+    ? (body as { useMemory?: unknown }).useMemory === true
+    : false;
 
   if (!prompt) return NextResponse.json({ error: "Digite uma solicitação" }, { status: 400 });
   if (prompt.length > MAX_PROMPT_LENGTH) {
@@ -86,7 +89,7 @@ export async function POST(request: Request) {
     catch (dbError) { console.warn("Unable to persist NEYVIX AI user message", dbError); }
 
     let memory: Array<{ key: string; category: string; value: string }> = [];
-    if (process.env.NEYVIX_MEMORY_AI_CONTEXT === "true") {
+    if (useMemory && process.env.NEYVIX_MEMORY_AI_CONTEXT === "true") {
       try {
         const recalled = await getMemoryContext(session.email, 8);
         memory = recalled.map((item) => ({ ...item, value: item.value.slice(0, 800) }));
