@@ -3,6 +3,7 @@ import Link from "next/link";
 const errors: Record<string, string> = {
   invalid: "Revise seu nome, endereço NEYVIX e use uma senha com pelo menos 8 caracteres.",
   taken: "Esse endereço NEYVIX já está em uso. Escolha outro identificador.",
+  rate_limit: "Muitas tentativas de cadastro foram feitas desta conexão. Aguarde alguns minutos e tente novamente.",
   config: "Não foi possível conectar à identidade NEYVIX agora. Tente novamente em instantes.",
 };
 
@@ -19,7 +20,7 @@ export default async function RegisterPage({ searchParams }: { searchParams: Pro
         <Link href="/" className="brand">NEYVIX</Link>
         <p className="eyebrow">CRIAR NEYVIX ID</p>
         <h1>Sua identidade começa aqui.</h1>
-        <p className="muted">Uma única conta para entrar no ecossistema NEYVIX.</p>
+        <p className="muted">Qualquer pessoa pode criar gratuitamente um NEYVIX ID e entrar no ecossistema.</p>
 
         {selectedPlan ? <p className="legal-copy"><strong>Plano escolhido: {planLabels[selectedPlan]}</strong><br/>Sua escolha será vinculada ao cadastro e poderá ser confirmada no checkout quando a cobrança automática estiver habilitada.</p> : null}
         {errorMessage ? <p className="legal-copy" role="alert">{errorMessage}</p> : null}
