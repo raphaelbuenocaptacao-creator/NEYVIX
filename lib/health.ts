@@ -4,6 +4,11 @@ export type HealthStatus = {
   ok: boolean;
   database: "connected" | "not_configured" | "error";
   project: "ready" | "missing" | "unknown";
+  auth: {
+    schema: "ready" | "missing" | "unknown";
+    activeUsers: number | null;
+    usersWithoutPassword: number | null;
+  };
   billing: "ready" | "missing" | "unknown";
   mail: "ready" | "missing" | "unknown";
   estate: "ready" | "missing" | "unknown";
@@ -53,6 +58,14 @@ function unavailableSchema() {
   };
 }
 
+function unavailableAuth() {
+  return {
+    schema: "unknown" as const,
+    activeUsers: null,
+    usersWithoutPassword: null,
+  };
+}
+
 export async function getHealthStatus(): Promise<HealthStatus> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   const integrations = integrationStatus();
@@ -63,6 +76,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       ok: false,
       database: "not_configured",
       project: "unknown",
+      auth: unavailableAuth(),
       billing: "unknown",
       mail: "unknown",
       estate: "unknown",
@@ -77,6 +91,15 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const rows = await sql`
       SELECT
         EXISTS (SELECT 1 FROM public.projects WHERE slug = 'neyvix' AND is_active = true) AS project_ready,
+        to_regclass('public.users') IS NOT NULL
+          AND to_regclass('public.sessions') IS NOT NULL
+          AND to_regclass('public.password_reset_tokens') IS NOT NULL AS auth_schema_ready,
+        CASE WHEN to_regclass('public.users') IS NOT NULL
+          THEN (SELECT count(*)::int FROM public.users WHERE is_active = true)
+          ELSE NULL END AS active_users,
+        CASE WHEN to_regclass('public.users') IS NOT NULL
+          THEN (SELECT count(*)::int FROM public.users WHERE password_hash IS NULL OR password_hash = '')
+          ELSE NULL END AS users_without_password,
         to_regclass('public.neyvix_billing_events') IS NOT NULL
           AND to_regclass('public.plans') IS NOT NULL
           AND to_regclass('public.subscriptions') IS NOT NULL AS billing_ready,
@@ -104,6 +127,9 @@ export async function getHealthStatus(): Promise<HealthStatus> {
 
     const row = rows[0] ?? {};
     const projectReady = Boolean(row.project_ready);
+    const authSchemaReady = Boolean(row.auth_schema_ready);
+    const activeUsers = row.active_users == null ? null : Number(row.active_users);
+    const usersWithoutPassword = row.users_without_password == null ? null : Number(row.users_without_password);
     const billingReady = Boolean(row.billing_ready);
     const mailReady = Boolean(row.mail_ready);
     const estateReady = Boolean(row.estate_ready);
@@ -111,12 +137,18 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const memoryReady = Boolean(row.memory_ready);
     const ecosystemTablesReady = Number(row.ecosystem_tables_ready ?? 0);
     const ecosystem = ecosystemTablesReady === 10 ? "ready" : ecosystemTablesReady > 0 ? "partial" : "missing";
-    const coreReady = projectReady && billingReady && mailReady && estateReady;
+    const authReady = authSchemaReady && Number(activeUsers ?? 0) > 0 && Number(usersWithoutPassword ?? 0) === 0;
+    const coreReady = projectReady && authReady && billingReady && mailReady && estateReady;
 
     return {
       ok: coreReady,
       database: "connected",
       project: projectReady ? "ready" : "missing",
+      auth: {
+        schema: authSchemaReady ? "ready" : "missing",
+        activeUsers,
+        usersWithoutPassword,
+      },
       billing: billingReady ? "ready" : "missing",
       mail: mailReady ? "ready" : "missing",
       estate: estateReady ? "ready" : "missing",
@@ -133,6 +165,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       ok: false,
       database: "error",
       project: "unknown",
+      auth: unavailableAuth(),
       billing: "unknown",
       mail: "unknown",
       estate: "unknown",
