@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 const requiredFiles = [
   "app/api/health/route.ts",
+  "app/api/auth/magic-login/route.ts",
   "app/api/ai/route.ts",
   "app/api/billing/checkout/route.ts",
   "app/api/billing/webhook/route.ts",
@@ -19,6 +20,7 @@ const requiredFiles = [
   "lib/health.ts",
   "lib/memory-db.ts",
   "proxy.ts",
+  "database/008_password_reset.sql",
   "database/010_mail_core.sql",
   "database/012_memory.sql",
 ];
@@ -63,6 +65,22 @@ const proxy = readFileSync("proxy.ts", "utf8");
 for (const route of ["/dashboard/:path*", "/ai/:path*", "/memory/:path*", "/studio/:path*", "/content/:path*", "/automation/:path*", "/mail/:path*", "/billing/:path*", "/admin/:path*"]) {
   if (!proxy.includes(route)) {
     console.error(`NEYVIX readiness failed: protected route missing from proxy: ${route}`);
+    process.exit(1);
+  }
+}
+
+const magicLogin = readFileSync("app/api/auth/magic-login/route.ts", "utf8");
+for (const contract of [
+  "prt.used_at IS NULL",
+  "prt.expires_at > now()",
+  "SET used_at = now()",
+  "FOR UPDATE",
+  "response.cookies.set(SESSION_COOKIE",
+  'response.headers.set("Cache-Control", "no-store, max-age=0")',
+  'response.headers.set("Referrer-Policy", "no-referrer")',
+]) {
+  if (!magicLogin.includes(contract)) {
+    console.error(`NEYVIX readiness failed: magic login safety contract missing: ${contract}`);
     process.exit(1);
   }
 }
