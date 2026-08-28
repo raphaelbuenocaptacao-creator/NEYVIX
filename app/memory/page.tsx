@@ -14,21 +14,23 @@ const notices: Record<string, string> = {
   not_found: "Memória não encontrada.",
 };
 
-export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ saved?: string; deleted?: string; error?: string }> }) {
+export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ saved?: string; deleted?: string; error?: string; shared?: string }> }) {
   const params = await searchParams;
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) redirect("/login?next=/memory");
 
   const memories = await listMemories(session.email, 100);
-  const notice = params.saved === "1" ? "Memória salva." : params.deleted === "1" ? "Memória removida." : params.error ? notices[params.error] : null;
+  const notice = params.saved === "1"
+    ? (params.shared === "1" ? "Memória salva e autorizada para contexto da NEYVIX AI." : "Memória salva como privada.")
+    : params.deleted === "1" ? "Memória removida." : params.error ? notices[params.error] : null;
 
   return <main className="shell">
     <section className="hero">
       <div className="brand">NEYVIX <span>MEMORY</span></div>
       <p className="eyebrow">MEMÓRIA PESSOAL EM NUVEM</p>
       <h1>O NEYVIX pode lembrar do que importa para você.</h1>
-      <p className="lead">Preferências, contexto de trabalho, projetos e decisões ficam vinculados ao seu NEYVIX ID. Você controla o que entra e pode apagar quando quiser.</p>
+      <p className="lead">Preferências, contexto de trabalho, projetos e decisões ficam vinculados ao seu NEYVIX ID. Você controla o que entra, o que pode ser usado pela AI e pode apagar quando quiser.</p>
       <div className="actions"><Link className="secondary" href="/dashboard">Voltar ao Command Center</Link><Link className="secondary" href="/ai">Abrir NEYVIX AI</Link></div>
     </section>
 
@@ -42,9 +44,10 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
         <label>Chave<input name="key" maxLength={120} placeholder="ex.: preferencia.idioma" required /></label>
         <label>Categoria<input name="category" maxLength={60} placeholder="preferencia, negocio, projeto..." defaultValue="general" required /></label>
         <label>O que lembrar<textarea name="value" rows={4} maxLength={4000} placeholder="Descreva de forma objetiva o que o NEYVIX deve lembrar." required /></label>
+        <label><input type="checkbox" name="shareWithAi" /> Permitir que esta memória seja usada como contexto pela NEYVIX AI quando eu ativar memória na conversa.</label>
         <button className="primary-button" type="submit">Salvar na memória</button>
       </form>
-      <p className="lead">Salvar novamente a mesma chave atualiza a memória em vez de duplicar.</p>
+      <p className="lead">Por padrão, toda memória é privada. Salvar novamente a mesma chave atualiza a memória e a preferência de compartilhamento.</p>
     </section>
 
     <section className="grid" style={{ marginTop: "2rem" }}>
@@ -52,6 +55,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
         <span>{memory.category.toUpperCase()}</span>
         <h2>{memory.key}</h2>
         <p>{memory.value}</p>
+        <p>{memory.isPrivate ? "Privada · não enviada à AI" : "Autorizada para contexto da AI"}</p>
         <p>Origem: {memory.source} · Atualizada em {new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(memory.updatedAt))}</p>
         <form action="/api/memory/delete" method="post">
           <input type="hidden" name="id" value={memory.id} />
