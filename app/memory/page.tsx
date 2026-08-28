@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
-import { listMemories } from "@/lib/memory-db";
+import { listMemories, listMemoryEvents } from "@/lib/memory-db";
 import SmartMemoryClient from "./smart-memory-client";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +14,22 @@ const notices: Record<string, string> = {
   not_found: "Memória não encontrada.",
 };
 
+const eventLabels: Record<string, string> = {
+  upsert: "Memória salva ou atualizada",
+  delete: "Memória apagada",
+  recall: "Memória consultada pela NEYVIX AI",
+};
+
 export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ saved?: string; deleted?: string; error?: string; shared?: string }> }) {
   const params = await searchParams;
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) redirect("/login?next=/memory");
 
-  const memories = await listMemories(session.email, 100);
+  const [memories, events] = await Promise.all([
+    listMemories(session.email, 100),
+    listMemoryEvents(session.email, 12),
+  ]);
   const notice = params.saved === "1"
     ? (params.shared === "1" ? "Memória salva e autorizada para contexto da NEYVIX AI." : "Memória salva como privada.")
     : params.deleted === "1" ? "Memória removida." : params.error ? notices[params.error] : null;
@@ -62,6 +71,20 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
           <button className="secondary" type="submit">Apagar memória</button>
         </form>
       </article>) : <article><span>MEMORY</span><h2>Nenhuma memória salva ainda.</h2><p>Adicione a primeira informação acima. O histórico de conversas da AI continua separado desta memória de longo prazo.</p></article>}
+    </section>
+
+    <section className="hero" style={{ marginTop: "1.5rem" }}>
+      <p className="eyebrow">ATIVIDADE E PRIVACIDADE</p>
+      <h2>Você pode ver quando sua memória foi alterada ou consultada.</h2>
+      <p className="lead">Consultas feitas pela NEYVIX AI só aparecem aqui quando uma memória previamente autorizada é carregada como contexto. Memórias privadas não entram nesse fluxo.</p>
+      {events.length ? <div className="grid" style={{ marginTop: "1rem" }}>
+        {events.map((event) => <article key={event.id}>
+          <span>{event.source.toUpperCase()}</span>
+          <h3>{eventLabels[event.action] ?? event.action}</h3>
+          <p>{typeof event.metadata.key === "string" ? event.metadata.key : "Atividade da NEYVIX Memory"}</p>
+          <p>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(event.createdAt))}</p>
+        </article>)}
+      </div> : <p className="lead">Nenhuma atividade de memória registrada ainda.</p>}
     </section>
   </main>;
 }
