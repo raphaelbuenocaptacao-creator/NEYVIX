@@ -39,7 +39,6 @@ export async function GET(request: Request) {
           AND prt.used_at IS NULL
           AND prt.expires_at > now()
           AND u.is_active = true
-          AND u.is_superadmin = true
         FOR UPDATE
       ), consumed AS (
         UPDATE public.password_reset_tokens prt
