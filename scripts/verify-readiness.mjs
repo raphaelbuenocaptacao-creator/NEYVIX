@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 const requiredFiles = [
   "app/api/health/route.ts",
+  "app/api/health/identity/route.ts",
   "app/api/status/route.ts",
   "app/api/auth/login/route.ts",
   "app/api/auth/register/route.ts",
@@ -22,6 +23,7 @@ const requiredFiles = [
   "lib/session.ts",
   "lib/entitlements.ts",
   "lib/health.ts",
+  "lib/register-db.ts",
   "lib/memory-db.ts",
   "proxy.ts",
   "database/008_password_reset.sql",
@@ -81,7 +83,7 @@ for (const contract of ["NEYVIX_SESSION_SECRET", "DATABASE_URL", "NEYVIX_SESSION
 
 const registration = readFileSync("app/api/auth/register/route.ts", "utf8");
 for (const contract of [
-  "createDatabaseUser",
+  "createRegisteredUser",
   "password.length < 8",
   "response.cookies.set(SESSION_COOKIE",
   'new URL("/dashboard", request.url)',
@@ -92,17 +94,17 @@ for (const contract of [
   }
 }
 
-const database = readFileSync("lib/db.ts", "utf8");
+const registrationDb = readFileSync("lib/register-db.ts", "utf8");
 for (const contract of [
-  "export async function createDatabaseUser",
+  "export async function createRegisteredUser",
   "INSERT INTO public.users",
   "true, false",
   "INSERT INTO public.subscriptions",
   "'trialing'",
-  "ON CONFLICT (project_id, user_id) DO NOTHING",
+  "JOIN new_subscription",
 ]) {
-  if (!database.includes(contract)) {
-    console.error(`NEYVIX readiness failed: persisted registration contract missing: ${contract}`);
+  if (!registrationDb.includes(contract)) {
+    console.error(`NEYVIX readiness failed: atomic registration contract missing: ${contract}`);
     process.exit(1);
   }
 }
@@ -149,6 +151,19 @@ const healthRoute = readFileSync("app/api/health/route.ts", "utf8");
 for (const signal of ["accessReady", "readiness", "ecosystem"]) {
   if (!healthRoute.includes(signal)) {
     console.error(`NEYVIX readiness failed: health route signal missing: ${signal}`);
+    process.exit(1);
+  }
+}
+
+const identityHealth = readFileSync("app/api/health/identity/route.ts", "utf8");
+for (const signal of [
+  "signupReady",
+  "activeNonAdminWithoutSubscription",
+  "magicLogin",
+  "getSessionSecretStatus",
+]) {
+  if (!identityHealth.includes(signal)) {
+    console.error(`NEYVIX readiness failed: identity health signal missing: ${signal}`);
     process.exit(1);
   }
 }
