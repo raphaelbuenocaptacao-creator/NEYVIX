@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 const requiredFiles = [
   "app/api/health/route.ts",
+  "app/api/auth/login/route.ts",
   "app/api/auth/magic-login/route.ts",
   "app/api/ai/route.ts",
   "app/api/billing/checkout/route.ts",
@@ -65,6 +66,20 @@ const proxy = readFileSync("proxy.ts", "utf8");
 for (const route of ["/dashboard/:path*", "/ai/:path*", "/memory/:path*", "/studio/:path*", "/content/:path*", "/automation/:path*", "/mail/:path*", "/billing/:path*", "/admin/:path*"]) {
   if (!proxy.includes(route)) {
     console.error(`NEYVIX readiness failed: protected route missing from proxy: ${route}`);
+    process.exit(1);
+  }
+}
+
+const passwordLogin = readFileSync("app/api/auth/login/route.ts", "utf8");
+for (const contract of [
+  "safeNext",
+  "isRateLimited",
+  "response.cookies.set(SESSION_COOKIE",
+  'response.headers.set("Cache-Control", "no-store, max-age=0")',
+  'response.headers.set("Referrer-Policy", "no-referrer")',
+]) {
+  if (!passwordLogin.includes(contract)) {
+    console.error(`NEYVIX readiness failed: password login safety contract missing: ${contract}`);
     process.exit(1);
   }
 }
