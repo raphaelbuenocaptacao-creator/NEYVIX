@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createAccount, createSession } from "@/lib/auth";
-import { createDatabaseUser, hasDatabase } from "@/lib/db";
+import { hasDatabase } from "@/lib/db";
 import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
+import { createRegisteredUser } from "@/lib/register-db";
 
 function hardenedRedirect(response: NextResponse) {
   response.headers.set("Cache-Control", "no-store, max-age=0");
@@ -15,13 +16,21 @@ function errorUrl(request: Request, code: "invalid" | "taken" | "config" | "rate
   return url;
 }
 
+const planCodes: Record<string, string> = {
+  start: "start-monthly",
+  pro: "pro-monthly",
+  business: "business-monthly",
+};
+
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
     const name = String(form.get("name") ?? "");
     const handle = String(form.get("handle") ?? "").trim().toLowerCase();
     const password = String(form.get("password") ?? "");
+    const selectedPlan = String(form.get("plan") ?? "").trim().toLowerCase();
     const safeHandle = /^[a-z0-9][a-z0-9._-]{2,31}$/.test(handle);
+    const safePlan = selectedPlan === "" || Boolean(planCodes[selectedPlan]);
     const email = `${handle}@neyvix.com`;
     const bucket = rateLimitBucket(clientAddress(request));
 
@@ -29,7 +38,7 @@ export async function POST(request: Request) {
       return hardenedRedirect(NextResponse.redirect(errorUrl(request, "rate_limit"), 303));
     }
 
-    if (name.trim().length < 2 || !safeHandle || password.length < 8) {
+    if (name.trim().length < 2 || !safeHandle || password.length < 8 || !safePlan) {
       await recordRateLimitEvent("register", bucket);
       return hardenedRedirect(NextResponse.redirect(errorUrl(request, "invalid"), 303));
     }
@@ -37,7 +46,7 @@ export async function POST(request: Request) {
     await recordRateLimitEvent("register", bucket);
 
     if (hasDatabase()) {
-      const user = await createDatabaseUser(name, email, password);
+      const user = await createRegisteredUser(name, email, password, selectedPlan ? planCodes[selectedPlan] : null);
       if (!user) {
         return hardenedRedirect(NextResponse.redirect(errorUrl(request, "taken"), 303));
       }
