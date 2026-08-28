@@ -5,17 +5,9 @@ import styles from "./admin.module.css";
 import UserInspector from "./UserInspector";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { getAdminUserSummaries, type AdminUserSummary } from "@/lib/db";
+import { getAdminSystemSummary, type AdminSystemSummary } from "@/lib/admin-system";
 import { readActiveSession } from "@/lib/session";
 import { canAccessAdmin, getUserRole, roleLabel } from "@/lib/user-role";
-
-const modules = [
-  { label: "IDENTIDADE", title: "NEYVIX ID", state: "Conectado", text: "Contas, sessões, trial e identidade da organização." },
-  { label: "INTELIGÊNCIA", title: "AI Gateway", state: "Conectado", text: "Gateway de inteligência da NEYVIX para planejamento, criação e execução assistida." },
-  { label: "CONSTRUÇÃO", title: "Studio", state: "Beta", text: "Workspace para transformar prompts em blueprints de produto." },
-  { label: "CONTEÚDO", title: "Content", state: "Beta", text: "Workspace de marketing, campanhas e comunicação." },
-  { label: "OPERAÇÕES", title: "Automation", state: "Operacional", text: "Execuções, aprovações e fluxos operacionais com ações sensíveis sob controle." },
-  { label: "ENTREGA", title: "Deploy", state: "Integrado", text: "Releases conectadas ao Git e orquestração de publicação." },
-];
 
 export default async function AdminPage() {
   const store = await cookies();
@@ -26,11 +18,56 @@ export default async function AdminPage() {
   if (!canAccessAdmin(role)) redirect("/dashboard?error=admin_access");
 
   let users: AdminUserSummary[] = [];
+  let system: AdminSystemSummary | null = null;
   try {
-    users = await getAdminUserSummaries();
+    [users, system] = await Promise.all([
+      getAdminUserSummaries(),
+      getAdminSystemSummary(),
+    ]);
   } catch (error) {
-    console.error("Falha ao carregar usuários no NEYVIX Admin", error);
+    console.error("Falha ao carregar telemetria do NEYVIX Admin", error);
   }
+
+  const modules = [
+    {
+      label: "IDENTIDADE",
+      title: "NEYVIX ID",
+      state: system ? `${system.activeUsers}/${system.usersTotal} ativos` : "Indisponível",
+      text: "Contas, sessões, trial e identidade da organização.",
+    },
+    {
+      label: "INTELIGÊNCIA",
+      title: "AI Gateway",
+      state: system?.gatewayConfigured && system.gatewaySecretConfigured ? "Pronto" : system?.gatewayConfigured ? "Parcial" : "Não configurado",
+      text: "Gateway de inteligência da NEYVIX para planejamento, criação e execução assistida.",
+    },
+    {
+      label: "MEMÓRIA",
+      title: "NEYVIX Memory",
+      state: system ? `${system.memories} memórias` : "Indisponível",
+      text: system?.memoryAiContextEnabled
+        ? "Contexto para AI habilitado; somente memórias autorizadas podem ser utilizadas."
+        : "Persistência disponível; contexto para AI permanece desativado por padrão.",
+    },
+    {
+      label: "CONSTRUÇÃO",
+      title: "Studio",
+      state: system ? `${system.studioProjects} projetos` : "Indisponível",
+      text: "Workspace para transformar prompts em blueprints de produto.",
+    },
+    {
+      label: "CONTEÚDO",
+      title: "Content",
+      state: system ? `${system.contentItems} itens` : "Indisponível",
+      text: "Workspace de marketing, campanhas e comunicação.",
+    },
+    {
+      label: "OPERAÇÕES",
+      title: "User 360",
+      state: system?.activeWithoutSubscription ? `${system.activeWithoutSubscription} atenção` : "Consistente",
+      text: "Visão real de identidade, assinatura e atividade por usuário, sem alterar dados automaticamente.",
+    },
+  ];
 
   return (
     <main className={styles.shell}>
@@ -44,16 +81,16 @@ export default async function AdminPage() {
         <div>
           <p className="eyebrow">NEYVIX ADMIN · OPERAÇÃO MESTRA</p>
           <h1>Veja o ecossistema. Controle o sistema.</h1>
-          <p className={styles.lead}>Identidade, inteligência, automação, conteúdo, builds e entrega convergem aqui. O User 360 reúne o contexto real de cada pessoa em um único painel.</p>
+          <p className={styles.lead}>Identidade, inteligência, memória e criação convergem aqui. O User 360 reúne o contexto real de cada pessoa sem transformar estado desconhecido em status positivo.</p>
         </div>
         <div className={styles.coreOrb} aria-hidden="true"><span>CORE</span></div>
       </section>
 
       <section className={styles.strip}>
-        <div><span>USUÁRIOS</span><strong>{users.length ? `${users.length} carregados` : "Aguardando banco"}</strong></div>
-        <div><span>SEU PAPEL</span><strong>{roleLabel(role)}</strong></div>
-        <div><span>TRIAL</span><strong>7 dias</strong></div>
-        <div><span>DEPLOY</span><strong>Conectado ao Git</strong></div>
+        <div><span>USUÁRIOS</span><strong>{system ? `${system.activeUsers} ativos de ${system.usersTotal}` : "Banco indisponível"}</strong></div>
+        <div><span>ASSINATURAS</span><strong>{system ? `${system.neyvixSubscriptions} NEYVIX` : "Não verificado"}</strong></div>
+        <div><span>SEM ASSINATURA</span><strong>{system ? `${system.activeWithoutSubscription} ativos` : "Não verificado"}</strong></div>
+        <div><span>AI</span><strong>{system?.gatewayConfigured && system.gatewaySecretConfigured ? "Gateway pronto" : system?.gatewayConfigured ? "Gateway parcial" : "Gateway indisponível"}</strong></div>
       </section>
 
       <UserInspector users={users} />
@@ -71,12 +108,14 @@ export default async function AdminPage() {
 
       <section className={styles.activity}>
         <div>
-          <p className="eyebrow">CENTRO DE ATIVIDADE</p>
-          <h2>O contexto do usuário já virou operação.</h2>
-          <p>AI, Studio, Content, Estate, Automation e aprovações já convergem para a visão operacional. Cobrança, segurança e dispositivos seguem como próximas camadas de telemetria.</p>
+          <p className="eyebrow">TELEMETRIA REAL</p>
+          <h2>O painel agora reflete o que realmente existe.</h2>
+          <p>{system
+            ? `${system.aiMessages} mensagens AI, ${system.memories} memórias, ${system.studioProjects} projetos Studio e ${system.contentItems} itens de conteúdo persistidos. Nenhum número nesta área é estimado.`
+            : "A telemetria não pôde ser carregada. O painel mantém o estado como não verificado em vez de exibir métricas estimadas."}</p>
         </div>
         <div className={styles.stack}>
-          <span>Identidade</span><span>IA</span><span>Studio</span><span>Conteúdo</span><span>Estate</span><span>Automações</span><span>Aprovações</span>
+          <span>Identidade</span><span>Assinaturas</span><span>IA</span><span>Memory</span><span>Studio</span><span>Conteúdo</span>
         </div>
       </section>
     </main>
