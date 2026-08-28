@@ -14,6 +14,15 @@ export type NeyvixMemory = {
   updatedAt: string;
 };
 
+export type NeyvixMemoryEvent = {
+  id: string;
+  memoryId: string | null;
+  action: string;
+  source: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
@@ -46,6 +55,28 @@ export async function listMemories(email: string, limit = 50): Promise<NeyvixMem
   }));
 }
 
+export async function listMemoryEvents(email: string, limit = 20): Promise<NeyvixMemoryEvent[]> {
+  const sql = getSql();
+  if (!sql || !(await schemaReady(sql))) return [];
+  const rows = await sql`
+    SELECT e.id, e.memory_id, e.action, e.source, e.metadata, e.created_at
+    FROM public.neyvix_memory_events e
+    JOIN public.users u ON u.id = e.user_id
+    WHERE lower(u.email) = ${email.trim().toLowerCase()}
+    ORDER BY e.created_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 50))}
+  ` as Array<Record<string, unknown>>;
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    memoryId: row.memory_id ? String(row.memory_id) : null,
+    action: String(row.action),
+    source: String(row.source),
+    metadata: row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {},
+    createdAt: String(row.created_at),
+  }));
+}
+
 export async function upsertMemory(input: { email: string; key: string; category?: string; value: string; isPrivate?: boolean; source?: string }) {
   const sql = getSql();
   if (!sql || !(await schemaReady(sql))) return null;
@@ -69,7 +100,7 @@ export async function upsertMemory(input: { email: string; key: string; category
       RETURNING id, user_id
     )
     INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
-    SELECT user_id, id, 'upsert', ${(input.source || "user").slice(0, 40)}, jsonb_build_object('key', ${key}, 'category', ${category})
+    SELECT user_id, id, 'upsert', ${(input.source || "user").slice(0, 40)}, jsonb_build_object('key', ${key}, 'category', ${category}, 'shared_with_ai', ${!(input.isPrivate ?? true)})
     FROM saved
     RETURNING memory_id
   ` as Array<{ memory_id: string }>;
@@ -104,7 +135,7 @@ export async function getMemoryContext(email: string, limit = 12) {
   if (!sql || !(await schemaReady(sql))) return [];
 
   const rows = await sql`
-    SELECT m.id, m.memory_key, m.category, m.value
+    SELECT m.id, m.user_id, m.memory_key, m.category, m.value
     FROM public.neyvix_memories m
     JOIN public.users u ON u.id = m.user_id
     WHERE lower(u.email) = ${email.trim().toLowerCase()}
@@ -113,13 +144,24 @@ export async function getMemoryContext(email: string, limit = 12) {
       AND (m.expires_at IS NULL OR m.expires_at > now())
     ORDER BY m.updated_at DESC
     LIMIT ${Math.max(1, Math.min(limit, 50))}
-  ` as Array<{ id: string; memory_key: string; category: string; value: string }>;
+  ` as Array<{ id: string; user_id: string; memory_key: string; category: string; value: string }>;
 
   if (rows.length === 0) return [];
   const ids = rows.map((row) => row.id);
   try {
-    await sql`UPDATE public.neyvix_memories SET last_used_at = now() WHERE id = ANY(${ids}::uuid[])`;
-  } catch {
+    await sql`
+      WITH touched AS (
+        UPDATE public.neyvix_memories
+        SET last_used_at = now()
+        WHERE id = ANY(${ids}::uuid[])
+        RETURNING id, user_id, memory_key, category
+      )
+      INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
+      SELECT user_id, id, 'recall', 'neyvix-ai', jsonb_build_object('key', memory_key, 'category', category)
+      FROM touched
+    `;
+  } catch (error) {
+    console.warn("Unable to audit NEYVIX Memory recall", error);
     // Memory context should never break the calling product.
   }
 
