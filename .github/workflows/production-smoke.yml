@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   smoke:
@@ -13,6 +14,8 @@ jobs:
       github.event.deployment_status.environment_url != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - name: Resolve production URL
         id: target
@@ -29,12 +32,29 @@ jobs:
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "Testing deployment host: ${base#https://}"
 
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Check health
         shell: bash
         run: |
           set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
           code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
             -D /tmp/health.headers \
             -o /tmp/health.body -w '%{http_code}' \
             "${{ steps.target.outputs.base }}/api/health")"
@@ -49,7 +69,7 @@ jobs:
           else
             if grep -Eiq 'vercel|authentication|required|deployment protection|log in|sign in' /tmp/health.body; then
               echo "NEYVIX_BLOCKER=VERCEL_DEPLOYMENT_PROTECTION" >&2
-              echo "Deployment responded, but Vercel authentication/protection intercepted /api/health before the app." >&2
+              echo "Deployment responded, but Vercel authentication/protection intercepted /api/health before the app. GitHub OIDC and optional automation bypass were attempted." >&2
               exit 2
             fi
             echo "NEYVIX_BLOCKER=NON_JSON_HEALTH_RESPONSE" >&2
@@ -61,8 +81,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
           code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
             -o /tmp/status.json -w '%{http_code}' \
             "${{ steps.target.outputs.base }}/api/status")"
           echo "Status HTTP: $code"
@@ -79,8 +104,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
           code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
             -o /tmp/login.html -w '%{http_code}' \
             "${{ steps.target.outputs.base }}/login")"
           echo "Login HTTP: $code"
@@ -91,8 +121,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
           code="$(curl --silent --show-error --location \
             --retry 3 --retry-delay 2 --max-time 20 \
+            "${headers[@]}" \
             -o /tmp/me.json -w '%{http_code}' \
             "${{ steps.target.outputs.base }}/api/auth/me")"
           echo "Session boundary HTTP: $code"
