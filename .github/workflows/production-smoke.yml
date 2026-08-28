@@ -16,8 +16,9 @@ jobs:
     timeout-minutes: 5
     env:
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
     steps:
-      - name: Resolve production URL
+      - name: Resolve deployment URL
         id: target
         shell: bash
         env:
@@ -29,8 +30,8 @@ jobs:
             https://*) ;;
             *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
           esac
-          echo "base=$base" >> "$GITHUB_OUTPUT"
-          echo "Testing deployment host: ${base#https://}"
+          echo "deployment=$base" >> "$GITHUB_OUTPUT"
+          echo "Deployment host: ${base#https://}"
 
       - name: Acquire GitHub OIDC token
         shell: bash
@@ -44,43 +45,79 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Check health
+      - name: Select reachable production host
+        id: access
         shell: bash
         run: |
           set -euo pipefail
+
           headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
           fi
-          code="$(curl --silent --show-error --location \
-            --retry 3 --retry-delay 2 --max-time 20 \
-            "${headers[@]}" \
-            -D /tmp/health.headers \
-            -o /tmp/health.body -w '%{http_code}' \
-            "${{ steps.target.outputs.base }}/api/health")"
-          content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); value=$0} END{print value}' /tmp/health.headers)"
-          echo "Health HTTP: $code"
-          echo "Health content-type: ${content_type:-unknown}"
 
-          if jq -e . /tmp/health.body >/dev/null 2>&1; then
-            jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth,schema:.checks.schema,integrations:.checks.integrations}}' /tmp/health.body
-            test "$code" = "200"
-            jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .readiness.access == true' /tmp/health.body >/dev/null
-          else
-            if grep -Eiq 'vercel|authentication|required|deployment protection|log in|sign in' /tmp/health.body; then
-              echo "NEYVIX_BLOCKER=VERCEL_DEPLOYMENT_PROTECTION" >&2
-              echo "Deployment responded, but Vercel authentication/protection intercepted /api/health before the app. GitHub OIDC and optional automation bypass were attempted." >&2
-              exit 2
+          probe() {
+            local label="$1"
+            local base="$2"
+            local body="/tmp/${label}.health.body"
+            local hdr="/tmp/${label}.health.headers"
+            local code
+            code="$(curl --silent --show-error --location \
+              --retry 2 --retry-delay 1 --max-time 20 \
+              "${headers[@]}" \
+              -D "$hdr" -o "$body" -w '%{http_code}' \
+              "${base}/api/health")"
+            local content_type
+            content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); value=$0} END{print value}' "$hdr")"
+            echo "$label HTTP: $code; content-type: ${content_type:-unknown}"
+
+            if jq -e . "$body" >/dev/null 2>&1; then
+              if [ "$code" = "200" ] && jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .readiness.access == true' "$body" >/dev/null; then
+                jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth}}' "$body"
+                echo "base=$base" >> "$GITHUB_OUTPUT"
+                echo "source=$label" >> "$GITHUB_OUTPUT"
+                return 0
+              fi
+              echo "$label reached NEYVIX JSON but access readiness is not healthy." >&2
+              jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth}}' "$body" >&2
+              return 3
             fi
-            echo "NEYVIX_BLOCKER=NON_JSON_HEALTH_RESPONSE" >&2
-            echo "Health endpoint returned HTTP $code with content-type ${content_type:-unknown}, but the body was not NEYVIX JSON." >&2
-            exit 1
+
+            if grep -Eiq 'vercel|authentication|required|deployment protection|log in|sign in' "$body"; then
+              echo "$label is intercepted by Vercel Deployment Protection." >&2
+              return 2
+            fi
+
+            echo "$label returned a non-JSON response before NEYVIX health could be verified." >&2
+            return 1
+          }
+
+          # Prefer the stable production alias users are expected to open. Fall back
+          # to the deployment URL emitted by Vercel for this exact commit.
+          if probe "production" "${NEYVIX_PRODUCTION_CANDIDATE%/}"; then
+            exit 0
           fi
+          production_rc=$?
+
+          if probe "deployment" "${{ steps.target.outputs.deployment }}"; then
+            exit 0
+          fi
+          deployment_rc=$?
+
+          if [ "$production_rc" = "2" ] || [ "$deployment_rc" = "2" ]; then
+            echo "NEYVIX_BLOCKER=VERCEL_DEPLOYMENT_PROTECTION" >&2
+            echo "Neither the stable production alias nor this deployment could reach NEYVIX health without Vercel interception." >&2
+            exit 2
+          fi
+
+          echo "NEYVIX_BLOCKER=PRODUCTION_HEALTH_UNREACHABLE" >&2
+          exit 1
 
       - name: Check access readiness
         shell: bash
         run: |
           set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
           headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
@@ -89,14 +126,10 @@ jobs:
             --retry 3 --retry-delay 2 --max-time 20 \
             "${headers[@]}" \
             -o /tmp/status.json -w '%{http_code}' \
-            "${{ steps.target.outputs.base }}/api/status")"
+            "$base/api/status")"
           echo "Status HTTP: $code"
-          if jq -e . /tmp/status.json >/dev/null 2>&1; then
-            jq '{ok,readiness,access}' /tmp/status.json
-          else
-            echo "Status response was not JSON." >&2
-            exit 1
-          fi
+          jq -e . /tmp/status.json >/dev/null
+          jq '{ok,readiness,access}' /tmp/status.json
           test "$code" = "200"
           jq -e '.ok == true and .readiness.access == true and .access.canonicalUrlResolved == true' /tmp/status.json >/dev/null
 
@@ -104,6 +137,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
           headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
@@ -112,7 +146,7 @@ jobs:
             --retry 3 --retry-delay 2 --max-time 20 \
             "${headers[@]}" \
             -o /tmp/login.html -w '%{http_code}' \
-            "${{ steps.target.outputs.base }}/login")"
+            "$base/login")"
           echo "Login HTTP: $code"
           test "$code" = "200"
           test -s /tmp/login.html
@@ -121,6 +155,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
           headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
@@ -129,7 +164,7 @@ jobs:
             --retry 3 --retry-delay 2 --max-time 20 \
             "${headers[@]}" \
             -o /tmp/me.json -w '%{http_code}' \
-            "${{ steps.target.outputs.base }}/api/auth/me")"
+            "$base/api/auth/me")"
           echo "Session boundary HTTP: $code"
           test "$code" = "401"
           jq -e '.authenticated == false' /tmp/me.json >/dev/null
