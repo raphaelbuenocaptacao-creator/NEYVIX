@@ -100,16 +100,28 @@ export async function deleteMemory(email: string, id: string) {
 }
 
 export async function getMemoryContext(email: string, limit = 12) {
-  const memories = await listMemories(email, limit);
-  if (memories.length === 0) return [];
   const sql = getSql();
-  if (sql) {
-    const ids = memories.map((m) => m.id);
-    try {
-      await sql`UPDATE public.neyvix_memories SET last_used_at = now() WHERE id = ANY(${ids}::uuid[])`;
-    } catch {
-      // Memory context should never break the calling product.
-    }
+  if (!sql || !(await schemaReady(sql))) return [];
+
+  const rows = await sql`
+    SELECT m.id, m.memory_key, m.category, m.value
+    FROM public.neyvix_memories m
+    JOIN public.users u ON u.id = m.user_id
+    WHERE lower(u.email) = ${email.trim().toLowerCase()}
+      AND u.is_active = true
+      AND m.is_private = false
+      AND (m.expires_at IS NULL OR m.expires_at > now())
+    ORDER BY m.updated_at DESC
+    LIMIT ${Math.max(1, Math.min(limit, 50))}
+  ` as Array<{ id: string; memory_key: string; category: string; value: string }>;
+
+  if (rows.length === 0) return [];
+  const ids = rows.map((row) => row.id);
+  try {
+    await sql`UPDATE public.neyvix_memories SET last_used_at = now() WHERE id = ANY(${ids}::uuid[])`;
+  } catch {
+    // Memory context should never break the calling product.
   }
-  return memories.map((memory) => ({ key: memory.key, category: memory.category, value: memory.value }));
+
+  return rows.map((row) => ({ key: String(row.memory_key), category: String(row.category), value: String(row.value) }));
 }
