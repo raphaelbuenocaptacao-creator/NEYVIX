@@ -57,6 +57,7 @@ jobs:
           cleanup_session() {
             if [ -s "$cookies" ] && grep -Eq 'neyvix_session' "$cookies"; then
               curl --silent --show-error --max-time 20 \
+                -X POST \
                 -b "$cookies" -c "$cookies" \
                 -o /dev/null \
                 "$base/api/auth/logout" || true
@@ -119,6 +120,7 @@ jobs:
 
           logout_code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
+            -X POST \
             -b "$cookies" -c "$cookies" \
             -D /tmp/auth-logout.headers \
             -o /tmp/auth-logout.body \
