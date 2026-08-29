@@ -29,7 +29,15 @@ export async function GET() {
       schema: "unknown",
       signup: { ready: false },
       session,
-      magicLogin: { tokenStore: false, request: true, consumer: true, delivery: false, audience: "active_users", status: "unavailable" },
+      magicLogin: {
+        tokenStore: false,
+        request: true,
+        consumer: true,
+        pipelineReady: false,
+        delivery: false,
+        audience: "active_users",
+        status: "unavailable",
+      },
       consistency: { activeNonAdminWithoutSubscription: null },
     }, 503);
   }
@@ -109,6 +117,7 @@ export async function GET() {
         tokenStore,
         request: true,
         consumer: true,
+        pipelineReady: magicPipelineReady,
         delivery: mailTransport,
         audience: "active_users",
         status: magicStatus,
@@ -126,7 +135,15 @@ export async function GET() {
       schema: "unknown",
       signup: { ready: false },
       session,
-      magicLogin: { tokenStore: false, request: true, consumer: true, delivery: mailTransport, audience: "active_users", status: "unavailable" },
+      magicLogin: {
+        tokenStore: false,
+        request: true,
+        consumer: true,
+        pipelineReady: false,
+        delivery: mailTransport,
+        audience: "active_users",
+        status: "unavailable",
+      },
       consistency: { activeNonAdminWithoutSubscription: null },
     }, 503);
   }
