@@ -44,6 +44,7 @@ export async function GET(request: Request) {
   const health = await getHealthStatus();
   const production = process.env.NODE_ENV === "production";
   const sessionKey = getSessionSecretStatus();
+  const sessionKeyDedicated = sessionKey.source === "configured";
   const aiGatewayConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim());
   const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim());
   const mailTransportConfigured = Boolean(process.env.NEYVIX_MAIL_TRANSPORT_URL?.trim());
@@ -66,7 +67,9 @@ export async function GET(request: Request) {
     && passwordDataReady
     && (!production || sessionKey.ready);
   const accessReady = authReady && health.project === "ready";
-  const ecosystemReady = health.launchReady && authReady;
+  const ecosystemReady = health.launchReady
+    && authReady
+    && (!production || sessionKeyDedicated);
   const ok = accessReady;
   const commercialReady = accessReady
     && health.billing === "ready"
@@ -105,6 +108,7 @@ export async function GET(request: Request) {
       estateDatabaseReady: health.estate === "ready",
       sessionKeyReady: sessionKey.ready,
       sessionKeySource: sessionKey.source,
+      sessionKeyDedicated,
       aiGatewayConfigured,
       mailDomainConfigured,
       mailTransportConfigured,
