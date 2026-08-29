@@ -1,0 +1,70 @@
+name: NEYVIX Reset Mismatch Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  reset-mismatch-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+    steps:
+      - name: Verify password mismatch does not leak reset token or create session
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          reset_token="neyvix-sensitive-smoke-token-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -D /tmp/reset-mismatch.headers \
+            -o /tmp/reset-mismatch.body \
+            -w '%{http_code}' \
+            --data-urlencode "token=${reset_token}" \
+            --data-urlencode 'password=NEYVIX-smoke-reset-password-0001' \
+            --data-urlencode 'confirmPassword=NEYVIX-smoke-reset-password-0002' \
+            "$base/api/auth/reset-password")"
+
+          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/reset-mismatch.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset-mismatch.headers | tail -1)"
+          cache_control="$(awk 'BEGIN{IGNORECASE=1} /^cache-control:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset-mismatch.headers | tail -1)"
+          pragma="$(awk 'BEGIN{IGNORECASE=1} /^pragma:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset-mismatch.headers | tail -1)"
+          referrer_policy="$(awk 'BEGIN{IGNORECASE=1} /^referrer-policy:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset-mismatch.headers | tail -1)"
+
+          echo "Reset mismatch HTTP: ${status:-$code}"
+          test "${status:-$code}" = "303"
+          case "$location" in
+            */reset-password?status=mismatch*) ;;
+            *) echo "Unexpected reset mismatch redirect: $location" >&2; exit 1 ;;
+          esac
+
+          if printf '%s' "$location" | grep -Fq "$reset_token"; then
+            echo "Security regression: reset token leaked into redirect location." >&2
+            exit 1
+          fi
+          if printf '%s' "$location" | grep -Eiq '(^|[?&])token='; then
+            echo "Security regression: reset redirect still contains a token parameter." >&2
+            exit 1
+          fi
+          case "${cache_control,,}" in
+            *no-store*) ;;
+            *) echo "Reset mismatch response must be non-cacheable: $cache_control" >&2; exit 1 ;;
+          esac
+          test "${pragma,,}" = "no-cache"
+          test "${referrer_policy,,}" = "no-referrer"
+
+          if grep -Eiq '^set-cookie: neyvix_session=' /tmp/reset-mismatch.headers; then
+            echo "Security regression: reset mismatch issued a NEYVIX session cookie." >&2
+            exit 1
+          fi
+
+          echo "PASS: reset mismatch rejects safely without token leakage or session creation."
