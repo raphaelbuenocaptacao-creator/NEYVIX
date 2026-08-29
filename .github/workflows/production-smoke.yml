@@ -72,14 +72,14 @@ jobs:
             echo "$label HTTP: $code; content-type: ${content_type:-unknown}"
 
             if jq -e . "$body" >/dev/null 2>&1; then
-              if [ "$code" = "200" ] && jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .readiness.access == true' "$body" >/dev/null; then
-                jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth}}' "$body"
+              if [ "$code" = "200" ] && jq -e '.checks.database == "connected" and .checks.project == "ready" and .checks.auth == "ready" and .checks.authSchema == "ready" and .readiness.access == true' "$body" >/dev/null; then
+                jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth,authSchema:.checks.authSchema}}' "$body"
                 echo "base=$base" >> "$GITHUB_OUTPUT"
                 echo "source=$label" >> "$GITHUB_OUTPUT"
                 return 0
               fi
               echo "$label reached NEYVIX JSON but access readiness is not healthy." >&2
-              jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth}}' "$body" >&2
+              jq '{service,status,readiness,checks:{database:.checks.database,project:.checks.project,auth:.checks.auth,authSchema:.checks.authSchema}}' "$body" >&2
               return 3
             fi
 
