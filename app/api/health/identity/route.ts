@@ -26,6 +26,7 @@ export async function GET() {
       ok: false,
       service: "neyvix-id",
       database: "not_configured",
+      schema: "unknown",
       signup: { ready: false },
       session,
       magicLogin: { tokenStore: false, request: true, consumer: true, delivery: false, audience: "active_users", status: "unavailable" },
@@ -35,38 +36,54 @@ export async function GET() {
 
   try {
     const sql = neon(databaseUrl);
-    const rows = await sql`
+    const catalogRows = await sql`
       SELECT
-        EXISTS (
-          SELECT 1 FROM public.projects
-          WHERE slug = 'neyvix' AND is_active = true
-        ) AS project_ready,
+        to_regclass('public.projects') IS NOT NULL AS projects_ready,
         to_regclass('public.users') IS NOT NULL AS users_ready,
         to_regclass('public.subscriptions') IS NOT NULL AS subscriptions_ready,
-        to_regclass('public.password_reset_tokens') IS NOT NULL AS token_store_ready,
-        CASE
-          WHEN to_regclass('public.users') IS NOT NULL
-           AND to_regclass('public.subscriptions') IS NOT NULL
-           AND EXISTS (SELECT 1 FROM public.projects WHERE slug = 'neyvix')
-          THEN (
-            SELECT count(*)::int
-            FROM public.users u
-            LEFT JOIN public.subscriptions s
-              ON s.user_id = u.id
-             AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
-            WHERE u.is_active = true
-              AND COALESCE(u.is_superadmin, false) = false
-              AND s.user_id IS NULL
-          )
-          ELSE NULL
-        END AS active_nonadmin_without_subscription
+        to_regclass('public.password_reset_tokens') IS NOT NULL AS token_store_ready
     `;
 
-    const row = rows[0] ?? {};
-    const projectReady = Boolean(row.project_ready);
-    const usersReady = Boolean(row.users_ready);
-    const subscriptionsReady = Boolean(row.subscriptions_ready);
-    const tokenStore = Boolean(row.token_store_ready);
+    const catalog = catalogRows[0] ?? {};
+    const projectsReady = Boolean(catalog.projects_ready);
+    const usersReady = Boolean(catalog.users_ready);
+    const subscriptionsReady = Boolean(catalog.subscriptions_ready);
+    const tokenStore = Boolean(catalog.token_store_ready);
+
+    let projectReady = false;
+    let activeNonAdminWithoutSubscription: number | null = null;
+
+    if (projectsReady) {
+      const projectRows = await sql`
+        SELECT EXISTS (
+          SELECT 1 FROM public.projects
+          WHERE slug = 'neyvix' AND is_active = true
+        ) AS project_ready
+      `;
+      projectReady = Boolean(projectRows[0]?.project_ready);
+    }
+
+    if (projectsReady && usersReady && subscriptionsReady && projectReady) {
+      const consistencyRows = await sql`
+        SELECT count(*)::int AS active_nonadmin_without_subscription
+        FROM public.users u
+        LEFT JOIN public.subscriptions s
+          ON s.user_id = u.id
+         AND s.project_id = (
+           SELECT id FROM public.projects
+           WHERE slug = 'neyvix'
+           LIMIT 1
+         )
+        WHERE u.is_active = true
+          AND COALESCE(u.is_superadmin, false) = false
+          AND s.user_id IS NULL
+      `;
+      activeNonAdminWithoutSubscription = Number(
+        consistencyRows[0]?.active_nonadmin_without_subscription ?? 0,
+      );
+    }
+
+    const schemaReady = projectsReady && usersReady && subscriptionsReady && tokenStore;
     const signupReady = projectReady && usersReady && subscriptionsReady && session.ready;
     const magicPipelineReady = tokenStore && usersReady && session.ready;
     const magicStatus = magicPipelineReady && mailTransport
@@ -79,9 +96,11 @@ export async function GET() {
       ok: signupReady,
       service: "neyvix-id",
       database: "connected",
+      schema: schemaReady ? "ready" : "partial",
       signup: {
         ready: signupReady,
         project: projectReady,
+        projectsTable: projectsReady,
         usersTable: usersReady,
         subscriptionsTable: subscriptionsReady,
       },
@@ -95,10 +114,7 @@ export async function GET() {
         status: magicStatus,
       },
       consistency: {
-        activeNonAdminWithoutSubscription:
-          row.active_nonadmin_without_subscription == null
-            ? null
-            : Number(row.active_nonadmin_without_subscription),
+        activeNonAdminWithoutSubscription,
       },
     }, signupReady ? 200 : 503);
   } catch (error) {
@@ -107,6 +123,7 @@ export async function GET() {
       ok: false,
       service: "neyvix-id",
       database: "error",
+      schema: "unknown",
       signup: { ready: false },
       session,
       magicLogin: { tokenStore: false, request: true, consumer: true, delivery: mailTransport, audience: "active_users", status: "unavailable" },
