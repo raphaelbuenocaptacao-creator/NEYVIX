@@ -47,9 +47,21 @@ jobs:
 
           echo "NEYVIX ID readiness HTTP: $code"
           jq -e . /tmp/identity.json >/dev/null
-          jq '{ok,service,database,signup,session,magicLogin,consistency}' /tmp/identity.json
+          jq '{ok,service,database,schema,signup,session,magicLogin,consistency}' /tmp/identity.json
           test "$code" = "200"
-          jq -e '.ok == true and .database == "connected" and .signup.ready == true and .session.ready == true and .magicLogin.request == true and .magicLogin.consumer == true' /tmp/identity.json >/dev/null
+          jq -e '
+            .ok == true and
+            .database == "connected" and
+            .schema == "ready" and
+            .signup.ready == true and
+            .signup.project == true and
+            .session.ready == true and
+            .magicLogin.request == true and
+            .magicLogin.consumer == true and
+            .magicLogin.tokenStore == true and
+            .magicLogin.pipelineReady == true and
+            (.magicLogin.status == "ready" or .magicLogin.status == "partial")
+          ' /tmp/identity.json >/dev/null
 
       - name: Check magic-login request validation
         shell: bash
@@ -69,8 +81,8 @@ jobs:
             --data-urlencode "email=invalid" \
             "${NEYVIX_PRODUCTION_URL%/}/api/auth/magic-login/request"
 
-          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/magic.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/magic.headers | tail -1)"
+          status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/magic.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/magic.headers | tail -1)"
           echo "Magic request invalid boundary HTTP: ${status:-unknown}"
           test "$status" = "303"
           case "$location" in
