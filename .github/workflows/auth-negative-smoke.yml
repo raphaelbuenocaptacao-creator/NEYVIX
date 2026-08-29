@@ -70,7 +70,13 @@ jobs:
             "$base/api/auth/login")"
 
           echo "Invalid login HTTP: $code"
-          test "$code" = "303"
+          # The application emits 303. Vercel's edge may normalize the externally
+          # observed redirect to 302, so require a non-cacheable invalid-login
+          # redirect rather than coupling the security assertion to one 3xx code.
+          case "$code" in
+            302|303) ;;
+            *) echo "Unexpected invalid-login status: $code" >&2; cat /tmp/login.headers >&2; exit 1 ;;
+          esac
           grep -Eiq '^location: .*\/login\?error=invalid' /tmp/login.headers
           grep -Eiq '^cache-control: .*no-store' /tmp/login.headers
           grep -Eiq '^referrer-policy: no-referrer' /tmp/login.headers
