@@ -1,0 +1,94 @@
+name: NEYVIX Auth Negative Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  auth-negative-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Resolve deployment target
+        id: target
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          base="${DEPLOYMENT_URL%/}"
+          case "$base" in
+            https://*) ;;
+            *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
+          esac
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify failed login never creates a session
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.target.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          bogus_email="neyvix-auth-smoke-${GITHUB_RUN_ID}@invalid.example"
+          bogus_password="NEYVIX-invalid-${GITHUB_RUN_ATTEMPT}-do-not-use"
+
+          code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c /tmp/cookies.txt \
+            -D /tmp/login.headers \
+            -o /tmp/login.body \
+            -w '%{http_code}' \
+            --data-urlencode "email=${bogus_email}" \
+            --data-urlencode "password=${bogus_password}" \
+            --data-urlencode 'next=/dashboard' \
+            "$base/api/auth/login")"
+
+          echo "Invalid login HTTP: $code"
+          test "$code" = "303"
+          grep -Eiq '^location: .*\/login\?error=invalid' /tmp/login.headers
+          grep -Eiq '^cache-control: .*no-store' /tmp/login.headers
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/login.headers
+
+          if grep -Eiq '^set-cookie: neyvix_session=' /tmp/login.headers; then
+            echo "Security regression: invalid login issued a NEYVIX session cookie." >&2
+            exit 1
+          fi
+
+          me_code="$(curl --silent --show-error --location \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            "${headers[@]}" \
+            -b /tmp/cookies.txt \
+            -o /tmp/me.json \
+            -w '%{http_code}' \
+            "$base/api/auth/me")"
+
+          echo "Post-failure session HTTP: $me_code"
+          test "$me_code" = "401"
+          jq -e '.authenticated == false' /tmp/me.json >/dev/null
+          echo "PASS: failed login did not create an authenticated session."
