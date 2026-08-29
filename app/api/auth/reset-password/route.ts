@@ -3,7 +3,8 @@ import { consumePasswordResetToken } from "@/lib/password-reset";
 
 function privateRedirect(url: URL) {
   const response = NextResponse.redirect(url, 303);
-  response.headers.set("Cache-Control", "no-store");
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  response.headers.set("Pragma", "no-cache");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;
 }
@@ -16,9 +17,10 @@ export async function POST(request: Request) {
     const confirmPassword = String(form.get("confirmPassword") ?? "");
 
     if (password !== confirmPassword) {
-      return privateRedirect(
-        new URL(`/reset-password?status=mismatch&token=${encodeURIComponent(token)}`, request.url),
-      );
+      // Never echo a credential-bearing reset token into a redirect URL. A new
+      // reset attempt must come from the original trusted link instead of
+      // persisting the token in browser history, logs or copied URLs.
+      return privateRedirect(new URL("/reset-password?status=mismatch", request.url));
     }
     if (password.length < 10 || token.length < 20) {
       return privateRedirect(new URL("/reset-password?status=invalid", request.url));
