@@ -1,6 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { getSessionSecretStatus } from "@/lib/auth";
+import { getMailTransportStatus } from "@/lib/mail-transport";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +18,7 @@ function response(body: unknown, status = 200) {
 export async function GET() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   const session = getSessionSecretStatus();
-  const mailTransport = Boolean(
-    process.env.MAIL_TRANSPORT_URL?.trim() && process.env.MAIL_TRANSPORT_SECRET?.trim(),
-  );
+  const mailTransport = getMailTransportStatus();
 
   if (!databaseUrl) {
     return response({
@@ -34,7 +33,9 @@ export async function GET() {
         request: true,
         consumer: true,
         pipelineReady: false,
-        delivery: false,
+        delivery: mailTransport.ready,
+        deliveryConfigured: mailTransport.configured,
+        deliveryValid: mailTransport.valid,
         audience: "active_users",
         status: "unavailable",
       },
@@ -94,7 +95,7 @@ export async function GET() {
     const schemaReady = projectsReady && usersReady && subscriptionsReady && tokenStore;
     const signupReady = projectReady && usersReady && subscriptionsReady && session.ready;
     const magicPipelineReady = tokenStore && usersReady && session.ready;
-    const magicStatus = magicPipelineReady && mailTransport
+    const magicStatus = magicPipelineReady && mailTransport.ready
       ? "ready"
       : magicPipelineReady
         ? "partial"
@@ -118,7 +119,9 @@ export async function GET() {
         request: true,
         consumer: true,
         pipelineReady: magicPipelineReady,
-        delivery: mailTransport,
+        delivery: mailTransport.ready,
+        deliveryConfigured: mailTransport.configured,
+        deliveryValid: mailTransport.valid,
         audience: "active_users",
         status: magicStatus,
       },
@@ -140,7 +143,9 @@ export async function GET() {
         request: true,
         consumer: true,
         pipelineReady: false,
-        delivery: mailTransport,
+        delivery: mailTransport.ready,
+        deliveryConfigured: mailTransport.configured,
+        deliveryValid: mailTransport.valid,
         audience: "active_users",
         status: "unavailable",
       },
