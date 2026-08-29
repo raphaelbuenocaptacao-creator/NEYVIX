@@ -68,15 +68,12 @@ export async function POST(request: Request) {
     const token = randomBytes(32).toString("base64url");
     const tokenHash = hashMagicLoginToken(token);
 
+    // password_reset_tokens is currently shared with password recovery. Do not
+    // bulk-invalidate rows here: doing so would revoke a valid password-reset
+    // token merely because the same user requested a magic-login link.
+    // Magic-login tokens remain single-use because the consumer atomically
+    // marks only the matching namespaced hash as used.
     await sql`
-      WITH invalidated AS (
-        UPDATE public.password_reset_tokens
-        SET used_at = now()
-        WHERE user_id = ${user.id}
-          AND used_at IS NULL
-          AND expires_at > now()
-        RETURNING id
-      )
       INSERT INTO public.password_reset_tokens (user_id, token_hash, expires_at)
       VALUES (${user.id}, ${tokenHash}, now() + (${MAGIC_LOGIN_TTL_MINUTES} || ' minutes')::interval)
     `;
