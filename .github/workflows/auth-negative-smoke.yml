@@ -16,7 +16,7 @@ jobs:
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
     steps:
-      - name: Verify failed login never creates a session
+      - name: Verify failed login and logout session safety
         shell: bash
         run: |
           set -euo pipefail
@@ -74,4 +74,34 @@ jobs:
             exit 1
           fi
 
-          echo "PASS: failed login did not create an authenticated session."
+          logout_code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -X POST \
+            -H 'Cookie: neyvix_session=synthetic-residual-session' \
+            -D /tmp/logout.headers \
+            -o /tmp/logout.body \
+            -w '%{http_code}' \
+            "$base/api/auth/logout")"
+
+          logout_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/logout.headers)"
+          logout_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/logout.headers | tail -1)"
+          logout_cache="$(awk 'BEGIN{IGNORECASE=1} /^cache-control:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/logout.headers | tail -1)"
+          logout_referrer="$(awk 'BEGIN{IGNORECASE=1} /^referrer-policy:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/logout.headers | tail -1)"
+
+          echo "Logout HTTP: ${logout_status:-$logout_code}"
+          test "${logout_status:-$logout_code}" = "303"
+          case "$logout_location" in
+            */login*) ;;
+            *) echo "Unexpected logout redirect: $logout_location" >&2; exit 1 ;;
+          esac
+          case "${logout_cache,,}" in
+            *no-store*) ;;
+            *) echo "Logout must be non-cacheable: $logout_cache" >&2; exit 1 ;;
+          esac
+          test "${logout_referrer,,}" = "no-referrer"
+          if ! grep -Eiq '^set-cookie: neyvix_session=.*(Max-Age=0|Expires=Thu, 01 Jan 1970)' /tmp/logout.headers; then
+            echo "Security regression: logout did not explicitly clear neyvix_session." >&2
+            exit 1
+          fi
+
+          echo "PASS: failed login never created a session and logout clears residual session state."
