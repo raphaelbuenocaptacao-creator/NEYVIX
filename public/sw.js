@@ -1,26 +1,34 @@
-const CACHE = "neyvix-shell-v2";
-const SHELL = ["/", "/neyvix-icon.svg", "/neyvix-maskable.svg"];
-const PRIVATE_PATHS = ["/api/", "/login", "/admin", "/billing"];
+const CACHE = "neyvix-shell-v3";
+const SHELL = [
+  "/",
+  "/manifest.webmanifest",
+  "/neyvix-icon-192.svg",
+  "/neyvix-icon-512.svg",
+  "/neyvix-maskable-512.svg",
+];
+const PRIVATE_PATH = /\/(api|auth|login|logout|admin|billing|session|sessions|token|tokens|password|account|profile|me)(\/|$)/i;
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).catch(() => undefined));
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).catch(() => undefined),
+  );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    Promise.all([
-      caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
-      self.clients.claim(),
-    ])
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))),
+    ),
   );
+  self.clients.claim();
 });
 
 function isPrivate(request, url) {
   if (request.method !== "GET") return true;
   if (request.headers.has("authorization")) return true;
   if (url.origin !== self.location.origin) return true;
-  return PRIVATE_PATHS.some((path) => url.pathname.startsWith(path));
+  return PRIVATE_PATH.test(url.pathname);
 }
 
 self.addEventListener("fetch", (event) => {
@@ -30,20 +38,16 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request, { cache: "no-store" }).catch(() => caches.match("/").then((cached) => cached || Response.error()))
+      fetch(request, { cache: "no-store" }).catch(() =>
+        caches.match("/").then((cached) => cached || Response.error()),
+      ),
     );
     return;
   }
 
-  if (["style", "script", "image", "font"].includes(request.destination)) {
-    event.respondWith(
-      caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-        if (response.ok && response.type === "basic") {
-          const copy = response.clone();
-          event.waitUntil(caches.open(CACHE).then((cache) => cache.put(request, copy)));
-        }
-        return response;
-      }))
-    );
-  }
+  if (!SHELL.includes(url.pathname)) return;
+
+  event.respondWith(
+    caches.match(request).then((cached) => cached || fetch(request, { cache: "no-store" })),
+  );
 });
