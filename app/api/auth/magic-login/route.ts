@@ -3,13 +3,15 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, authCookieOptions, createSession } from "@/lib/auth";
 
+const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
+
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
 }
 
-function hashToken(token: string) {
-  return createHash("sha256").update(token).digest("hex");
+function hashMagicLoginToken(token: string) {
+  return createHash("sha256").update(`${MAGIC_LOGIN_TOKEN_NAMESPACE}${token}`).digest("hex");
 }
 
 function secureRedirect(request: Request, path: string) {
@@ -29,7 +31,7 @@ export async function GET(request: Request) {
     const sql = getSql();
     if (!sql) return secureRedirect(request, "/login?error=config");
 
-    const tokenHash = hashToken(token);
+    const tokenHash = hashMagicLoginToken(token);
     const rows = await sql`
       WITH valid_token AS (
         SELECT prt.id, u.email, COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name
