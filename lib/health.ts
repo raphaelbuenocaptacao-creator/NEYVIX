@@ -88,54 +88,89 @@ export async function getHealthStatus(): Promise<HealthStatus> {
 
   try {
     const sql = neon(databaseUrl);
-    const rows = await sql`
+
+    // Only inspect catalog metadata first. This keeps a missing application table from
+    // being misreported as a database connectivity failure.
+    const catalogRows = await sql`
       SELECT
-        EXISTS (SELECT 1 FROM public.projects WHERE slug = 'neyvix' AND is_active = true) AS project_ready,
-        to_regclass('public.users') IS NOT NULL
-          AND to_regclass('public.sessions') IS NOT NULL
-          AND to_regclass('public.password_reset_tokens') IS NOT NULL AS auth_schema_ready,
-        CASE WHEN to_regclass('public.users') IS NOT NULL
-          THEN (SELECT count(*)::int FROM public.users WHERE is_active = true)
-          ELSE NULL END AS active_users,
-        CASE WHEN to_regclass('public.users') IS NOT NULL
-          THEN (SELECT count(*)::int FROM public.users WHERE password_hash IS NULL OR password_hash = '')
-          ELSE NULL END AS users_without_password,
-        to_regclass('public.neyvix_billing_events') IS NOT NULL
-          AND to_regclass('public.plans') IS NOT NULL
-          AND to_regclass('public.subscriptions') IS NOT NULL AS billing_ready,
-        to_regclass('public.mailboxes') IS NOT NULL
-          AND to_regclass('public.messages') IS NOT NULL AS mail_ready,
-        to_regclass('public.neyvix_estate_sites') IS NOT NULL
-          AND to_regclass('public.neyvix_estate_properties') IS NOT NULL AS estate_ready,
-        to_regclass('public.neyvix_automations') IS NOT NULL
-          AND to_regclass('public.neyvix_approval_requests') IS NOT NULL AS automation_ready,
-        to_regclass('public.neyvix_memories') IS NOT NULL
-          AND to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_ready,
-        (
-          (to_regclass('public.conversations') IS NOT NULL)::int +
-          (to_regclass('public.chat_messages') IS NOT NULL)::int +
-          (to_regclass('public.social_profiles') IS NOT NULL)::int +
-          (to_regclass('public.drive_items') IS NOT NULL)::int +
-          (to_regclass('public.documents') IS NOT NULL)::int +
-          (to_regclass('public.meetings') IS NOT NULL)::int +
-          (to_regclass('public.deploy_projects') IS NOT NULL)::int +
-          (to_regclass('public.cloud_resources') IS NOT NULL)::int +
-          (to_regclass('public.organizations') IS NOT NULL)::int +
-          (to_regclass('public.wallets') IS NOT NULL)::int
-        ) AS ecosystem_tables_ready
+        to_regclass('public.projects') IS NOT NULL AS projects_table,
+        to_regclass('public.users') IS NOT NULL AS users_table,
+        to_regclass('public.sessions') IS NOT NULL AS sessions_table,
+        to_regclass('public.password_reset_tokens') IS NOT NULL AS password_reset_tokens_table,
+        to_regclass('public.neyvix_billing_events') IS NOT NULL AS billing_events_table,
+        to_regclass('public.plans') IS NOT NULL AS plans_table,
+        to_regclass('public.subscriptions') IS NOT NULL AS subscriptions_table,
+        to_regclass('public.mailboxes') IS NOT NULL AS mailboxes_table,
+        to_regclass('public.messages') IS NOT NULL AS messages_table,
+        to_regclass('public.neyvix_estate_sites') IS NOT NULL AS estate_sites_table,
+        to_regclass('public.neyvix_estate_properties') IS NOT NULL AS estate_properties_table,
+        to_regclass('public.neyvix_automations') IS NOT NULL AS automations_table,
+        to_regclass('public.neyvix_approval_requests') IS NOT NULL AS approval_requests_table,
+        to_regclass('public.neyvix_memories') IS NOT NULL AS memories_table,
+        to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_events_table,
+        to_regclass('public.conversations') IS NOT NULL AS conversations_table,
+        to_regclass('public.chat_messages') IS NOT NULL AS chat_messages_table,
+        to_regclass('public.social_profiles') IS NOT NULL AS social_profiles_table,
+        to_regclass('public.drive_items') IS NOT NULL AS drive_items_table,
+        to_regclass('public.documents') IS NOT NULL AS documents_table,
+        to_regclass('public.meetings') IS NOT NULL AS meetings_table,
+        to_regclass('public.deploy_projects') IS NOT NULL AS deploy_projects_table,
+        to_regclass('public.cloud_resources') IS NOT NULL AS cloud_resources_table,
+        to_regclass('public.organizations') IS NOT NULL AS organizations_table,
+        to_regclass('public.wallets') IS NOT NULL AS wallets_table
     `;
 
-    const row = rows[0] ?? {};
-    const projectReady = Boolean(row.project_ready);
-    const authSchemaReady = Boolean(row.auth_schema_ready);
-    const activeUsers = row.active_users == null ? null : Number(row.active_users);
-    const usersWithoutPassword = row.users_without_password == null ? null : Number(row.users_without_password);
-    const billingReady = Boolean(row.billing_ready);
-    const mailReady = Boolean(row.mail_ready);
-    const estateReady = Boolean(row.estate_ready);
-    const automationReady = Boolean(row.automation_ready);
-    const memoryReady = Boolean(row.memory_ready);
-    const ecosystemTablesReady = Number(row.ecosystem_tables_ready ?? 0);
+    const catalog = catalogRows[0] ?? {};
+    const hasProjects = Boolean(catalog.projects_table);
+    const hasUsers = Boolean(catalog.users_table);
+    const authSchemaReady = hasUsers
+      && Boolean(catalog.sessions_table)
+      && Boolean(catalog.password_reset_tokens_table);
+
+    let projectReady = false;
+    if (hasProjects) {
+      const projectRows = await sql`
+        SELECT EXISTS (
+          SELECT 1 FROM public.projects
+          WHERE slug = 'neyvix' AND is_active = true
+        ) AS project_ready
+      `;
+      projectReady = Boolean(projectRows[0]?.project_ready);
+    }
+
+    let activeUsers: number | null = null;
+    let usersWithoutPassword: number | null = null;
+    if (hasUsers) {
+      const userRows = await sql`
+        SELECT
+          count(*) FILTER (WHERE is_active = true)::int AS active_users,
+          count(*) FILTER (WHERE password_hash IS NULL OR password_hash = '')::int AS users_without_password
+        FROM public.users
+      `;
+      activeUsers = userRows[0]?.active_users == null ? null : Number(userRows[0].active_users);
+      usersWithoutPassword = userRows[0]?.users_without_password == null ? null : Number(userRows[0].users_without_password);
+    }
+
+    const billingReady = Boolean(catalog.billing_events_table)
+      && Boolean(catalog.plans_table)
+      && Boolean(catalog.subscriptions_table);
+    const mailReady = Boolean(catalog.mailboxes_table) && Boolean(catalog.messages_table);
+    const estateReady = Boolean(catalog.estate_sites_table) && Boolean(catalog.estate_properties_table);
+    const automationReady = Boolean(catalog.automations_table) && Boolean(catalog.approval_requests_table);
+    const memoryReady = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
+
+    const ecosystemTablesReady = [
+      catalog.conversations_table,
+      catalog.chat_messages_table,
+      catalog.social_profiles_table,
+      catalog.drive_items_table,
+      catalog.documents_table,
+      catalog.meetings_table,
+      catalog.deploy_projects_table,
+      catalog.cloud_resources_table,
+      catalog.organizations_table,
+      catalog.wallets_table,
+    ].filter(Boolean).length;
     const ecosystem = ecosystemTablesReady === 10 ? "ready" : ecosystemTablesReady > 0 ? "partial" : "missing";
     const authReady = authSchemaReady && Number(activeUsers ?? 0) > 0 && Number(usersWithoutPassword ?? 0) === 0;
     const coreReady = projectReady && authReady && billingReady && mailReady && estateReady;
