@@ -16,7 +16,7 @@ jobs:
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
     steps:
-      - name: Verify failed login and logout session safety
+      - name: Verify failed login, reset and logout session safety
         shell: bash
         run: |
           set -euo pipefail
@@ -74,6 +74,38 @@ jobs:
             exit 1
           fi
 
+          reset_code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -D /tmp/reset.headers \
+            -o /tmp/reset.body \
+            -w '%{http_code}' \
+            --data-urlencode 'token=neyvix-invalid-reset-token-0000000000000000' \
+            --data-urlencode 'password=NEYVIX-smoke-reset-password-0001' \
+            --data-urlencode 'confirmPassword=NEYVIX-smoke-reset-password-0001' \
+            "$base/api/auth/reset-password")"
+
+          reset_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/reset.headers)"
+          reset_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset.headers | tail -1)"
+          reset_cache="$(awk 'BEGIN{IGNORECASE=1} /^cache-control:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset.headers | tail -1)"
+          reset_referrer="$(awk 'BEGIN{IGNORECASE=1} /^referrer-policy:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/reset.headers | tail -1)"
+
+          echo "Invalid reset HTTP: ${reset_status:-$reset_code}"
+          test "${reset_status:-$reset_code}" = "303"
+          case "$reset_location" in
+            */reset-password?status=invalid*) ;;
+            *) echo "Unexpected invalid-reset redirect: $reset_location" >&2; exit 1 ;;
+          esac
+          case "${reset_cache,,}" in
+            *no-store*) ;;
+            *) echo "Password reset response must be non-cacheable: $reset_cache" >&2; exit 1 ;;
+          esac
+          test "${reset_referrer,,}" = "no-referrer"
+          if grep -Eiq '^set-cookie: neyvix_session=' /tmp/reset.headers; then
+            echo "Security regression: invalid password reset issued a NEYVIX session cookie." >&2
+            exit 1
+          fi
+
           logout_code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
             -X POST \
@@ -104,4 +136,4 @@ jobs:
             exit 1
           fi
 
-          echo "PASS: failed login never created a session and logout clears residual session state."
+          echo "PASS: failed login/reset never created a session and logout clears residual session state."
