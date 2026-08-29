@@ -26,3 +26,20 @@ export async function getAccountSecurityState(email: string): Promise<AccountSec
     updatedAt: String(row.updated_at),
   };
 }
+
+export async function revokeSessionsIssuedThrough(email: string, issuedAtMs: number) {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) return false;
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0) return false;
+
+  const sql = neon(url);
+  const cutoff = new Date(issuedAtMs + 1).toISOString();
+  const rows = await sql`
+    UPDATE public.users
+    SET updated_at = GREATEST(updated_at, ${cutoff}::timestamptz)
+    WHERE lower(email) = ${email.trim().toLowerCase()}
+    RETURNING email
+  ` as Array<{ email: string }>;
+
+  return rows.length === 1;
+}
