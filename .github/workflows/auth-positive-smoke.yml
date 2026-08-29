@@ -7,10 +7,36 @@ permissions:
   contents: read
 
 jobs:
-  auth-positive-smoke:
+  auth-positive-preflight:
     if: >-
       github.event.deployment_status.state == 'success' &&
       github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
+      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
+    outputs:
+      ready: ${{ steps.credentials.outputs.ready }}
+    steps:
+      - id: credentials
+        name: Detect dedicated smoke credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${NEYVIX_SMOKE_EMAIL:-}" ] && [ -n "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "### Auth Positive Smoke: READY" >> "$GITHUB_STEP_SUMMARY"
+            echo "Dedicated technical credentials are configured; the authenticated production smoke will run." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "### Auth Positive Smoke: NOT TESTED" >> "$GITHUB_STEP_SUMMARY"
+            echo "Missing NEYVIX_SMOKE_EMAIL and/or NEYVIX_SMOKE_PASSWORD repository secrets. No positive-auth claim was made." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  auth-positive-smoke:
+    needs: auth-positive-preflight
+    if: needs.auth-positive-preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -23,11 +49,6 @@ jobs:
         run: |
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
-
-          if [ -z "${NEYVIX_SMOKE_EMAIL:-}" ] || [ -z "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
-            echo "NOT TESTED: configure NEYVIX_SMOKE_EMAIL and NEYVIX_SMOKE_PASSWORD repository secrets for the dedicated technical smoke account."
-            exit 0
-          fi
 
           echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
           echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
@@ -44,8 +65,8 @@ jobs:
             --data-urlencode 'next=/dashboard' \
             "$base/api/auth/login")"
 
-          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-login.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-login.headers | tail -1)"
+          login_status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/auth-login.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-login.headers | tail -1)"
 
           echo "Authenticated login HTTP: ${login_status:-$login_code}"
           test "${login_status:-$login_code}" = "303"
@@ -83,3 +104,5 @@ jobs:
           test "$dashboard_code" = "200"
 
           echo "PASS: production login -> session -> identity -> dashboard flow is authenticated end to end."
+          echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production login → session cookie → /api/auth/me → dashboard." >> "$GITHUB_STEP_SUMMARY"
