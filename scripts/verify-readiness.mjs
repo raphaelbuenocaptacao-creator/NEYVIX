@@ -8,6 +8,7 @@ const requiredFiles = [
   "app/api/auth/register/route.ts",
   "app/api/auth/magic-login/route.ts",
   "app/api/auth/magic-login/request/route.ts",
+  "app/api/auth/me/route.ts",
   "app/api/ai/route.ts",
   "app/api/billing/checkout/route.ts",
   "app/api/billing/webhook/route.ts",
@@ -120,6 +121,23 @@ for (const contract of [
 ]) {
   if (!passwordLogin.includes(contract)) {
     console.error(`NEYVIX readiness failed: password login safety contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const sessionMe = readFileSync("app/api/auth/me/route.ts", "utf8");
+for (const contract of [
+  "readActiveSession",
+  "getDatabaseUserByEmail",
+  "getTrialStatus",
+  "getEntitlements",
+  "getUserRole",
+  "authenticated: false",
+  "authenticated: true",
+  '"Cache-Control": "no-store"',
+]) {
+  if (!sessionMe.includes(contract)) {
+    console.error(`NEYVIX readiness failed: authenticated session metadata contract missing: ${contract}`);
     process.exit(1);
   }
 }
