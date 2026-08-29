@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NEYVIX">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="70%"><stop offset="0%" stop-color="#0d3354"/><stop offset="55%" stop-color="#03111f"/><stop offset="100%" stop-color="#010409"/></radialGradient>
+    <linearGradient id="n" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8be9ff"/><stop offset="45%" stop-color="#00b7ff"/><stop offset="100%" stop-color="#0066ff"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="154" fill="none" stroke="#0a87c7" stroke-opacity=".26" stroke-width="2"/>
+  <circle cx="256" cy="256" r="121" fill="#031722" stroke="#00b7ff" stroke-opacity=".55" stroke-width="3"/>
+  <path d="M166 349V163h42l96 119V163h42v186h-39L208 225v124z" fill="url(#n)"/>
+</svg>
