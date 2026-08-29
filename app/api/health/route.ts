@@ -9,7 +9,8 @@ export async function GET() {
   const sessionKey = getSessionSecretStatus();
   const production = process.env.NODE_ENV === "production";
   const sessionKeyDedicated = sessionKey.source === "configured";
-  const authReady = health.database === "connected" && sessionKey.ready;
+  const authSchemaReady = health.auth.schema === "ready";
+  const authReady = health.database === "connected" && sessionKey.ready && authSchemaReady;
   const accessReady = authReady && health.project === "ready";
   const ecosystemReady = health.launchReady
     && authReady
@@ -27,6 +28,7 @@ export async function GET() {
         database: health.database,
         project: health.project,
         auth: authReady ? "ready" : "degraded",
+        authSchema: health.auth.schema,
         authSessionSecurity: !production || sessionKeyDedicated
           ? "ready"
           : "dedicated_secret_required",
