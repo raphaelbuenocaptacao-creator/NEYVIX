@@ -5,14 +5,15 @@ import { deliverMail } from "@/lib/mail-transport";
 import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 const MAGIC_LOGIN_TTL_MINUTES = 10;
+const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
 
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
 }
 
-function hashToken(token: string) {
-  return createHash("sha256").update(token).digest("hex");
+function hashMagicLoginToken(token: string) {
+  return createHash("sha256").update(`${MAGIC_LOGIN_TOKEN_NAMESPACE}${token}`).digest("hex");
 }
 
 function secureRedirect(request: Request, path: string) {
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     }
 
     const token = randomBytes(32).toString("base64url");
-    const tokenHash = hashToken(token);
+    const tokenHash = hashMagicLoginToken(token);
 
     await sql`
       WITH invalidated AS (
