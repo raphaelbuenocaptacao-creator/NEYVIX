@@ -49,14 +49,25 @@ jobs:
         run: |
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/auth-cookies.txt
 
           echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
           echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
 
+          cleanup_session() {
+            if [ -s "$cookies" ] && grep -Eq 'neyvix_session' "$cookies"; then
+              curl --silent --show-error --max-time 20 \
+                -b "$cookies" -c "$cookies" \
+                -o /dev/null \
+                "$base/api/auth/logout" || true
+            fi
+          }
+          trap cleanup_session EXIT
+
           login_code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
             -H 'content-type: application/x-www-form-urlencoded' \
-            -c /tmp/auth-cookies.txt \
+            -c "$cookies" \
             -D /tmp/auth-login.headers \
             -o /tmp/auth-login.body \
             -w '%{http_code}' \
@@ -75,14 +86,14 @@ jobs:
             *) echo "Authenticated login did not redirect to dashboard: $location" >&2; exit 1 ;;
           esac
 
-          if ! grep -Eq 'neyvix_session' /tmp/auth-cookies.txt; then
+          if ! grep -Eq 'neyvix_session' "$cookies"; then
             echo "Authenticated login did not persist neyvix_session." >&2
             exit 1
           fi
 
           me_code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
-            -b /tmp/auth-cookies.txt \
+            -b "$cookies" \
             -D /tmp/auth-me.headers \
             -o /tmp/auth-me.json \
             -w '%{http_code}' \
@@ -92,10 +103,13 @@ jobs:
           test "$me_code" = "200"
           jq -e '.authenticated == true' /tmp/auth-me.json >/dev/null
           jq -e '.user != null' /tmp/auth-me.json >/dev/null
+          jq -e '.user.email | type == "string" and length > 0' /tmp/auth-me.json >/dev/null
+          jq -e '.user.role | IN("member", "cro", "admin", "superadmin")' /tmp/auth-me.json >/dev/null
+          jq -e '.expiresAt | type == "string" and length > 0' /tmp/auth-me.json >/dev/null
 
           dashboard_code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
-            -b /tmp/auth-cookies.txt \
+            -b "$cookies" \
             -o /tmp/auth-dashboard.html \
             -w '%{http_code}' \
             "$base/dashboard")"
@@ -103,6 +117,33 @@ jobs:
           echo "Authenticated dashboard HTTP: $dashboard_code"
           test "$dashboard_code" = "200"
 
-          echo "PASS: production login -> session -> identity -> dashboard flow is authenticated end to end."
+          logout_code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -b "$cookies" -c "$cookies" \
+            -D /tmp/auth-logout.headers \
+            -o /tmp/auth-logout.body \
+            -w '%{http_code}' \
+            "$base/api/auth/logout")"
+
+          logout_status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/auth-logout.headers)"
+          echo "Authenticated logout HTTP: ${logout_status:-$logout_code}"
+          case "${logout_status:-$logout_code}" in
+            302|303|307|308) ;;
+            *) echo "Logout did not return a redirect." >&2; exit 1 ;;
+          esac
+
+          post_logout_code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -b "$cookies" \
+            -o /tmp/auth-post-logout.json \
+            -w '%{http_code}' \
+            "$base/api/auth/me")"
+
+          echo "Post-logout /api/auth/me HTTP: $post_logout_code"
+          test "$post_logout_code" = "401"
+          jq -e '.authenticated == false' /tmp/auth-post-logout.json >/dev/null
+
+          trap - EXIT
+          echo "PASS: production login -> session -> identity -> dashboard -> logout -> revoked session flow is authenticated end to end."
           echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production login → session cookie → /api/auth/me → dashboard." >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production login → session cookie → /api/auth/me → dashboard → logout → revoked session." >> "$GITHUB_STEP_SUMMARY"
