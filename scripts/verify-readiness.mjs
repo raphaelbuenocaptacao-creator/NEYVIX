@@ -7,6 +7,7 @@ const requiredFiles = [
   "app/api/auth/login/route.ts",
   "app/api/auth/register/route.ts",
   "app/api/auth/magic-login/route.ts",
+  "app/api/auth/magic-login/request/route.ts",
   "app/api/ai/route.ts",
   "app/api/billing/checkout/route.ts",
   "app/api/billing/webhook/route.ts",
@@ -125,6 +126,7 @@ for (const contract of [
 
 const magicLogin = readFileSync("app/api/auth/magic-login/route.ts", "utf8");
 for (const contract of [
+  'MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:"',
   "prt.used_at IS NULL",
   "prt.expires_at > now()",
   "SET used_at = now()",
@@ -137,6 +139,22 @@ for (const contract of [
     console.error(`NEYVIX readiness failed: magic login safety contract missing: ${contract}`);
     process.exit(1);
   }
+}
+
+const magicLoginRequest = readFileSync("app/api/auth/magic-login/request/route.ts", "utf8");
+for (const contract of [
+  'MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:"',
+  "INSERT INTO public.password_reset_tokens",
+  "WHERE token_hash = ${tokenHash} AND used_at IS NULL",
+]) {
+  if (!magicLoginRequest.includes(contract)) {
+    console.error(`NEYVIX readiness failed: magic-login request isolation contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+if (magicLoginRequest.includes("WHERE user_id = ${user.id}") && magicLoginRequest.includes("SET used_at = now()")) {
+  console.error("NEYVIX readiness failed: magic-login request must not bulk-invalidate password-reset tokens for a user.");
+  process.exit(1);
 }
 
 const health = readFileSync("lib/health.ts", "utf8");
