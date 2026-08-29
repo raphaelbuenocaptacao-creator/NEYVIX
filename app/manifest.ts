@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    id: "/",
     name: "NEYVIX — Intelligence Operating System",
     short_name: "NEYVIX",
     description: "Uma identidade. Uma inteligência. Um universo digital.",
@@ -11,17 +12,24 @@ export default function manifest(): MetadataRoute.Manifest {
     orientation: "any",
     background_color: "#02050a",
     theme_color: "#00a8ff",
+    lang: "pt-BR",
     categories: ["business", "productivity", "utilities"],
     icons: [
       {
-        src: "/neyvix-icon.svg",
-        sizes: "any",
+        src: "/neyvix-icon-192.svg",
+        sizes: "192x192",
         type: "image/svg+xml",
         purpose: "any",
       },
       {
-        src: "/neyvix-maskable.svg",
-        sizes: "any",
+        src: "/neyvix-icon-512.svg",
+        sizes: "512x512",
+        type: "image/svg+xml",
+        purpose: "any",
+      },
+      {
+        src: "/neyvix-maskable-512.svg",
+        sizes: "512x512",
         type: "image/svg+xml",
         purpose: "maskable",
       },
