@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE, authCookieOptions, createSession } from "@/lib/auth";
 
 const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
+const MAGIC_LOGIN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
@@ -26,7 +27,14 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const token = url.searchParams.get("token")?.trim() ?? "";
-    if (token.length < 32) return secureRedirect(request, "/login?error=invalid");
+
+    // Tokens are generated from randomBytes(32).toString("base64url"), which is
+    // always exactly 43 URL-safe characters. Reject malformed input before any
+    // database access so arbitrary/oversized values cannot turn this endpoint
+    // into an avoidable database-query surface.
+    if (!MAGIC_LOGIN_TOKEN_PATTERN.test(token)) {
+      return secureRedirect(request, "/login?error=invalid");
+    }
 
     const sql = getSql();
     if (!sql) return secureRedirect(request, "/login?error=config");
