@@ -5,21 +5,57 @@ export type MailTransportMessage = {
   text: string;
 };
 
+export type MailTransportStatus = {
+  configured: boolean;
+  valid: boolean;
+  ready: boolean;
+  reason: "ready" | "transport_not_configured" | "transport_invalid";
+};
+
 const MAIL_TIMEOUT_MS = 15_000;
+
+export function getMailTransportStatus(): MailTransportStatus {
+  const endpoint = process.env.MAIL_TRANSPORT_URL?.trim();
+  const secret = process.env.MAIL_TRANSPORT_SECRET?.trim();
+
+  if (!endpoint || !secret) {
+    return {
+      configured: false,
+      valid: false,
+      ready: false,
+      reason: "transport_not_configured",
+    };
+  }
+
+  try {
+    const url = new URL(endpoint);
+    const valid = url.protocol === "https:";
+    return {
+      configured: true,
+      valid,
+      ready: valid,
+      reason: valid ? "ready" : "transport_invalid",
+    };
+  } catch {
+    return {
+      configured: true,
+      valid: false,
+      ready: false,
+      reason: "transport_invalid",
+    };
+  }
+}
 
 export async function deliverMail(message: MailTransportMessage) {
   const endpoint = process.env.MAIL_TRANSPORT_URL?.trim();
   const secret = process.env.MAIL_TRANSPORT_SECRET?.trim();
-  if (!endpoint || !secret) return { ok: false as const, reason: "transport_not_configured" };
+  const transport = getMailTransportStatus();
 
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    return { ok: false as const, reason: "transport_invalid" };
+  if (!transport.ready || !endpoint || !secret) {
+    return { ok: false as const, reason: transport.reason };
   }
-  if (url.protocol !== "https:") return { ok: false as const, reason: "transport_invalid" };
 
+  const url = new URL(endpoint);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MAIL_TIMEOUT_MS);
 
