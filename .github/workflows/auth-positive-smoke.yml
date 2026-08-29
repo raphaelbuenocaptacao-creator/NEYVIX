@@ -50,6 +50,7 @@ jobs:
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
           cookies=/tmp/auth-cookies.txt
+          revoked_cookies=/tmp/auth-revoked-cookies.txt
 
           echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
           echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
@@ -77,8 +78,8 @@ jobs:
             --data-urlencode 'next=/dashboard' \
             "$base/api/auth/login")"
 
-          login_status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/auth-login.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-login.headers | tail -1)"
+          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-login.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-login.headers | tail -1)"
 
           echo "Authenticated login HTTP: ${login_status:-$login_code}"
           test "${login_status:-$login_code}" = "303"
@@ -91,6 +92,8 @@ jobs:
             echo "Authenticated login did not persist neyvix_session." >&2
             exit 1
           fi
+
+          cp "$cookies" "$revoked_cookies"
 
           me_code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
@@ -127,7 +130,7 @@ jobs:
             -w '%{http_code}' \
             "$base/api/auth/logout")"
 
-          logout_status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/auth-logout.headers)"
+          logout_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-logout.headers)"
           echo "Authenticated logout HTTP: ${logout_status:-$logout_code}"
           case "${logout_status:-$logout_code}" in
             302|303|307|308) ;;
@@ -145,7 +148,18 @@ jobs:
           test "$post_logout_code" = "401"
           jq -e '.authenticated == false' /tmp/auth-post-logout.json >/dev/null
 
+          replay_code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -b "$revoked_cookies" \
+            -o /tmp/auth-replay.json \
+            -w '%{http_code}' \
+            "$base/api/auth/me")"
+
+          echo "Revoked session replay /api/auth/me HTTP: $replay_code"
+          test "$replay_code" = "401"
+          jq -e '.authenticated == false' /tmp/auth-replay.json >/dev/null
+
           trap - EXIT
-          echo "PASS: production login -> session -> identity -> dashboard -> logout -> revoked session flow is authenticated end to end."
+          echo "PASS: production login -> session -> identity -> dashboard -> logout -> server-side replay rejection is authenticated end to end."
           echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production login → session cookie → /api/auth/me → dashboard → logout → revoked session." >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production login → session cookie → /api/auth/me → dashboard → logout → reuse of the pre-logout session is rejected." >> "$GITHUB_STEP_SUMMARY"
