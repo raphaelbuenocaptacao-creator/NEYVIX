@@ -22,9 +22,12 @@ export async function readActiveSession(token?: string | null): Promise<ActiveSe
     const securityEpoch = new Date(account.updatedAt).getTime();
     if (!Number.isFinite(securityEpoch)) return null;
 
-    // Production sessions created before this hardening release do not carry
-    // millisecond precision. Requiring iatMs forces a clean re-authentication
-    // and guarantees password changes can revoke older sessions deterministically.
+    if (Number.isFinite(session.securityEpochMs)) {
+      if (session.securityEpochMs !== securityEpoch) return null;
+      return { ...session, isSuperadmin: account.isSuperadmin };
+    }
+
+    // Compatibility path for sessions created before database epoch binding.
     if (process.env.NODE_ENV === "production" && !session.iatMs) return null;
     const issuedAt = session.iatMs ?? session.iat * 1000;
     if (issuedAt < securityEpoch) return null;
