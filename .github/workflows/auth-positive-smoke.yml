@@ -159,7 +159,28 @@ jobs:
           test "$replay_code" = "401"
           jq -e '.authenticated == false' /tmp/auth-replay.json >/dev/null
 
+          revoked_dashboard_code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -b "$revoked_cookies" \
+            -D /tmp/auth-revoked-dashboard.headers \
+            -o /tmp/auth-revoked-dashboard.body \
+            -w '%{http_code}' \
+            "$base/dashboard")"
+
+          revoked_dashboard_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-revoked-dashboard.headers)"
+          revoked_dashboard_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-revoked-dashboard.headers | tail -1)"
+
+          echo "Revoked session replay /dashboard HTTP: ${revoked_dashboard_status:-$revoked_dashboard_code}"
+          case "${revoked_dashboard_status:-$revoked_dashboard_code}" in
+            302|303|307|308) ;;
+            *) echo "Revoked session was not redirected away from dashboard." >&2; exit 1 ;;
+          esac
+          case "$revoked_dashboard_location" in
+            */login*) ;;
+            *) echo "Revoked dashboard session did not redirect to login: $revoked_dashboard_location" >&2; exit 1 ;;
+          esac
+
           trap - EXIT
-          echo "PASS: production login -> session -> identity -> dashboard -> logout -> server-side replay rejection is authenticated end to end."
+          echo "PASS: production login -> session -> identity -> dashboard -> logout -> API and dashboard replay rejection is authenticated end to end."
           echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production login → session cookie → /api/auth/me → dashboard → logout → reuse of the pre-logout session is rejected." >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production login → session cookie → /api/auth/me → dashboard → logout → reuse of the pre-logout session is rejected by both /api/auth/me and /dashboard." >> "$GITHUB_STEP_SUMMARY"
