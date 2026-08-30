@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, authCookieOptions, createSession } from "@/lib/auth";
+import { ensureNeyvixSubscription } from "@/lib/subscription-heal";
 
 const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
 const MAGIC_LOGIN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -41,10 +42,6 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const token = url.searchParams.get("token")?.trim() ?? "";
 
-    // Tokens are generated from randomBytes(32).toString("base64url"), which is
-    // always exactly 43 URL-safe characters. Reject malformed input before any
-    // database access so arbitrary/oversized values cannot turn this endpoint
-    // into an avoidable database-query surface.
     if (!MAGIC_LOGIN_TOKEN_PATTERN.test(token)) {
       return secureRedirect("/login?error=invalid");
     }
@@ -55,7 +52,12 @@ export async function GET(request: Request) {
     const tokenHash = hashMagicLoginToken(token);
     const rows = await sql`
       WITH valid_token AS (
-        SELECT prt.id, u.email, COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name
+        SELECT
+          prt.id,
+          u.id AS user_id,
+          u.email,
+          COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
+          u.updated_at
         FROM public.password_reset_tokens prt
         JOIN public.users u ON u.id = prt.user_id
         WHERE prt.token_hash = ${tokenHash}
@@ -68,16 +70,28 @@ export async function GET(request: Request) {
         SET used_at = now()
         FROM valid_token vt
         WHERE prt.id = vt.id
-        RETURNING vt.email, vt.name
+        RETURNING vt.user_id, vt.email, vt.name, vt.updated_at
       )
-      SELECT email, name FROM consumed
-    ` as Array<{ email: string; name: string }>;
+      SELECT user_id, email, name, updated_at FROM consumed
+    ` as Array<{ user_id: string; email: string; name: string; updated_at: string }>;
 
     const user = rows[0];
     if (!user) return secureRedirect("/login?error=invalid");
 
+    const securityEpochMs = new Date(user.updated_at).getTime();
+    if (!Number.isFinite(securityEpochMs)) {
+      console.error("NEYVIX magic login blocked: invalid security epoch", { userId: user.user_id });
+      return secureRedirect("/login?error=config");
+    }
+
+    const subscriptionReady = await ensureNeyvixSubscription(user.user_id);
+    if (!subscriptionReady) {
+      console.error("NEYVIX magic login blocked: subscription repair could not confirm entitlement", { userId: user.user_id });
+      return secureRedirect("/login?error=config");
+    }
+
     const response = secureRedirect("/dashboard");
-    response.cookies.set(SESSION_COOKIE, createSession({ email: user.email, name: user.name }), {
+    response.cookies.set(SESSION_COOKIE, createSession({ email: user.email, name: user.name }, securityEpochMs), {
       ...authCookieOptions,
       maxAge: 60 * 60 * 24 * 7,
     });
