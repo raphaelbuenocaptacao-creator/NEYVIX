@@ -25,7 +25,10 @@ export async function createRegisteredUser(
   const passwordHash = encodePassword(password);
   const normalizedEmail = email.trim().toLowerCase();
   const cleanName = name.trim().slice(0, 80);
-  const selectedPlanCode = planCode?.trim().toLowerCase() || "";
+  // A public signup must always receive a real entitlement-bearing plan.
+  // Previously an empty selection produced a subscription with plan_id = null,
+  // which could fail on stricter schemas or create an account unable to use products.
+  const selectedPlanCode = planCode?.trim().toLowerCase() || "start-monthly";
 
   const rows = await sql`
     WITH active_project AS (
@@ -44,6 +47,7 @@ export async function createRegisteredUser(
       INSERT INTO public.users (id, email, password_hash, name, is_active, is_superadmin)
       SELECT ${id}, ${normalizedEmail}, ${passwordHash}, ${cleanName}, true, false
       FROM active_project
+      WHERE EXISTS (SELECT 1 FROM selected_plan)
       ON CONFLICT (email) DO NOTHING
       RETURNING id, email, name
     ), new_subscription AS (
@@ -63,10 +67,10 @@ export async function createRegisteredUser(
         'trialing',
         now(),
         now() + (ap.trial_days || ' days')::interval,
-        jsonb_build_object('source', 'neyvix-id', 'plan_code', NULLIF(${selectedPlanCode}, ''))
+        jsonb_build_object('source', 'neyvix-id', 'plan_code', ${selectedPlanCode})
       FROM new_user nu
       JOIN active_project ap ON true
-      LEFT JOIN selected_plan sp ON true
+      JOIN selected_plan sp ON true
       RETURNING user_id
     )
     SELECT nu.id, nu.email, nu.name
