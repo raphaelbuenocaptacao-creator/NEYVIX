@@ -50,48 +50,57 @@ export async function GET(request: Request) {
     if (!sql) return secureRedirect("/login?error=config");
 
     const tokenHash = hashMagicLoginToken(token);
-    const rows = await sql`
-      WITH valid_token AS (
-        SELECT
-          prt.id,
-          u.id AS user_id,
-          u.email,
-          COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
-          u.updated_at
-        FROM public.password_reset_tokens prt
-        JOIN public.users u ON u.id = prt.user_id
-        WHERE prt.token_hash = ${tokenHash}
-          AND prt.used_at IS NULL
-          AND prt.expires_at > now()
-          AND u.is_active = true
-        FOR UPDATE
-      ), consumed AS (
-        UPDATE public.password_reset_tokens prt
-        SET used_at = now()
-        FROM valid_token vt
-        WHERE prt.id = vt.id
-        RETURNING vt.user_id, vt.email, vt.name, vt.updated_at
-      )
-      SELECT user_id, email, name, updated_at FROM consumed
-    ` as Array<{ user_id: string; email: string; name: string; updated_at: string }>;
 
-    const user = rows[0];
-    if (!user) return secureRedirect("/login?error=invalid");
+    // Read the candidate first, but do not burn the one-time token until the
+    // account is actually ready to enter. A transient entitlement repair
+    // failure must not turn a valid magic link into an unusable one.
+    const candidates = await sql`
+      SELECT
+        prt.id AS token_id,
+        u.id AS user_id,
+        u.email,
+        COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
+        u.updated_at
+      FROM public.password_reset_tokens prt
+      JOIN public.users u ON u.id = prt.user_id
+      WHERE prt.token_hash = ${tokenHash}
+        AND prt.used_at IS NULL
+        AND prt.expires_at > now()
+        AND u.is_active = true
+      LIMIT 1
+    ` as Array<{ token_id: string; user_id: string; email: string; name: string; updated_at: string }>;
 
-    const securityEpochMs = new Date(user.updated_at).getTime();
+    const candidate = candidates[0];
+    if (!candidate) return secureRedirect("/login?error=invalid");
+
+    const securityEpochMs = new Date(candidate.updated_at).getTime();
     if (!Number.isFinite(securityEpochMs)) {
-      console.error("NEYVIX magic login blocked: invalid security epoch", { userId: user.user_id });
+      console.error("NEYVIX magic login blocked: invalid security epoch", { userId: candidate.user_id });
       return secureRedirect("/login?error=config");
     }
 
-    const subscriptionReady = await ensureNeyvixSubscription(user.user_id);
+    const subscriptionReady = await ensureNeyvixSubscription(candidate.user_id);
     if (!subscriptionReady) {
-      console.error("NEYVIX magic login blocked: subscription repair could not confirm entitlement", { userId: user.user_id });
+      console.error("NEYVIX magic login blocked: subscription repair could not confirm entitlement", { userId: candidate.user_id });
       return secureRedirect("/login?error=config");
     }
+
+    // Consume atomically after entitlement is ready. Concurrent replays can
+    // race through the read above, but only one request can win this UPDATE.
+    const consumed = await sql`
+      UPDATE public.password_reset_tokens
+      SET used_at = now()
+      WHERE id = ${candidate.token_id}
+        AND token_hash = ${tokenHash}
+        AND used_at IS NULL
+        AND expires_at > now()
+      RETURNING id
+    ` as Array<{ id: string }>;
+
+    if (!consumed[0]) return secureRedirect("/login?error=invalid");
 
     const response = secureRedirect("/dashboard");
-    response.cookies.set(SESSION_COOKIE, createSession({ email: user.email, name: user.name }, securityEpochMs), {
+    response.cookies.set(SESSION_COOKIE, createSession({ email: candidate.email, name: candidate.name }, securityEpochMs), {
       ...authCookieOptions,
       maxAge: 60 * 60 * 24 * 7,
     });
