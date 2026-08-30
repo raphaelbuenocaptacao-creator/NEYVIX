@@ -35,6 +35,14 @@ function safeNext(value: FormDataEntryValue | null) {
   }
 }
 
+function normalizeIdentity(value: FormDataEntryValue | null) {
+  const identity = String(value ?? "").trim().toLowerCase();
+  if (!identity) return "";
+  if (identity.includes("@")) return identity;
+  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(identity)) return identity;
+  return `${identity}@neyvix.com`;
+}
+
 function hardenedRedirect(response: NextResponse) {
   response.headers.set("Cache-Control", "no-store, max-age=0");
   response.headers.set("Referrer-Policy", "no-referrer");
@@ -51,7 +59,7 @@ function loginErrorUrl(error: "invalid" | "config" | "rate_limit", next: string)
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
-    const email = String(form.get("email") ?? "").trim().toLowerCase();
+    const email = normalizeIdentity(form.get("email"));
     const password = String(form.get("password") ?? "");
     const next = safeNext(form.get("next"));
     const bucket = rateLimitBucket(`${email}|${clientAddress(request)}`);
