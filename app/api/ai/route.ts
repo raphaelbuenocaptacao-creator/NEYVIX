@@ -31,6 +31,11 @@ export async function GET() {
     return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
   }
 
+  const access = await getProductAccess(session.email, "ai");
+  if (!access.allowed) {
+    return NextResponse.json(upgradeRequiredPayload("ai", "Start"), { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
+
   try {
     const messages = await listAiHistory(session.email, 40);
     return NextResponse.json({ messages, count: messages.length }, { headers: { "Cache-Control": "no-store" } });
