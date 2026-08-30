@@ -61,15 +61,31 @@ export async function authenticateDatabaseUser(email: string, password: string) 
 
   const normalizedEmail = email.trim().toLowerCase();
   const rows = await sql`
-    SELECT id, email, name, password_hash, is_active
+    SELECT id, email, name, password_hash, is_active, updated_at
     FROM public.users
     WHERE email = ${normalizedEmail}
     LIMIT 1
   `;
 
-  const user = rows[0] as { id: string; email: string; name: string | null; password_hash: string; is_active: boolean } | undefined;
+  const user = rows[0] as {
+    id: string;
+    email: string;
+    name: string | null;
+    password_hash: string;
+    is_active: boolean;
+    updated_at: string;
+  } | undefined;
   if (!user || !user.is_active || !verifyPassword(user.password_hash, password)) return null;
-  return { id: user.id, email: user.email, name: user.name || user.email.split("@")[0] };
+
+  const securityEpochMs = new Date(user.updated_at).getTime();
+  if (!Number.isFinite(securityEpochMs)) return null;
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name || user.email.split("@")[0],
+    securityEpochMs,
+  };
 }
 
 export async function getDatabaseUserByEmail(email: string) {
