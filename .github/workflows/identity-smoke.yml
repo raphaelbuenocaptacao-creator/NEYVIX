@@ -55,6 +55,8 @@ jobs:
             .schema == "ready" and
             .signup.ready == true and
             .signup.project == true and
+            .signup.plansTable == true and
+            .signup.canonicalPlan == true and
             .session.ready == true and
             .magicLogin.request == true and
             .magicLogin.consumer == true and
