@@ -26,7 +26,7 @@ export async function GET() {
       service: "neyvix-id",
       database: "not_configured",
       schema: "unknown",
-      signup: { ready: false },
+      signup: { ready: false, canonicalPlan: false },
       session,
       magicLogin: {
         tokenStore: false,
@@ -50,6 +50,7 @@ export async function GET() {
         to_regclass('public.projects') IS NOT NULL AS projects_ready,
         to_regclass('public.users') IS NOT NULL AS users_ready,
         to_regclass('public.subscriptions') IS NOT NULL AS subscriptions_ready,
+        to_regclass('public.plans') IS NOT NULL AS plans_ready,
         to_regclass('public.password_reset_tokens') IS NOT NULL AS token_store_ready
     `;
 
@@ -57,9 +58,11 @@ export async function GET() {
     const projectsReady = Boolean(catalog.projects_ready);
     const usersReady = Boolean(catalog.users_ready);
     const subscriptionsReady = Boolean(catalog.subscriptions_ready);
+    const plansReady = Boolean(catalog.plans_ready);
     const tokenStore = Boolean(catalog.token_store_ready);
 
     let projectReady = false;
+    let canonicalPlanReady = false;
     let activeNonAdminWithoutSubscription: number | null = null;
 
     if (projectsReady) {
@@ -70,6 +73,23 @@ export async function GET() {
         ) AS project_ready
       `;
       projectReady = Boolean(projectRows[0]?.project_ready);
+    }
+
+    // Public registration defaults to start-monthly. Readiness must prove that
+    // this plan exists instead of claiming signup is healthy from tables alone.
+    if (projectsReady && plansReady && projectReady) {
+      const planRows = await sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM public.plans pl
+          JOIN public.projects p ON p.id = pl.project_id
+          WHERE p.slug = 'neyvix'
+            AND p.is_active = true
+            AND pl.code = 'start-monthly'
+            AND pl.is_active = true
+        ) AS canonical_plan_ready
+      `;
+      canonicalPlanReady = Boolean(planRows[0]?.canonical_plan_ready);
     }
 
     if (projectsReady && usersReady && subscriptionsReady && projectReady) {
@@ -92,8 +112,8 @@ export async function GET() {
       );
     }
 
-    const schemaReady = projectsReady && usersReady && subscriptionsReady && tokenStore;
-    const signupReady = projectReady && usersReady && subscriptionsReady && session.ready;
+    const schemaReady = projectsReady && usersReady && subscriptionsReady && plansReady && tokenStore;
+    const signupReady = projectReady && usersReady && subscriptionsReady && plansReady && canonicalPlanReady && session.ready;
     const magicPipelineReady = tokenStore && usersReady && session.ready;
     const magicStatus = magicPipelineReady && mailTransport.ready
       ? "ready"
@@ -109,9 +129,11 @@ export async function GET() {
       signup: {
         ready: signupReady,
         project: projectReady,
+        canonicalPlan: canonicalPlanReady,
         projectsTable: projectsReady,
         usersTable: usersReady,
         subscriptionsTable: subscriptionsReady,
+        plansTable: plansReady,
       },
       session,
       magicLogin: {
@@ -136,7 +158,7 @@ export async function GET() {
       service: "neyvix-id",
       database: "error",
       schema: "unknown",
-      signup: { ready: false },
+      signup: { ready: false, canonicalPlan: false },
       session,
       magicLogin: {
         tokenStore: false,
