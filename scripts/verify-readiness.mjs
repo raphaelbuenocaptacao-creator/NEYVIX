@@ -148,8 +148,10 @@ for (const contract of [
   'MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:"',
   "prt.used_at IS NULL",
   "prt.expires_at > now()",
+  "ensureNeyvixSubscription",
   "SET used_at = now()",
-  "FOR UPDATE",
+  "AND used_at IS NULL",
+  "RETURNING id",
   "response.cookies.set(SESSION_COOKIE",
   'response.headers.set("Cache-Control", "no-store, max-age=0")',
   'response.headers.set("Referrer-Policy", "no-referrer")',
@@ -158,6 +160,12 @@ for (const contract of [
     console.error(`NEYVIX readiness failed: magic login safety contract missing: ${contract}`);
     process.exit(1);
   }
+}
+const magicEntitlementIndex = magicLogin.indexOf("ensureNeyvixSubscription");
+const magicConsumeIndex = magicLogin.indexOf("SET used_at = now()");
+if (magicEntitlementIndex < 0 || magicConsumeIndex < 0 || magicConsumeIndex < magicEntitlementIndex) {
+  console.error("NEYVIX readiness failed: magic-login token must only be consumed after entitlement readiness is confirmed.");
+  process.exit(1);
 }
 
 const magicLoginRequest = readFileSync("app/api/auth/magic-login/request/route.ts", "utf8");
