@@ -17,14 +17,6 @@ function hashMagicLoginToken(token: string) {
   return createHash("sha256").update(`${MAGIC_LOGIN_TOKEN_NAMESPACE}${token}`).digest("hex");
 }
 
-function secureRedirect(request: Request, path: string) {
-  const response = NextResponse.redirect(new URL(path, request.url), 303);
-  response.headers.set("Cache-Control", "no-store, max-age=0");
-  response.headers.set("Pragma", "no-cache");
-  response.headers.set("Referrer-Policy", "no-referrer");
-  return response;
-}
-
 function trustedPublicOrigin() {
   const configured = process.env.NEYVIX_PUBLIC_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (!configured) return DEFAULT_PUBLIC_ORIGIN;
@@ -37,6 +29,14 @@ function trustedPublicOrigin() {
   }
 }
 
+function secureRedirect(path: string) {
+  const response = NextResponse.redirect(new URL(path, trustedPublicOrigin()), 303);
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
+}
+
 function validEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -47,18 +47,18 @@ export async function POST(request: Request) {
     const email = String(form.get("email") ?? "").trim().toLowerCase();
 
     if (!validEmail(email) || email.length > 254) {
-      return secureRedirect(request, "/login?magic=invalid");
+      return secureRedirect("/login?magic=invalid");
     }
 
     const bucket = rateLimitBucket(`magic-login|${email}|${clientAddress(request)}`);
     if (await isRateLimited("magic_login_request", bucket, 5, 30)) {
-      return secureRedirect(request, "/login?magic=rate_limit");
+      return secureRedirect("/login?magic=rate_limit");
     }
 
     const sql = getSql();
     const transport = getMailTransportStatus();
     if (!sql || !transport.ready) {
-      return secureRedirect(request, "/login?magic=unavailable");
+      return secureRedirect("/login?magic=unavailable");
     }
 
     await recordRateLimitEvent("magic_login_request", bucket);
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     const user = users[0];
     if (!user) {
       // Keep the public response indistinguishable for unknown accounts.
-      return secureRedirect(request, "/login?magic=sent");
+      return secureRedirect("/login?magic=sent");
     }
 
     const token = randomBytes(32).toString("base64url");
@@ -109,12 +109,12 @@ export async function POST(request: Request) {
         WHERE token_hash = ${tokenHash} AND used_at IS NULL
       `;
       console.warn("NEYVIX magic-login delivery failed", delivered.reason);
-      return secureRedirect(request, "/login?magic=unavailable");
+      return secureRedirect("/login?magic=unavailable");
     }
 
-    return secureRedirect(request, "/login?magic=sent");
+    return secureRedirect("/login?magic=sent");
   } catch (error) {
     console.error("Falha ao solicitar magic login do NEYVIX ID", error);
-    return secureRedirect(request, "/login?magic=unavailable");
+    return secureRedirect("/login?magic=unavailable");
   }
 }
