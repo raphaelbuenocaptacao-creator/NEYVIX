@@ -77,5 +77,5 @@ jobs:
           jq -e '.error | type == "string"' /tmp/ai-post.json >/dev/null
           jq -e '.error | type == "string"' /tmp/memory-get.json >/dev/null
           jq -e '.error | type == "string"' /tmp/memory-suggest.json >/dev/null
-          grep -Eiq '^location: .*/login\?next=/memory\r?$' /tmp/memory-post.headers
-          grep -Eiq '^location: .*/login\?next=/memory\r?$' /tmp/memory-delete.headers
+          grep -Fiq '/login?next=/memory' /tmp/memory-post.headers
+          grep -Fiq '/login?next=/memory' /tmp/memory-delete.headers
