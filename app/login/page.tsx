@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 const errors: Record<string, string> = {
-  invalid: "E-mail ou senha inválidos. Confira seus dados e tente novamente.",
+  invalid: "NEYVIX ID/e-mail ou senha inválidos. Confira seus dados e tente novamente.",
   config: "Não foi possível conectar à identidade NEYVIX agora. Tente novamente em instantes.",
   rate_limit: "Muitas tentativas de login foram feitas em pouco tempo. Aguarde alguns minutos e tente novamente.",
 };
@@ -27,7 +27,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <Link href="/" className="brand">NEYVIX</Link>
         <p className="eyebrow">NEYVIX ID</p>
         <h1>Bem-vindo de volta.</h1>
-        <p className="muted">Uma identidade para entrar em todo o ecossistema NEYVIX.</p>
+        <p className="muted">Entre com seu identificador (ex.: raphael) ou com o endereço completo (raphael@neyvix.com).</p>
 
         {resetSuccess ? <p className="legal-copy" role="status"><strong>Senha atualizada com sucesso.</strong> Entre com sua nova senha.</p> : null}
         {sessionExpired ? <p className="legal-copy" role="status">Sua sessão expirou. Entre novamente para continuar de onde parou.</p> : null}
@@ -36,9 +36,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
         <form className="auth-form" action="/api/auth/login" method="post">
           <input type="hidden" name="next" value={next} />
-          <label>E-mail<input type="email" name="email" placeholder="voce@neyvix.com" autoComplete="email" required /></label>
+          <label>NEYVIX ID ou e-mail<input type="text" name="email" placeholder="raphael ou raphael@neyvix.com" autoComplete="username" required /></label>
           <label>Senha<input type="password" name="password" placeholder="••••••••" autoComplete="current-password" required /></label>
-          <button type="submit" className="primary-button">Continuar</button>
+          <button type="submit" className="primary-button">Entrar no NEYVIX</button>
         </form>
 
         <p className="legal-copy"><strong>Ou entre sem senha.</strong> O link é válido por 10 minutos e pode ser usado uma única vez.</p>
