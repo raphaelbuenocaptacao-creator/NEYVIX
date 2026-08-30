@@ -42,3 +42,28 @@ jobs:
           jq '{ok,service,status,database,ai,memory}' /tmp/intelligence.json
           test "$code" = "200"
           jq -e '.ok == true and .database == "connected" and .ai.messageStore == true and .memory.store == true and .memory.events == true' /tmp/intelligence.json >/dev/null
+
+      - name: Verify anonymous intelligence boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_CANDIDATE%/}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          ai_get="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/ai-get.json -w '%{http_code}' "$base/api/ai")"
+          ai_post="$(curl --silent --show-error --max-time 20 "${headers[@]}" -H 'Content-Type: application/json' -d '{"prompt":"health boundary"}' -o /tmp/ai-post.json -w '%{http_code}' "$base/api/ai")"
+          memory_get="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/memory-get.json -w '%{http_code}' "$base/api/memory")"
+
+          echo "AI GET anonymous HTTP: $ai_get"
+          echo "AI POST anonymous HTTP: $ai_post"
+          echo "Memory GET anonymous HTTP: $memory_get"
+
+          test "$ai_get" = "401"
+          test "$ai_post" = "401"
+          test "$memory_get" = "401"
+          jq -e '.error | type == "string"' /tmp/ai-get.json >/dev/null
+          jq -e '.error | type == "string"' /tmp/ai-post.json >/dev/null
+          jq -e '.error | type == "string"' /tmp/memory-get.json >/dev/null
