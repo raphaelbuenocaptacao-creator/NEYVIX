@@ -56,14 +56,26 @@ jobs:
           ai_get="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/ai-get.json -w '%{http_code}' "$base/api/ai")"
           ai_post="$(curl --silent --show-error --max-time 20 "${headers[@]}" -H 'Content-Type: application/json' -d '{"prompt":"health boundary"}' -o /tmp/ai-post.json -w '%{http_code}' "$base/api/ai")"
           memory_get="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/memory-get.json -w '%{http_code}' "$base/api/memory")"
+          memory_post="$(curl --silent --show-error --max-time 20 "${headers[@]}" -D /tmp/memory-post.headers -o /tmp/memory-post.body -w '%{http_code}' -X POST "$base/api/memory")"
+          memory_suggest="$(curl --silent --show-error --max-time 20 "${headers[@]}" -H 'Content-Type: application/json' -d '{"text":"health boundary"}' -o /tmp/memory-suggest.json -w '%{http_code}' "$base/api/memory/suggest")"
+          memory_delete="$(curl --silent --show-error --max-time 20 "${headers[@]}" -D /tmp/memory-delete.headers -o /tmp/memory-delete.body -w '%{http_code}' -X POST "$base/api/memory/delete")"
 
           echo "AI GET anonymous HTTP: $ai_get"
           echo "AI POST anonymous HTTP: $ai_post"
           echo "Memory GET anonymous HTTP: $memory_get"
+          echo "Memory POST anonymous HTTP: $memory_post"
+          echo "Memory suggest anonymous HTTP: $memory_suggest"
+          echo "Memory delete anonymous HTTP: $memory_delete"
 
           test "$ai_get" = "401"
           test "$ai_post" = "401"
           test "$memory_get" = "401"
+          test "$memory_post" = "303"
+          test "$memory_suggest" = "401"
+          test "$memory_delete" = "303"
           jq -e '.error | type == "string"' /tmp/ai-get.json >/dev/null
           jq -e '.error | type == "string"' /tmp/ai-post.json >/dev/null
           jq -e '.error | type == "string"' /tmp/memory-get.json >/dev/null
+          jq -e '.error | type == "string"' /tmp/memory-suggest.json >/dev/null
+          grep -Eiq '^location: .*/login\?next=/memory\r?$' /tmp/memory-post.headers
+          grep -Eiq '^location: .*/login\?next=/memory\r?$' /tmp/memory-delete.headers
