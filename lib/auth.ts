@@ -17,6 +17,7 @@ export type SessionRecord = {
   name: string;
   iat: number;
   iatMs?: number;
+  securityEpochMs?: number;
   exp: number;
 };
 
@@ -150,7 +151,7 @@ export function passwordMatches(account: AccountRecord, password: string) {
   return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
-export function createSession(account: Pick<AccountRecord, "email" | "name">) {
+export function createSession(account: Pick<AccountRecord, "email" | "name">, securityEpochMs?: number) {
   const issuedAtMs = Date.now();
   const now = Math.floor(issuedAtMs / 1000);
   const session: SessionRecord = {
@@ -158,6 +159,7 @@ export function createSession(account: Pick<AccountRecord, "email" | "name">) {
     name: account.name,
     iat: now,
     iatMs: issuedAtMs,
+    ...(Number.isFinite(securityEpochMs) ? { securityEpochMs } : {}),
     exp: now + SESSION_MAX_AGE_SECONDS,
   };
   return sign(session);
