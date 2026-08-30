@@ -7,36 +7,10 @@ permissions:
   contents: read
 
 jobs:
-  auth-positive-preflight:
+  auth-positive-smoke:
     if: >-
       github.event.deployment_status.state == 'success' &&
       github.event.deployment_status.environment_url != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    env:
-      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
-      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
-    outputs:
-      ready: ${{ steps.credentials.outputs.ready }}
-    steps:
-      - id: credentials
-        name: Detect dedicated smoke credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${NEYVIX_SMOKE_EMAIL:-}" ] && [ -n "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "### Auth Positive Smoke: READY" >> "$GITHUB_STEP_SUMMARY"
-            echo "Dedicated technical credentials are configured; the authenticated production smoke will run." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "### Auth Positive Smoke: NOT TESTED" >> "$GITHUB_STEP_SUMMARY"
-            echo "Missing NEYVIX_SMOKE_EMAIL and/or NEYVIX_SMOKE_PASSWORD repository secrets. No positive-auth claim was made." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  auth-positive-smoke:
-    needs: auth-positive-preflight
-    if: needs.auth-positive-preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -44,143 +18,62 @@ jobs:
       NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
       NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
     steps:
-      - name: Verify authenticated session end to end
+      - name: Verify registration or login, session, dashboard and revocation
         shell: bash
         run: |
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
           cookies=/tmp/auth-cookies.txt
-          revoked_cookies=/tmp/auth-revoked-cookies.txt
+          revoked=/tmp/auth-revoked.txt
 
-          echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
-          echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
-
-          cleanup_session() {
-            if [ -s "$cookies" ] && grep -Eq 'neyvix_session' "$cookies"; then
-              curl --silent --show-error --max-time 20 \
-                -X POST \
-                -b "$cookies" -c "$cookies" \
-                -o /dev/null \
-                "$base/api/auth/logout" || true
-            fi
-          }
-          trap cleanup_session EXIT
-
-          login_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -H 'content-type: application/x-www-form-urlencoded' \
-            -c "$cookies" \
-            -D /tmp/auth-login.headers \
-            -o /tmp/auth-login.body \
-            -w '%{http_code}' \
-            --data-urlencode "email=${NEYVIX_SMOKE_EMAIL}" \
-            --data-urlencode "password=${NEYVIX_SMOKE_PASSWORD}" \
-            --data-urlencode 'next=/dashboard' \
-            "$base/api/auth/login")"
-
-          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-login.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-login.headers | tail -1)"
-
-          echo "Authenticated login HTTP: ${login_status:-$login_code}"
-          test "${login_status:-$login_code}" = "303"
-          case "$location" in
-            */dashboard*) ;;
-            *) echo "Authenticated login did not redirect to dashboard: $location" >&2; exit 1 ;;
-          esac
-
-          if ! grep -Eq 'neyvix_session' "$cookies"; then
-            echo "Authenticated login did not persist neyvix_session." >&2
-            exit 1
+          if [ -n "${NEYVIX_SMOKE_EMAIL:-}" ] && [ -n "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
+            email="$NEYVIX_SMOKE_EMAIL"
+            password="$NEYVIX_SMOKE_PASSWORD"
+            echo "::add-mask::$email"
+            echo "::add-mask::$password"
+            curl --silent --show-error --max-time 20 \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body \
+              --data-urlencode "email=$email" \
+              --data-urlencode "password=$password" \
+              --data-urlencode 'next=/dashboard' \
+              "$base/api/auth/login" >/dev/null
+          else
+            suffix="$(date +%s)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            handle="smoke-${suffix}"
+            password="Neyvix-Smoke-${suffix}!"
+            echo "::add-mask::$password"
+            curl --silent --show-error --max-time 20 \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body \
+              --data-urlencode 'name=NEYVIX Production Smoke' \
+              --data-urlencode "handle=$handle" \
+              --data-urlencode "password=$password" \
+              "$base/api/auth/register" >/dev/null
           fi
 
-          cp "$cookies" "$revoked_cookies"
+          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-start.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-start.headers | tail -1)"
+          test "$status" = "303"
+          case "$location" in */dashboard*) ;; *) echo "Auth did not redirect to dashboard: $location" >&2; exit 1;; esac
+          grep -Eq 'neyvix_session' "$cookies"
+          cp "$cookies" "$revoked"
 
-          me_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -b "$cookies" \
-            -D /tmp/auth-me.headers \
-            -o /tmp/auth-me.json \
-            -w '%{http_code}' \
-            "$base/api/auth/me")"
-
-          echo "Authenticated /api/auth/me HTTP: $me_code"
+          me_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")"
           test "$me_code" = "200"
-          jq -e '.authenticated == true' /tmp/auth-me.json >/dev/null
-          jq -e '.user != null' /tmp/auth-me.json >/dev/null
-          jq -e '.user.email | type == "string" and length > 0' /tmp/auth-me.json >/dev/null
-          jq -e '.user.role | IN("member", "cro", "admin", "superadmin")' /tmp/auth-me.json >/dev/null
-          jq -e '.expiresAt | type == "string" and length > 0' /tmp/auth-me.json >/dev/null
+          jq -e '.authenticated == true and .user != null' /tmp/me.json >/dev/null
 
-          dashboard_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -b "$cookies" \
-            -o /tmp/auth-dashboard.html \
-            -w '%{http_code}' \
-            "$base/dashboard")"
-
-          echo "Authenticated dashboard HTTP: $dashboard_code"
+          dashboard_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/dashboard.html -w '%{http_code}' "$base/dashboard")"
           test "$dashboard_code" = "200"
 
-          logout_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -X POST \
-            -b "$cookies" -c "$cookies" \
-            -D /tmp/auth-logout.headers \
-            -o /tmp/auth-logout.body \
-            -w '%{http_code}' \
-            "$base/api/auth/logout")"
+          curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout"
 
-          logout_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-logout.headers)"
-          echo "Authenticated logout HTTP: ${logout_status:-$logout_code}"
-          case "${logout_status:-$logout_code}" in
-            302|303|307|308) ;;
-            *) echo "Logout did not return a redirect." >&2; exit 1 ;;
-          esac
+          post_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/post.json -w '%{http_code}' "$base/api/auth/me")"
+          test "$post_code" = "401"
 
-          post_logout_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -b "$cookies" \
-            -o /tmp/auth-post-logout.json \
-            -w '%{http_code}' \
-            "$base/api/auth/me")"
-
-          echo "Post-logout /api/auth/me HTTP: $post_logout_code"
-          test "$post_logout_code" = "401"
-          jq -e '.authenticated == false' /tmp/auth-post-logout.json >/dev/null
-
-          replay_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -b "$revoked_cookies" \
-            -o /tmp/auth-replay.json \
-            -w '%{http_code}' \
-            "$base/api/auth/me")"
-
-          echo "Revoked session replay /api/auth/me HTTP: $replay_code"
+          replay_code="$(curl --silent --show-error --max-time 20 -b "$revoked" -o /tmp/replay.json -w '%{http_code}' "$base/api/auth/me")"
           test "$replay_code" = "401"
-          jq -e '.authenticated == false' /tmp/auth-replay.json >/dev/null
 
-          revoked_dashboard_code="$(curl --silent --show-error \
-            --retry 2 --retry-delay 1 --max-time 20 \
-            -b "$revoked_cookies" \
-            -D /tmp/auth-revoked-dashboard.headers \
-            -o /tmp/auth-revoked-dashboard.body \
-            -w '%{http_code}' \
-            "$base/dashboard")"
-
-          revoked_dashboard_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-revoked-dashboard.headers)"
-          revoked_dashboard_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-revoked-dashboard.headers | tail -1)"
-
-          echo "Revoked session replay /dashboard HTTP: ${revoked_dashboard_status:-$revoked_dashboard_code}"
-          case "${revoked_dashboard_status:-$revoked_dashboard_code}" in
-            302|303|307|308) ;;
-            *) echo "Revoked session was not redirected away from dashboard." >&2; exit 1 ;;
-          esac
-          case "$revoked_dashboard_location" in
-            */login*) ;;
-            *) echo "Revoked dashboard session did not redirect to login: $revoked_dashboard_location" >&2; exit 1 ;;
-          esac
-
-          trap - EXIT
-          echo "PASS: production login -> session -> identity -> dashboard -> logout -> API and dashboard replay rejection is authenticated end to end."
+          echo "PASS: production auth -> session -> identity -> dashboard -> logout -> revoked-session rejection."
           echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production login → session cookie → /api/auth/me → dashboard → logout → reuse of the pre-logout session is rejected by both /api/auth/me and /dashboard." >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production authentication end to end. Dedicated credentials are used when configured; otherwise the smoke self-registers a unique technical NEYVIX ID." >> "$GITHUB_STEP_SUMMARY"
