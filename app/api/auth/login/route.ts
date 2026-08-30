@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createSession, passwordMatches, readAccount } from "@/lib/auth";
 import { authenticateDatabaseUser, hasDatabase } from "@/lib/db";
 import { getAccountSecurityState } from "@/lib/account-state";
+import { ensureNeyvixSubscription } from "@/lib/subscription-heal";
 import { clientAddress, clearRateLimitBucket, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 const DEFAULT_PUBLIC_ORIGIN = "https://neyvix.vercel.app";
@@ -74,6 +75,12 @@ export async function POST(request: Request) {
       if (!user) {
         await recordRateLimitEvent("login", bucket);
         return hardenedRedirect(NextResponse.redirect(loginErrorUrl("invalid", next), 303));
+      }
+
+      const subscriptionReady = await ensureNeyvixSubscription(user.id);
+      if (!subscriptionReady) {
+        console.error("NEYVIX ID login blocked: subscription repair could not confirm entitlement", { userId: user.id });
+        return hardenedRedirect(NextResponse.redirect(loginErrorUrl("config", next), 303));
       }
 
       const accountState = await getAccountSecurityState(user.email);
