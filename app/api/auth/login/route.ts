@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createSession, passwordMatches, readAccount } from "@/lib/auth";
 import { authenticateDatabaseUser, hasDatabase } from "@/lib/db";
+import { getAccountSecurityState } from "@/lib/account-state";
 import { clientAddress, clearRateLimitBucket, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 const DEFAULT_PUBLIC_ORIGIN = "https://neyvix.vercel.app";
@@ -75,9 +76,15 @@ export async function POST(request: Request) {
         return hardenedRedirect(NextResponse.redirect(loginErrorUrl("invalid", next), 303));
       }
 
+      const accountState = await getAccountSecurityState(user.email);
+      const securityEpochMs = accountState ? new Date(accountState.updatedAt).getTime() : Number.NaN;
+      if (!accountState?.isActive || !Number.isFinite(securityEpochMs)) {
+        return hardenedRedirect(NextResponse.redirect(loginErrorUrl("config", next), 303));
+      }
+
       await clearRateLimitBucket("login", bucket);
       const response = NextResponse.redirect(trustedUrl(next), 303);
-      response.cookies.set(SESSION_COOKIE, createSession(user), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
+      response.cookies.set(SESSION_COOKIE, createSession(user, securityEpochMs), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
       response.cookies.set(ACCOUNT_COOKIE, "", { ...authCookieOptions, maxAge: 0 });
       return hardenedRedirect(response);
     }
