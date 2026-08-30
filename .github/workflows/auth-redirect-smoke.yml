@@ -35,8 +35,8 @@ jobs:
             --data-urlencode "next=${malicious_next}" \
             "$base/api/auth/login")"
 
-          status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/login.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/login.headers | tail -1)"
+          status="$(awk 'toupper($1) ~ /^HTTP/ {code=$2} END{print code}' /tmp/login.headers)"
+          location="$(tr -d '\r' < /tmp/login.headers | sed -n 's/^[Ll]ocation:[[:space:]]*//p' | tail -1)"
 
           echo "Redirect hardening HTTP: ${status:-$code}"
           echo "Redirect location: $location"
@@ -44,7 +44,7 @@ jobs:
           test "$location" = "$base/login?error=invalid"
 
           case "${location,,}" in
-            *evil.invalid*|*%5cevil.invalid*|*%5cevil.invalid*)
+            *evil.invalid*|*%5cevil.invalid*)
               echo "Security regression: malicious next value survived redirect validation." >&2
               exit 1
               ;;
@@ -76,8 +76,8 @@ jobs:
             --data-urlencode 'password=short' \
             "$base/api/auth/register")"
 
-          status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/register.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/register.headers | tail -1)"
+          status="$(awk 'toupper($1) ~ /^HTTP/ {code=$2} END{print code}' /tmp/register.headers)"
+          location="$(tr -d '\r' < /tmp/register.headers | sed -n 's/^[Ll]ocation:[[:space:]]*//p' | tail -1)"
 
           echo "Signup redirect HTTP: ${status:-$code}"
           echo "Signup redirect location: $location"
