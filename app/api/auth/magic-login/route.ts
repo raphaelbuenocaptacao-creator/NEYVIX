@@ -5,18 +5,31 @@ import { SESSION_COOKIE, authCookieOptions, createSession } from "@/lib/auth";
 
 const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
 const MAGIC_LOGIN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const DEFAULT_PUBLIC_ORIGIN = "https://neyvix.vercel.app";
 
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
 }
 
+function trustedPublicOrigin() {
+  const configured = process.env.NEYVIX_PUBLIC_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (!configured) return DEFAULT_PUBLIC_ORIGIN;
+
+  try {
+    const url = new URL(configured);
+    return url.protocol === "https:" ? url.origin : DEFAULT_PUBLIC_ORIGIN;
+  } catch {
+    return DEFAULT_PUBLIC_ORIGIN;
+  }
+}
+
 function hashMagicLoginToken(token: string) {
   return createHash("sha256").update(`${MAGIC_LOGIN_TOKEN_NAMESPACE}${token}`).digest("hex");
 }
 
-function secureRedirect(request: Request, path: string) {
-  const response = NextResponse.redirect(new URL(path, request.url), 303);
+function secureRedirect(path: string) {
+  const response = NextResponse.redirect(new URL(path, trustedPublicOrigin()), 303);
   response.headers.set("Cache-Control", "no-store, max-age=0");
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Referrer-Policy", "no-referrer");
@@ -33,11 +46,11 @@ export async function GET(request: Request) {
     // database access so arbitrary/oversized values cannot turn this endpoint
     // into an avoidable database-query surface.
     if (!MAGIC_LOGIN_TOKEN_PATTERN.test(token)) {
-      return secureRedirect(request, "/login?error=invalid");
+      return secureRedirect("/login?error=invalid");
     }
 
     const sql = getSql();
-    if (!sql) return secureRedirect(request, "/login?error=config");
+    if (!sql) return secureRedirect("/login?error=config");
 
     const tokenHash = hashMagicLoginToken(token);
     const rows = await sql`
@@ -61,9 +74,9 @@ export async function GET(request: Request) {
     ` as Array<{ email: string; name: string }>;
 
     const user = rows[0];
-    if (!user) return secureRedirect(request, "/login?error=invalid");
+    if (!user) return secureRedirect("/login?error=invalid");
 
-    const response = secureRedirect(request, "/dashboard");
+    const response = secureRedirect("/dashboard");
     response.cookies.set(SESSION_COOKIE, createSession({ email: user.email, name: user.name }), {
       ...authCookieOptions,
       maxAge: 60 * 60 * 24 * 7,
@@ -71,6 +84,6 @@ export async function GET(request: Request) {
     return response;
   } catch (error) {
     console.error("Falha no magic login do NEYVIX ID", error);
-    return secureRedirect(request, "/login?error=config");
+    return secureRedirect("/login?error=config");
   }
 }
