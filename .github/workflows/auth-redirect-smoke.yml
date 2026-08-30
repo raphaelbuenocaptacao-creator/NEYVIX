@@ -1,0 +1,58 @@
+name: NEYVIX Auth Redirect Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-redirect-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+    steps:
+      - name: Reject cross-origin login redirect tricks
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          bogus_email="neyvix-redirect-smoke-${GITHUB_RUN_ID}@invalid.example"
+          malicious_next='/\evil.invalid'
+
+          code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -D /tmp/login.headers \
+            -o /tmp/login.body \
+            -w '%{http_code}' \
+            --data-urlencode "email=${bogus_email}" \
+            --data-urlencode 'password=NEYVIX-invalid-redirect-smoke' \
+            --data-urlencode "next=${malicious_next}" \
+            "$base/api/auth/login")"
+
+          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/login.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/login.headers | tail -1)"
+
+          echo "Redirect hardening HTTP: ${status:-$code}"
+          echo "Redirect location: $location"
+          test "${status:-$code}" = "303"
+          test "$location" = "$base/login?error=invalid"
+
+          case "${location,,}" in
+            *evil.invalid*|*%5cevil.invalid*|*%5cevil.invalid*)
+              echo "Security regression: malicious next value survived redirect validation." >&2
+              exit 1
+              ;;
+          esac
+
+          if grep -Eiq '^set-cookie: neyvix_session=' /tmp/login.headers; then
+            echo "Security regression: invalid login issued a session cookie." >&2
+            exit 1
+          fi
+
+          echo "PASS: login redirect is pinned to the NEYVIX origin."
