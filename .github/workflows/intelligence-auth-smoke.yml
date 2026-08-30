@@ -1,0 +1,99 @@
+name: NEYVIX Intelligence Auth Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  intelligence-auth-preflight:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
+      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
+    outputs:
+      ready: ${{ steps.credentials.outputs.ready }}
+    steps:
+      - id: credentials
+        name: Detect dedicated smoke credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${NEYVIX_SMOKE_EMAIL:-}" ] && [ -n "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "### Intelligence Auth Smoke: READY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "### Intelligence Auth Smoke: NOT TESTED" >> "$GITHUB_STEP_SUMMARY"
+            echo "Dedicated smoke credentials are missing; no authenticated intelligence claim was made." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  intelligence-auth-smoke:
+    needs: intelligence-auth-preflight
+    if: needs.intelligence-auth-preflight.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
+      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
+    steps:
+      - name: Verify authenticated AI and Memory entitlement contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/intelligence-auth-cookies.txt
+
+          echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
+          echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
+
+          cleanup_session() {
+            if [ -s "$cookies" ] && grep -Eq 'neyvix_session' "$cookies"; then
+              curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout" || true
+            fi
+          }
+          trap cleanup_session EXIT
+
+          login_code="$(curl --silent --show-error --retry 2 --retry-delay 1 --max-time 20 \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$cookies" -D /tmp/intelligence-login.headers -o /tmp/intelligence-login.body -w '%{http_code}' \
+            --data-urlencode "email=${NEYVIX_SMOKE_EMAIL}" \
+            --data-urlencode "password=${NEYVIX_SMOKE_PASSWORD}" \
+            --data-urlencode 'next=/dashboard' \
+            "$base/api/auth/login")"
+          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/intelligence-login.headers)"
+          test "${login_status:-$login_code}" = "303"
+          grep -Eq 'neyvix_session' "$cookies"
+
+          me_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/intelligence-me.json -w '%{http_code}' "$base/api/auth/me")"
+          echo "Identity HTTP: $me_code"
+          test "$me_code" = "200"
+          jq -e '.authenticated == true and .user != null' /tmp/intelligence-me.json >/dev/null
+
+          ai_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/intelligence-ai.json -w '%{http_code}' "$base/api/ai")"
+          memory_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/intelligence-memory.json -w '%{http_code}' "$base/api/memory")"
+
+          echo "Authenticated AI history HTTP: $ai_code"
+          echo "Authenticated Memory HTTP: $memory_code"
+
+          case "$ai_code" in
+            200) jq -e 'type == "object"' /tmp/intelligence-ai.json >/dev/null ;;
+            403) jq -e '.error == "upgrade_required" or .code == "upgrade_required"' /tmp/intelligence-ai.json >/dev/null ;;
+            *) echo "AI entitlement contract returned unexpected HTTP $ai_code" >&2; cat /tmp/intelligence-ai.json >&2; exit 1 ;;
+          esac
+
+          case "$memory_code" in
+            200) jq -e 'type == "object"' /tmp/intelligence-memory.json >/dev/null ;;
+            403) jq -e '.error == "upgrade_required" or .code == "upgrade_required"' /tmp/intelligence-memory.json >/dev/null ;;
+            *) echo "Memory entitlement contract returned unexpected HTTP $memory_code" >&2; cat /tmp/intelligence-memory.json >&2; exit 1 ;;
+          esac
+
+          echo "PASS: authenticated session reaches AI and Memory and both enforce a valid entitlement contract (200 or explicit upgrade_required)."
+          echo "### Intelligence Auth Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production login → active session → NEYVIX ID → AI history + Memory with entitlement-aware responses; no generation or user-data mutation was performed." >> "$GITHUB_STEP_SUMMARY"
