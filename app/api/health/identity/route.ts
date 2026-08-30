@@ -5,6 +5,15 @@ import { getMailTransportStatus } from "@/lib/mail-transport";
 
 export const dynamic = "force-dynamic";
 
+type ColumnContractRow = {
+  table_name: string;
+  column_name: string;
+  is_nullable: string;
+  column_default: string | null;
+  is_identity: string;
+  is_generated: string;
+};
+
 function response(body: unknown, status = 200) {
   return NextResponse.json(body, {
     status,
@@ -13,6 +22,65 @@ function response(body: unknown, status = 200) {
       "Referrer-Policy": "no-referrer",
     },
   });
+}
+
+function signupContract(rows: ColumnContractRow[]) {
+  const byTable = (table: string) => rows.filter((row) => row.table_name === table);
+  const names = (table: string) => new Set(byTable(table).map((row) => row.column_name));
+  const userNames = names("users");
+  const subscriptionNames = names("subscriptions");
+  const projectNames = names("projects");
+  const planNames = names("plans");
+  const legacyPair = userNames.has("handle") === userNames.has("display_name");
+
+  const required = {
+    users: ["id", "email", "password_hash", "name", "is_active", "is_superadmin", "updated_at"],
+    subscriptions: ["project_id", "user_id", "plan_id", "status", "trial_started_at", "trial_ends_at", "metadata"],
+    projects: ["id", "slug", "trial_days", "is_active"],
+    plans: ["id", "project_id", "code", "is_active"],
+  };
+
+  const missing = {
+    users: required.users.filter((column) => !userNames.has(column)),
+    subscriptions: required.subscriptions.filter((column) => !subscriptionNames.has(column)),
+    projects: required.projects.filter((column) => !projectNames.has(column)),
+    plans: required.plans.filter((column) => !planNames.has(column)),
+  };
+
+  const suppliedUsers = new Set([
+    "id", "email", "password_hash", "name", "is_active", "is_superadmin",
+    ...(userNames.has("handle") && userNames.has("display_name") ? ["handle", "display_name"] : []),
+  ]);
+  const suppliedSubscriptions = new Set([
+    "project_id", "user_id", "plan_id", "status", "trial_started_at", "trial_ends_at", "metadata",
+  ]);
+
+  const blocking = (table: string, supplied: Set<string>) => byTable(table)
+    .filter((column) =>
+      column.is_nullable === "NO" &&
+      column.column_default == null &&
+      column.is_identity !== "YES" &&
+      column.is_generated === "NEVER" &&
+      !supplied.has(column.column_name),
+    )
+    .map((column) => column.column_name)
+    .sort();
+
+  const blockers = {
+    users: blocking("users", suppliedUsers),
+    subscriptions: blocking("subscriptions", suppliedSubscriptions),
+  };
+
+  const ready = legacyPair &&
+    Object.values(missing).every((columns) => columns.length === 0) &&
+    Object.values(blockers).every((columns) => columns.length === 0);
+
+  return {
+    ready,
+    legacyIdentityPair: legacyPair,
+    missing,
+    blockers,
+  };
 }
 
 export async function GET() {
@@ -26,7 +94,7 @@ export async function GET() {
       service: "neyvix-id",
       database: "not_configured",
       schema: "unknown",
-      signup: { ready: false, canonicalPlan: false },
+      signup: { ready: false, canonicalPlan: false, contract: { ready: false } },
       session,
       magicLogin: {
         tokenStore: false,
@@ -64,6 +132,23 @@ export async function GET() {
     let projectReady = false;
     let canonicalPlanReady = false;
     let activeNonAdminWithoutSubscription: number | null = null;
+    let contract = {
+      ready: false,
+      legacyIdentityPair: true,
+      missing: { users: [] as string[], subscriptions: [] as string[], projects: [] as string[], plans: [] as string[] },
+      blockers: { users: [] as string[], subscriptions: [] as string[] },
+    };
+
+    if (projectsReady && usersReady && subscriptionsReady && plansReady) {
+      const contractRows = await sql`
+        SELECT table_name, column_name, is_nullable, column_default, is_identity, is_generated
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('users', 'subscriptions', 'projects', 'plans')
+        ORDER BY table_name, ordinal_position
+      `;
+      contract = signupContract(contractRows as ColumnContractRow[]);
+    }
 
     if (projectsReady) {
       const projectRows = await sql`
@@ -75,8 +160,6 @@ export async function GET() {
       projectReady = Boolean(projectRows[0]?.project_ready);
     }
 
-    // Public registration defaults to start-monthly. Readiness must prove that
-    // this plan exists instead of claiming signup is healthy from tables alone.
     if (projectsReady && plansReady && projectReady) {
       const planRows = await sql`
         SELECT EXISTS (
@@ -112,8 +195,8 @@ export async function GET() {
       );
     }
 
-    const schemaReady = projectsReady && usersReady && subscriptionsReady && plansReady && tokenStore;
-    const signupReady = projectReady && usersReady && subscriptionsReady && plansReady && canonicalPlanReady && session.ready;
+    const schemaReady = projectsReady && usersReady && subscriptionsReady && plansReady && tokenStore && contract.ready;
+    const signupReady = projectReady && usersReady && subscriptionsReady && plansReady && canonicalPlanReady && contract.ready && session.ready;
     const magicPipelineReady = tokenStore && usersReady && session.ready;
     const magicStatus = magicPipelineReady && mailTransport.ready
       ? "ready"
@@ -134,6 +217,7 @@ export async function GET() {
         usersTable: usersReady,
         subscriptionsTable: subscriptionsReady,
         plansTable: plansReady,
+        contract,
       },
       session,
       magicLogin: {
@@ -158,7 +242,7 @@ export async function GET() {
       service: "neyvix-id",
       database: "error",
       schema: "unknown",
-      signup: { ready: false, canonicalPlan: false },
+      signup: { ready: false, canonicalPlan: false, contract: { ready: false } },
       session,
       magicLogin: {
         tokenStore: false,
