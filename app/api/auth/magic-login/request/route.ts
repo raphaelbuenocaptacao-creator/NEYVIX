@@ -6,6 +6,7 @@ import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } f
 
 const MAGIC_LOGIN_TTL_MINUTES = 10;
 const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
+const DEFAULT_PUBLIC_ORIGIN = "https://neyvix.vercel.app";
 
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
@@ -22,6 +23,18 @@ function secureRedirect(request: Request, path: string) {
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Referrer-Policy", "no-referrer");
   return response;
+}
+
+function trustedPublicOrigin() {
+  const configured = process.env.NEYVIX_PUBLIC_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (!configured) return DEFAULT_PUBLIC_ORIGIN;
+
+  try {
+    const url = new URL(configured);
+    return url.protocol === "https:" ? url.origin : DEFAULT_PUBLIC_ORIGIN;
+  } catch {
+    return DEFAULT_PUBLIC_ORIGIN;
+  }
 }
 
 function validEmail(value: string) {
@@ -76,7 +89,10 @@ export async function POST(request: Request) {
       VALUES (${user.id}, ${tokenHash}, now() + (${MAGIC_LOGIN_TTL_MINUTES} || ' minutes')::interval)
     `;
 
-    const magicUrl = new URL("/api/auth/magic-login", request.url);
+    // Never derive an emailed authentication link from the inbound Host header.
+    // A canonical HTTPS origin prevents host-header poisoning from sending a
+    // valid one-time token to an attacker-controlled origin.
+    const magicUrl = new URL("/api/auth/magic-login", trustedPublicOrigin());
     magicUrl.searchParams.set("token", token);
 
     const delivered = await deliverMail({
