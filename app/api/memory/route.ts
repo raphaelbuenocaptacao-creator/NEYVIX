@@ -3,11 +3,27 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { listMemories, listMemoryEvents, upsertMemory } from "@/lib/memory-db";
+import { getProductAccess } from "@/lib/product-access";
+
+function memoryUpgradeResponse() {
+  return NextResponse.json(
+    {
+      error: "A NEYVIX Memory não está incluída no seu plano atual.",
+      code: "upgrade_required",
+      requiredPlan: "Start",
+      plansUrl: "/plans",
+    },
+    { status: 403, headers: { "Cache-Control": "no-store" } },
+  );
+}
 
 export async function GET() {
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) return NextResponse.json({ error: "Autenticação necessária" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+
+  const access = await getProductAccess(session.email, "ai");
+  if (!access.allowed) return memoryUpgradeResponse();
 
   try {
     const [memories, events] = await Promise.all([
@@ -25,6 +41,9 @@ export async function POST(request: Request) {
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) return NextResponse.redirect(new URL("/login?next=/memory", request.url), 303);
+
+  const access = await getProductAccess(session.email, "ai");
+  if (!access.allowed) return memoryUpgradeResponse();
 
   const form = await request.formData();
   const key = String(form.get("key") ?? "").trim();
