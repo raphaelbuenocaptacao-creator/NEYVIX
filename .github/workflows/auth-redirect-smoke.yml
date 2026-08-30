@@ -22,7 +22,7 @@ jobs:
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
           bogus_email="neyvix-redirect-smoke-${GITHUB_RUN_ID}@invalid.example"
-          malicious_next='/\evil.invalid'
+          malicious_next='/\\evil.invalid'
 
           code="$(curl --silent --show-error \
             --retry 2 --retry-delay 1 --max-time 20 \
@@ -35,8 +35,8 @@ jobs:
             --data-urlencode "next=${malicious_next}" \
             "$base/api/auth/login")"
 
-          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/login.headers)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/login.headers | tail -1)"
+          status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/login.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/login.headers | tail -1)"
 
           echo "Redirect hardening HTTP: ${status:-$code}"
           echo "Redirect location: $location"
@@ -56,3 +56,44 @@ jobs:
           fi
 
           echo "PASS: login redirect is pinned to the NEYVIX origin."
+
+      - name: Keep signup redirects on the trusted NEYVIX origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+
+          code="$(curl --silent --show-error \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -H 'x-forwarded-host: attacker.invalid' \
+            -H 'x-forwarded-proto: http' \
+            -D /tmp/register.headers \
+            -o /tmp/register.body \
+            -w '%{http_code}' \
+            --data-urlencode 'name=x' \
+            --data-urlencode 'handle=invalid handle' \
+            --data-urlencode 'password=short' \
+            "$base/api/auth/register")"
+
+          status="$(awk 'toupper($1) ~ /^HTTP\\// {code=$2} END{print code}' /tmp/register.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/register.headers | tail -1)"
+
+          echo "Signup redirect HTTP: ${status:-$code}"
+          echo "Signup redirect location: $location"
+          test "${status:-$code}" = "303"
+          test "$location" = "$base/register?error=invalid"
+
+          case "${location,,}" in
+            *attacker.invalid*)
+              echo "Security regression: signup redirect trusted forwarded host." >&2
+              exit 1
+              ;;
+          esac
+
+          if grep -Eiq '^set-cookie: neyvix_session=' /tmp/register.headers; then
+            echo "Security regression: invalid signup issued a session cookie." >&2
+            exit 1
+          fi
+
+          echo "PASS: signup redirect is pinned to the NEYVIX origin."
