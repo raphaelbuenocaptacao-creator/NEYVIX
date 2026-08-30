@@ -6,7 +6,15 @@ import { clientAddress, clearRateLimitBucket, isRateLimited, rateLimitBucket, re
 
 function safeNext(value: FormDataEntryValue | null) {
   const next = String(value ?? "/dashboard");
-  return next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  const base = "https://neyvix.local";
+
+  try {
+    const parsed = new URL(next, base);
+    if (parsed.origin !== base) return "/dashboard";
+    return `${parsed.pathname}${parsed.search}${parsed.hash}` || "/dashboard";
+  } catch {
+    return "/dashboard";
+  }
 }
 
 function hardenedRedirect(response: NextResponse) {
