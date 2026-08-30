@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
@@ -22,6 +23,10 @@ function getGatewayUrl() {
   } catch {
     return null;
   }
+}
+
+function gatewayUserId(email: string) {
+  return createHash("sha256").update(`neyvix-ai:${email.trim().toLowerCase()}`).digest("hex");
 }
 
 export async function GET() {
@@ -110,7 +115,7 @@ export async function POST(request: Request) {
         "Accept": "text/plain, application/json",
         ...(gatewaySecret ? { "Authorization": `Bearer ${gatewaySecret}` } : {}),
       },
-      body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: session.email, memory } }),
+      body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
       signal: controller.signal,
       cache: "no-store",
     });
