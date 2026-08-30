@@ -88,7 +88,7 @@ for (const contract of [
   "createRegisteredUser",
   "password.length < 8",
   "response.cookies.set(SESSION_COOKIE",
-  'new URL("/dashboard", request.url)',
+  'trustedUrl("/dashboard")',
 ]) {
   if (!registration.includes(contract)) {
     console.error(`NEYVIX readiness failed: public registration contract missing: ${contract}`);
@@ -115,6 +115,7 @@ const passwordLogin = readFileSync("app/api/auth/login/route.ts", "utf8");
 for (const contract of [
   "safeNext",
   "isRateLimited",
+  "ensureNeyvixSubscription",
   "response.cookies.set(SESSION_COOKIE",
   'response.headers.set("Cache-Control", "no-store, max-age=0")',
   'response.headers.set("Referrer-Policy", "no-referrer")',
