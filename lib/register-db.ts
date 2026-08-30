@@ -26,8 +26,6 @@ export async function createRegisteredUser(
   const normalizedEmail = email.trim().toLowerCase();
   const cleanName = name.trim().slice(0, 80);
   // A public signup must always receive a real entitlement-bearing plan.
-  // Previously an empty selection produced a subscription with plan_id = null,
-  // which could fail on stricter schemas or create an account unable to use products.
   const selectedPlanCode = planCode?.trim().toLowerCase() || "start-monthly";
 
   const rows = await sql`
@@ -49,7 +47,7 @@ export async function createRegisteredUser(
       FROM active_project
       WHERE EXISTS (SELECT 1 FROM selected_plan)
       ON CONFLICT (email) DO NOTHING
-      RETURNING id, email, name
+      RETURNING id, email, name, updated_at
     ), new_subscription AS (
       INSERT INTO public.subscriptions (
         project_id,
@@ -73,12 +71,23 @@ export async function createRegisteredUser(
       JOIN selected_plan sp ON true
       RETURNING user_id
     )
-    SELECT nu.id, nu.email, nu.name
+    SELECT nu.id, nu.email, nu.name, nu.updated_at
     FROM new_user nu
     JOIN new_subscription ns ON ns.user_id = nu.id
   `;
 
-  const user = rows[0] as { id: string; email: string; name: string | null } | undefined;
+  const user = rows[0] as { id: string; email: string; name: string | null; updated_at: string } | undefined;
   if (!user) return null;
-  return { id: user.id, email: user.email, name: user.name || cleanName };
+
+  const securityEpochMs = new Date(user.updated_at).getTime();
+  if (!Number.isFinite(securityEpochMs)) {
+    throw new Error("NEYVIX signup returned an invalid account security epoch");
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name || cleanName,
+    securityEpochMs,
+  };
 }
