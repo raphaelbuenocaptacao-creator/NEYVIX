@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ACCOUNT_COOKIE, SESSION_COOKIE, authCookieOptions, createAccount, createSession } from "@/lib/auth";
 import { hasDatabase } from "@/lib/db";
+import { getAccountSecurityState } from "@/lib/account-state";
 import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 import { createRegisteredUser } from "@/lib/register-db";
 
@@ -51,8 +52,14 @@ export async function POST(request: Request) {
         return hardenedRedirect(NextResponse.redirect(errorUrl(request, "taken"), 303));
       }
 
+      const accountState = await getAccountSecurityState(user.email);
+      const securityEpochMs = accountState ? new Date(accountState.updatedAt).getTime() : Number.NaN;
+      if (!accountState?.isActive || !Number.isFinite(securityEpochMs)) {
+        return hardenedRedirect(NextResponse.redirect(errorUrl(request, "config"), 303));
+      }
+
       const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
-      response.cookies.set(SESSION_COOKIE, createSession(user), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
+      response.cookies.set(SESSION_COOKIE, createSession(user, securityEpochMs), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
       response.cookies.delete(ACCOUNT_COOKIE);
       return hardenedRedirect(response);
     }
