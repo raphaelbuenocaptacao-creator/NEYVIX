@@ -1,0 +1,64 @@
+name: NEYVIX Product Persistence Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  product-persistence-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify Studio Content Automation and Approval persistence
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          check() {
+            local base="${1%/}"
+            local body="$2"
+            local code
+            code="$(curl --silent --show-error --location \
+              --retry 3 --retry-delay 2 --max-time 20 \
+              "${headers[@]}" \
+              -o "$body" -w '%{http_code}' \
+              "$base/api/health/products")"
+            echo "Product persistence health HTTP: $code"
+            jq -e . "$body" >/dev/null
+            jq '{ok,service,status,database,persistence}' "$body"
+            test "$code" = "200"
+            jq -e '.ok == true and .service == "neyvix-products" and .status == "ready" and .database == "connected" and .persistence.studio == true and .persistence.content == true and .persistence.automations == true and .persistence.approvals == true' "$body" >/dev/null
+          }
+
+          if check "${NEYVIX_PRODUCTION_CANDIDATE}" /tmp/products-production.json; then
+            exit 0
+          fi
+
+          check "${DEPLOYMENT_URL}" /tmp/products-deployment.json
