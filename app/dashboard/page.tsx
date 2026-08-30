@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
-import { getDatabaseUserByEmail, getRecentActivity, getTrialStatus } from "@/lib/db";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { readActiveSession } from "@/lib/session";
+import { getRecentActivity, getTrialStatus } from "@/lib/db";
 import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlements";
 
 const modules = [
@@ -37,23 +38,20 @@ function relativeTime(value: string) {
 
 export default async function DashboardPage() {
   const store = await cookies();
-  let session;
-  try { session = readSession(store.get(SESSION_COOKIE)?.value); } catch { session = null; }
-  if (!session) redirect("/login");
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
+  if (!session) redirect("/login?reason=session");
 
   let activity: ActivityRow[] = [];
   let trial: { status?: string; trial_ends_at?: string } | null = null;
-  let isSuperadmin = false;
+  const isSuperadmin = session.isSuperadmin;
   const entitlements = await getEntitlements(session.email);
 
   try {
-    const [recent, trialStatus, currentUser] = await Promise.all([
-      getRecentActivity(session.email, 10), getTrialStatus(session.email), getDatabaseUserByEmail(session.email),
+    const [recent, trialStatus] = await Promise.all([
+      getRecentActivity(session.email, 10), getTrialStatus(session.email),
     ]);
-    if (!currentUser?.is_active) redirect("/login");
     activity = recent as unknown as ActivityRow[];
     trial = trialStatus as { status?: string; trial_ends_at?: string } | null;
-    isSuperadmin = Boolean(currentUser.is_superadmin);
   } catch (error) {
     console.error("Falha ao carregar atividade do Command Center", error);
   }
