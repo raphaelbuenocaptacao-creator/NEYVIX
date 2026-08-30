@@ -40,11 +40,14 @@ export async function ensureNeyvixSubscription(userId: string) {
       ON CONFLICT (project_id, user_id) DO NOTHING
       RETURNING user_id
     )
-    SELECT EXISTS (
-      SELECT 1
-      FROM public.subscriptions s
-      JOIN active_project ap ON ap.id = s.project_id
-      WHERE s.user_id = ${userId}
+    SELECT (
+      EXISTS (SELECT 1 FROM inserted)
+      OR EXISTS (
+        SELECT 1
+        FROM public.subscriptions s
+        JOIN active_project ap ON ap.id = s.project_id
+        WHERE s.user_id = ${userId}
+      )
     ) AS ready
   `;
 
