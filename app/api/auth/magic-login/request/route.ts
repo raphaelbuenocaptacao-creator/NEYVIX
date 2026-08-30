@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
-import { deliverMail } from "@/lib/mail-transport";
+import { deliverMail, getMailTransportStatus } from "@/lib/mail-transport";
 import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 const MAGIC_LOGIN_TTL_MINUTES = 10;
@@ -43,10 +43,8 @@ export async function POST(request: Request) {
     }
 
     const sql = getSql();
-    const transportConfigured = Boolean(
-      process.env.MAIL_TRANSPORT_URL?.trim() && process.env.MAIL_TRANSPORT_SECRET?.trim(),
-    );
-    if (!sql || !transportConfigured) {
+    const transport = getMailTransportStatus();
+    if (!sql || !transport.ready) {
       return secureRedirect(request, "/login?magic=unavailable");
     }
 
