@@ -23,7 +23,18 @@ export async function readActiveSession(token?: string | null): Promise<ActiveSe
     if (!Number.isFinite(securityEpoch)) return null;
 
     if (Number.isFinite(session.securityEpochMs)) {
-      if (session.securityEpochMs !== securityEpoch) return null;
+      if (session.securityEpochMs === securityEpoch) {
+        return { ...session, isSuperadmin: account.isSuperadmin };
+      }
+
+      // The account row can legitimately change during signup/login setup before
+      // the signed session is emitted (for example while repairing entitlements).
+      // Accept only when the session was issued at or after that database state.
+      // Any account change after issuance still revokes the session because its
+      // updated_at becomes newer than iatMs.
+      if (process.env.NODE_ENV === "production" && !session.iatMs) return null;
+      const issuedAt = session.iatMs ?? session.iat * 1000;
+      if (issuedAt < securityEpoch) return null;
       return { ...session, isSuperadmin: account.isSuperadmin };
     }
 
