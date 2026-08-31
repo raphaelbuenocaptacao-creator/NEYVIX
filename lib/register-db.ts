@@ -33,13 +33,8 @@ export async function createRegisteredUser(
   const normalizedEmail = email.trim().toLowerCase();
   const cleanName = name.trim().slice(0, 80);
   const handle = normalizedEmail.split("@", 1)[0];
-  // A public signup must always receive a real entitlement-bearing plan.
   const selectedPlanCode = planCode?.trim().toLowerCase() || "start-monthly";
 
-  // NEYVIX has databases originating from two generations of the identity
-  // schema. The legacy schema contains handle/display_name columns and older
-  // deployments may still require them. Detect that shape rather than making
-  // signup depend on a destructive schema rewrite.
   const compatibilityRows = await sql`
     SELECT
       EXISTS (
@@ -101,7 +96,7 @@ export async function createRegisteredUser(
           'trialing',
           now(),
           now() + (ap.trial_days || ' days')::interval,
-          jsonb_build_object('source', 'neyvix-id', 'plan_code', ${selectedPlanCode})
+          jsonb_build_object('source', 'neyvix-id', 'plan_code', ${selectedPlanCode}::text)
         FROM new_user nu
         JOIN active_project ap ON true
         JOIN selected_plan sp ON true
@@ -149,7 +144,7 @@ export async function createRegisteredUser(
           'trialing',
           now(),
           now() + (ap.trial_days || ' days')::interval,
-          jsonb_build_object('source', 'neyvix-id', 'plan_code', ${selectedPlanCode})
+          jsonb_build_object('source', 'neyvix-id', 'plan_code', ${selectedPlanCode}::text)
         FROM new_user nu
         JOIN active_project ap ON true
         JOIN selected_plan sp ON true
