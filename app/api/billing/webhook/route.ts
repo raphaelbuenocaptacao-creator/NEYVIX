@@ -10,13 +10,12 @@ function safeEqual(a: string, b: string) {
 
 export async function POST(request: Request) {
   const configuredSecret = process.env.NEYVIX_BILLING_WEBHOOK_SECRET?.trim();
-  if (!configuredSecret) {
-    console.error("NEYVIX billing webhook is not configured");
-    return NextResponse.json({ ok: false, error: "webhook_not_configured" }, { status: 503 });
-  }
-
   const providedSecret = request.headers.get("x-neyvix-webhook-secret")?.trim() ?? "";
-  if (!providedSecret || !safeEqual(configuredSecret, providedSecret)) {
+
+  // Fail closed and keep runtime configuration private. A missing server secret and
+  // a missing/incorrect caller secret are intentionally indistinguishable externally.
+  if (!configuredSecret || !providedSecret || !safeEqual(configuredSecret, providedSecret)) {
+    if (!configuredSecret) console.error("NEYVIX billing webhook is not configured");
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
