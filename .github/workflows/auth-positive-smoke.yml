@@ -62,11 +62,13 @@ jobs:
 
           status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-start.headers)"
           location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-start.headers | tail -1)"
+          failure="$(awk 'BEGIN{IGNORECASE=1} /^x-neyvix-auth-failure:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-start.headers | tail -1)"
           test "$status" = "303"
           case "$location" in
             */dashboard*) ;;
             *)
               echo "Auth did not redirect to dashboard: $location" >&2
+              echo "Sanitized failure class: ${failure:-not-reported}" >&2
               echo "Safe identity health snapshot (HTTP $health_code):" >&2
               cat /tmp/identity-health-safe.json >&2
               exit 1
