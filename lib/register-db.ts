@@ -82,7 +82,7 @@ export async function createRegisteredUser(
           ${id}, ${normalizedEmail}, ${handle}, ${cleanName}, ${passwordHash}, ${cleanName}, true, false
         FROM active_project
         WHERE EXISTS (SELECT 1 FROM selected_plan)
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING id, email, name, updated_at
       ), new_subscription AS (
         INSERT INTO public.subscriptions (
@@ -130,7 +130,7 @@ export async function createRegisteredUser(
         SELECT ${id}, ${normalizedEmail}, ${passwordHash}, ${cleanName}, true, false
         FROM active_project
         WHERE EXISTS (SELECT 1 FROM selected_plan)
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING id, email, name, updated_at
       ), new_subscription AS (
         INSERT INTO public.subscriptions (
