@@ -25,6 +25,14 @@ jobs:
           base="${NEYVIX_PRODUCTION_URL%/}"
           cookies=/tmp/auth-cookies.txt
           revoked=/tmp/auth-revoked.txt
+          health=/tmp/identity-health.json
+
+          health_code="$(curl --silent --show-error --max-time 20 -o "$health" -w '%{http_code}' "$base/api/health/identity")"
+          if jq -e . "$health" >/dev/null 2>&1; then
+            jq -c '{ok,database,schema,signup,session,magicLogin:{tokenStore,pipelineReady,delivery,status},consistency}' "$health" > /tmp/identity-health-safe.json
+          else
+            printf '{"healthCode":"%s","parse":"failed"}\n' "$health_code" > /tmp/identity-health-safe.json
+          fi
 
           if [ -n "${NEYVIX_SMOKE_EMAIL:-}" ] && [ -n "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
             email="$NEYVIX_SMOKE_EMAIL"
@@ -55,7 +63,15 @@ jobs:
           status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-start.headers)"
           location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/auth-start.headers | tail -1)"
           test "$status" = "303"
-          case "$location" in */dashboard*) ;; *) echo "Auth did not redirect to dashboard: $location" >&2; exit 1;; esac
+          case "$location" in
+            */dashboard*) ;;
+            *)
+              echo "Auth did not redirect to dashboard: $location" >&2
+              echo "Safe identity health snapshot (HTTP $health_code):" >&2
+              cat /tmp/identity-health-safe.json >&2
+              exit 1
+              ;;
+          esac
           grep -Eq 'neyvix_session' "$cookies"
           cp "$cookies" "$revoked"
 
