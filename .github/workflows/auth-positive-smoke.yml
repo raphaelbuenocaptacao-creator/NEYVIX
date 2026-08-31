@@ -1,6 +1,8 @@
 name: NEYVIX Auth Positive Smoke
 
 on:
+  push:
+    branches: [main]
   deployment_status:
 
 permissions:
@@ -9,8 +11,10 @@ permissions:
 jobs:
   auth-positive-smoke:
     if: >-
-      github.event.deployment_status.state == 'success' &&
-      github.event.deployment_status.environment_url != ''
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' &&
+       github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment_url != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -29,7 +33,7 @@ jobs:
 
           health_code="$(curl --silent --show-error --max-time 20 -o "$health" -w '%{http_code}' "$base/api/health/identity")"
           if jq -e . "$health" >/dev/null 2>&1; then
-            jq -c '{ok,database,schema,signup,session,magicLogin:{tokenStore,pipelineReady,delivery,status},consistency}' "$health" > /tmp/identity-health-safe.json
+            jq -c '{ok,database,schema,signup,session,magicLogin:.magicLogin,consistency}' "$health" > /tmp/identity-health-safe.json
           else
             printf '{"healthCode":"%s","parse":"failed"}\n' "$health_code" > /tmp/identity-health-safe.json
           fi
@@ -39,25 +43,13 @@ jobs:
             password="$NEYVIX_SMOKE_PASSWORD"
             echo "::add-mask::$email"
             echo "::add-mask::$password"
-            curl --silent --show-error --max-time 20 \
-              -H 'content-type: application/x-www-form-urlencoded' \
-              -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body \
-              --data-urlencode "email=$email" \
-              --data-urlencode "password=$password" \
-              --data-urlencode 'next=/dashboard' \
-              "$base/api/auth/login" >/dev/null
+            curl --silent --show-error --max-time 20 -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body --data-urlencode "email=$email" --data-urlencode "password=$password" --data-urlencode 'next=/dashboard' "$base/api/auth/login" >/dev/null
           else
             suffix="$(date +%s)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             handle="smoke-${suffix}"
             password="Neyvix-Smoke-${suffix}!"
             echo "::add-mask::$password"
-            curl --silent --show-error --max-time 20 \
-              -H 'content-type: application/x-www-form-urlencoded' \
-              -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body \
-              --data-urlencode 'name=NEYVIX Production Smoke' \
-              --data-urlencode "handle=$handle" \
-              --data-urlencode "password=$password" \
-              "$base/api/auth/register" >/dev/null
+            curl --silent --show-error --max-time 20 -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body --data-urlencode 'name=NEYVIX Production Smoke' --data-urlencode "handle=$handle" --data-urlencode "password=$password" "$base/api/auth/register" >/dev/null
           fi
 
           status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-start.headers)"
@@ -66,13 +58,7 @@ jobs:
           test "$status" = "303"
           case "$location" in
             */dashboard*) ;;
-            *)
-              echo "Auth did not redirect to dashboard: $location" >&2
-              echo "Sanitized failure class: ${failure:-not-reported}" >&2
-              echo "Safe identity health snapshot (HTTP $health_code):" >&2
-              cat /tmp/identity-health-safe.json >&2
-              exit 1
-              ;;
+            *) echo "Auth did not redirect to dashboard: $location" >&2; echo "Sanitized failure class: ${failure:-not-reported}" >&2; echo "Safe identity health snapshot (HTTP $health_code):" >&2; cat /tmp/identity-health-safe.json >&2; exit 1 ;;
           esac
           grep -Eq 'neyvix_session' "$cookies"
           cp "$cookies" "$revoked"
@@ -80,18 +66,13 @@ jobs:
           me_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")"
           test "$me_code" = "200"
           jq -e '.authenticated == true and .user != null' /tmp/me.json >/dev/null
-
           dashboard_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/dashboard.html -w '%{http_code}' "$base/dashboard")"
           test "$dashboard_code" = "200"
-
           curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout"
-
           post_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/post.json -w '%{http_code}' "$base/api/auth/me")"
           test "$post_code" = "401"
-
           replay_code="$(curl --silent --show-error --max-time 20 -b "$revoked" -o /tmp/replay.json -w '%{http_code}' "$base/api/auth/me")"
           test "$replay_code" = "401"
-
           echo "PASS: production auth -> session -> identity -> dashboard -> logout -> revoked-session rejection."
           echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production authentication end to end. Dedicated credentials are used when configured; otherwise the smoke self-registers a unique technical NEYVIX ID." >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production authentication end to end." >> "$GITHUB_STEP_SUMMARY"
