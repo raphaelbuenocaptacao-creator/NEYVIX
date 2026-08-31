@@ -34,6 +34,12 @@ function errorUrl(code: "invalid" | "taken" | "config" | "rate_limit") {
   return url;
 }
 
+function safeFailureCode(error: unknown) {
+  if (!error || typeof error !== "object") return "runtime";
+  const code = "code" in error ? String(error.code ?? "") : "";
+  return /^[0-9A-Z]{5}$/.test(code) ? `db-${code}` : "runtime";
+}
+
 const planCodes: Record<string, string> = {
   start: "start-monthly",
   pro: "pro-monthly",
@@ -87,7 +93,10 @@ export async function POST(request: Request) {
     response.cookies.set(SESSION_COOKIE, createSession(account), { ...authCookieOptions, maxAge: 60 * 60 * 24 * 7 });
     return hardenedRedirect(response);
   } catch (error) {
-    console.error("NEYVIX ID registration failed", error);
-    return hardenedRedirect(NextResponse.redirect(errorUrl("config"), 303));
+    const failureCode = safeFailureCode(error);
+    console.error("NEYVIX ID registration failed", failureCode);
+    const response = NextResponse.redirect(errorUrl("config"), 303);
+    response.headers.set("X-Neyvix-Auth-Failure", failureCode);
+    return hardenedRedirect(response);
   }
 }
