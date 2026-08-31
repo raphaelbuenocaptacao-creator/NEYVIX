@@ -31,6 +31,9 @@ jobs:
       - name: Auth SQL contract
         run: node scripts/verify-auth-sql-contract.mjs
 
+      - name: Billing safety contract
+        run: node scripts/verify-billing-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 
