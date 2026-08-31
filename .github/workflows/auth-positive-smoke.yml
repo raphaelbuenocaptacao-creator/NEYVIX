@@ -1,8 +1,6 @@
 name: NEYVIX Auth Positive Smoke
 
 on:
-  push:
-    branches: [main]
   deployment_status:
 
 permissions:
@@ -11,10 +9,8 @@ permissions:
 jobs:
   auth-positive-smoke:
     if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'deployment_status' &&
-       github.event.deployment_status.state == 'success' &&
-       github.event.deployment_status.environment_url != '')
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
