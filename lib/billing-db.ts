@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { ensureNeyvixSubscription } from "@/lib/subscription-heal";
 
 export type BillingEventInput = {
   provider: string;
@@ -37,6 +38,24 @@ export async function processBillingEvent(input: BillingEventInput) {
   const email = input.email.trim().toLowerCase();
   const status = normalizeStatus(input.type);
   if (!provider || !eventId || !email || !status) return { ok: false as const, reason: "invalid_event" };
+
+  // Legacy NEYVIX accounts can predate the subscription contract. Heal the
+  // entitlement atomically before applying a provider event so a legitimate
+  // billing event is not discarded merely because the user has not logged in
+  // since subscription healing was introduced. This creates no charge and
+  // remains idempotent via the subscription (project_id, user_id) constraint.
+  const identityRows = await sql`
+    SELECT u.id
+    FROM public.users u
+    JOIN public.projects p ON p.slug = 'neyvix' AND p.is_active = true
+    WHERE lower(u.email) = ${email} AND u.is_active = true
+    LIMIT 1
+  `;
+  const userId = String(identityRows[0]?.id ?? "");
+  if (!userId) return { ok: false as const, reason: "account_or_plan_not_found" };
+
+  const subscriptionReady = await ensureNeyvixSubscription(userId);
+  if (!subscriptionReady) return { ok: false as const, reason: "subscription_unavailable" };
 
   const code = `${input.plan}-monthly`;
   const payload = JSON.stringify(input.payload ?? input);
