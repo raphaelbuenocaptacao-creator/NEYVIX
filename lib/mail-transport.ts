@@ -29,9 +29,20 @@ function webhookTransport() {
   }
 }
 
+function validFromAddress(value: string) {
+  // Accept either address@example.com or a common display-name form such as
+  // "NEYVIX <no-reply@neyvix.com>". Requiring an explicit sender prevents
+  // readiness from claiming Resend is usable while silently relying on an
+  // unverified hard-coded domain.
+  return /^(?:[^<>\r\n]+\s*)?<[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>$/.test(value)
+    || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(value);
+}
+
 function resendTransport() {
   const apiKey = process.env.RESEND_API_KEY?.trim();
-  return apiKey ? { apiKey } : null;
+  if (!apiKey) return null;
+  const from = process.env.MAIL_FROM_ADDRESS?.trim() ?? "";
+  return { apiKey, from, valid: validFromAddress(from) };
 }
 
 export function getMailTransportStatus(): MailTransportStatus {
@@ -50,10 +61,10 @@ export function getMailTransportStatus(): MailTransportStatus {
   if (resend) {
     return {
       configured: true,
-      valid: true,
-      ready: true,
+      valid: resend.valid,
+      ready: resend.valid,
       provider: "resend",
-      reason: "ready",
+      reason: resend.valid ? "ready" : "transport_invalid",
     };
   }
 
@@ -114,8 +125,7 @@ export async function deliverMail(message: MailTransportMessage) {
   }
 
   const resend = resendTransport();
-  if (resend) {
-    const configuredFrom = process.env.MAIL_FROM_ADDRESS?.trim();
+  if (resend?.valid) {
     return postMail(
       RESEND_ENDPOINT,
       {
@@ -124,7 +134,7 @@ export async function deliverMail(message: MailTransportMessage) {
         "X-Entity-Ref-ID": "neyvix-mail",
       },
       {
-        from: configuredFrom || message.from,
+        from: resend.from,
         to: [message.to],
         subject: message.subject,
         text: message.text,
@@ -132,5 +142,5 @@ export async function deliverMail(message: MailTransportMessage) {
     );
   }
 
-  return { ok: false as const, reason: webhook ? "transport_invalid" : "transport_not_configured" };
+  return { ok: false as const, reason: webhook || resend ? "transport_invalid" : "transport_not_configured" };
 }
