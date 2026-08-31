@@ -28,6 +28,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Auth SQL contract
+        run: node scripts/verify-auth-sql-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 
