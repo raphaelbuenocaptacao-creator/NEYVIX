@@ -46,7 +46,15 @@ jobs:
           fi
 
           fail_stage() {
-            echo "NEYVIX_AUTH_STAGE_FAIL=$1" >&2
+            local stage="$1"
+            echo "NEYVIX_AUTH_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Auth stage::${stage}"
+            {
+              echo "### Auth Positive Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
             if [ -f /tmp/identity-health-safe.json ]; then
               echo "Safe identity health snapshot:" >&2
               cat /tmp/identity-health-safe.json >&2
