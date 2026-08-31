@@ -1,0 +1,151 @@
+name: NEYVIX Billing Safety Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  billing-safety-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Resolve deployment URL
+        id: target
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          base="${DEPLOYMENT_URL%/}"
+          case "$base" in
+            https://*) ;;
+            *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
+          esac
+          echo "deployment=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Select reachable NEYVIX host
+        id: access
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          probe() {
+            local base="$1"
+            local code
+            code="$(curl --silent --show-error --location \
+              --retry 2 --retry-delay 1 --max-time 20 \
+              "${headers[@]}" \
+              -o /tmp/health.json -w '%{http_code}' \
+              "$base/api/health")"
+            if [ "$code" = "200" ] && jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null 2>&1; then
+              echo "base=$base" >> "$GITHUB_OUTPUT"
+              return 0
+            fi
+            return 1
+          }
+
+          if probe "${NEYVIX_PRODUCTION_CANDIDATE%/}"; then
+            exit 0
+          fi
+          probe "${{ steps.target.outputs.deployment }}"
+
+      - name: Verify billing account health is readable
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --location \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            "${headers[@]}" \
+            -o /tmp/accounts.json -w '%{http_code}' \
+            "$base/api/health/accounts")"
+          echo "Billing account health HTTP: $code"
+          test "$code" = "200"
+          jq -e '.service == "NEYVIX" and .checks.database == "connected" and .checks.accountIntegrity == "verified"' /tmp/accounts.json >/dev/null
+          jq '{service,status,checks}' /tmp/accounts.json
+
+      - name: Reject billing webhook without credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --max-time 20 \
+            "${headers[@]}" \
+            -H 'content-type: application/json' \
+            -X POST -d '{}' \
+            -o /tmp/webhook-no-secret.json -w '%{http_code}' \
+            "$base/api/billing/webhook")"
+          echo "Webhook without credential HTTP: $code"
+          test "$code" = "401"
+          jq -e '.ok == false and .error == "unauthorized"' /tmp/webhook-no-secret.json >/dev/null
+
+      - name: Reject billing webhook with incorrect credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --max-time 20 \
+            "${headers[@]}" \
+            -H 'content-type: application/json' \
+            -H 'x-neyvix-webhook-secret: synthetic-invalid-credential' \
+            -X POST -d '{}' \
+            -o /tmp/webhook-wrong-secret.json -w '%{http_code}' \
+            "$base/api/billing/webhook")"
+          echo "Webhook with incorrect credential HTTP: $code"
+          test "$code" = "401"
+          jq -e '.ok == false and .error == "unauthorized"' /tmp/webhook-wrong-secret.json >/dev/null
+
+      - name: Keep checkout behind an authenticated session
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --max-time 20 \
+            "${headers[@]}" \
+            -D /tmp/checkout.headers -o /dev/null -w '%{http_code}' \
+            -X POST --data-urlencode 'plan=start' \
+            "$base/api/billing/checkout")"
+          echo "Unauthenticated checkout HTTP: $code"
+          test "$code" = "303"
+          grep -Eiq '^location: .*\/login' /tmp/checkout.headers
