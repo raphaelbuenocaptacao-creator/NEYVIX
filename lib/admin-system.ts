@@ -33,6 +33,7 @@ export async function getAdminSystemSummary(): Promise<AdminSystemSummary | null
         SELECT count(*)::int
         FROM public.users u
         WHERE u.is_active = true
+          AND COALESCE(u.is_superadmin, false) = false
           AND NOT EXISTS (
             SELECT 1
             FROM public.subscriptions s
