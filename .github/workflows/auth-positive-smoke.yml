@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   auth-positive-smoke:
@@ -15,9 +16,22 @@ jobs:
     timeout-minutes: 5
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
       NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
     steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Verify registration or login, session, dashboard and revocation
         shell: bash
         run: |
@@ -26,8 +40,12 @@ jobs:
           cookies=/tmp/auth-cookies.txt
           revoked=/tmp/auth-revoked.txt
           health=/tmp/identity-health.json
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
 
-          health_code="$(curl --silent --show-error --max-time 20 -o "$health" -w '%{http_code}' "$base/api/health/identity")"
+          health_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o "$health" -w '%{http_code}' "$base/api/health/identity")"
           if jq -e . "$health" >/dev/null 2>&1; then
             jq -c '{ok,database,schema,signup,session,magicLogin:.magicLogin,consistency}' "$health" > /tmp/identity-health-safe.json
           else
@@ -39,13 +57,13 @@ jobs:
             password="$NEYVIX_SMOKE_PASSWORD"
             echo "::add-mask::$email"
             echo "::add-mask::$password"
-            curl --silent --show-error --max-time 20 -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body --data-urlencode "email=$email" --data-urlencode "password=$password" --data-urlencode 'next=/dashboard' "$base/api/auth/login" >/dev/null
+            curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body --data-urlencode "email=$email" --data-urlencode "password=$password" --data-urlencode 'next=/dashboard' "$base/api/auth/login" >/dev/null
           else
             suffix="$(date +%s)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             handle="smoke-${suffix}"
             password="Neyvix-Smoke-${suffix}!"
             echo "::add-mask::$password"
-            curl --silent --show-error --max-time 20 -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body --data-urlencode 'name=NEYVIX Production Smoke' --data-urlencode "handle=$handle" --data-urlencode "password=$password" "$base/api/auth/register" >/dev/null
+            curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/auth-start.headers -o /tmp/auth-start.body --data-urlencode 'name=NEYVIX Production Smoke' --data-urlencode "handle=$handle" --data-urlencode "password=$password" "$base/api/auth/register" >/dev/null
           fi
 
           status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/auth-start.headers)"
@@ -68,15 +86,15 @@ jobs:
           grep -Eq 'neyvix_session' "$cookies"
           cp "$cookies" "$revoked"
 
-          me_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")"
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")"
           test "$me_code" = "200"
           jq -e '.authenticated == true and .user != null' /tmp/me.json >/dev/null
-          dashboard_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/dashboard.html -w '%{http_code}' "$base/dashboard")"
+          dashboard_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/dashboard.html -w '%{http_code}' "$base/dashboard")"
           test "$dashboard_code" = "200"
-          curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout"
-          post_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/post.json -w '%{http_code}' "$base/api/auth/me")"
+          curl --silent --show-error --max-time 20 "${headers[@]}" -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout"
+          post_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/post.json -w '%{http_code}' "$base/api/auth/me")"
           test "$post_code" = "401"
-          replay_code="$(curl --silent --show-error --max-time 20 -b "$revoked" -o /tmp/replay.json -w '%{http_code}' "$base/api/auth/me")"
+          replay_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$revoked" -o /tmp/replay.json -w '%{http_code}' "$base/api/auth/me")"
           test "$replay_code" = "401"
           echo "PASS: production auth -> session -> identity -> dashboard -> logout -> revoked-session rejection."
           echo "### Auth Positive Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
