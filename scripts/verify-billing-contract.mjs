@@ -4,7 +4,8 @@ const billingDb = readFileSync(new URL("../lib/billing-db.ts", import.meta.url),
 const webhook = readFileSync(new URL("../app/api/billing/webhook/route.ts", import.meta.url), "utf8");
 
 const checks = [
-  ["webhook secret is required", webhook.includes("NEYVIX_BILLING_WEBHOOK_SECRET") && webhook.includes("webhook_not_configured")],
+  ["webhook secret is required", webhook.includes("NEYVIX_BILLING_WEBHOOK_SECRET") && webhook.includes("!configuredSecret || !providedSecret")],
+  ["missing server secret fails closed", webhook.includes('error: "unauthorized"') && webhook.includes("status: 401") && !webhook.includes('error: "webhook_not_configured"')],
   ["webhook uses timing-safe comparison", webhook.includes("timingSafeEqual") && webhook.includes("safeEqual(configuredSecret, providedSecret)")],
   ["unauthorized webhook is rejected", webhook.includes('error: "unauthorized"') && webhook.includes("status: 401")],
   ["billing payload is validated", webhook.includes('error: "invalid_payload"') && webhook.includes("status: 400")],
