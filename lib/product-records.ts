@@ -26,6 +26,24 @@ export async function deleteStudioProject(email: string, id: string) {
   return rows.length === 1;
 }
 
+export async function updateStudioProjectTitle(email: string, id: string, title: string) {
+  const sql = getSql();
+  if (!sql) return null;
+
+  const rows = await sql`
+    UPDATE public.neyvix_studio_projects p
+    SET title = ${title.trim()}, updated_at = now()
+    FROM public.users u
+    WHERE p.id = ${id}::uuid
+      AND p.user_id = u.id
+      AND lower(u.email) = ${normalizeEmail(email)}
+      AND u.is_active = true
+    RETURNING p.id, p.title, p.status, p.updated_at
+  ` as Array<Record<string, unknown>>;
+
+  return rows[0] ?? null;
+}
+
 export async function deleteContentItem(email: string, id: string) {
   const sql = getSql();
   if (!sql) return false;
