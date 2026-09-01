@@ -52,6 +52,9 @@ jobs:
       - name: Drive ownership contract
         run: node scripts/verify-drive-contract.mjs
 
+      - name: Docs ownership and version contract
+        run: node scripts/verify-docs-contract.mjs
+
       - name: Health schema readiness contract
         run: node scripts/verify-health-schema-contract.mjs
 
