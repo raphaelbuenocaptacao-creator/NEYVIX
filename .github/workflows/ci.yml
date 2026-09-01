@@ -37,6 +37,9 @@ jobs:
       - name: Mail transport safety contract
         run: node scripts/verify-mail-transport-contract.mjs
 
+      - name: Intelligence security contract
+        run: node scripts/verify-intelligence-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 
