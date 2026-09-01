@@ -130,6 +130,33 @@ export async function deleteMemory(email: string, id: string) {
   return rows.length === 1;
 }
 
+export async function setMemoryPrivacy(email: string, id: string, isPrivate: boolean) {
+  const sql = getSql();
+  if (!sql || !(await schemaReady(sql))) return false;
+  const rows = await sql`
+    WITH target AS (
+      SELECT m.id, m.user_id, m.memory_key
+      FROM public.neyvix_memories m
+      JOIN public.users u ON u.id = m.user_id
+      WHERE m.id = ${id}::uuid
+        AND lower(u.email) = ${email.trim().toLowerCase()}
+        AND u.is_active = true
+      LIMIT 1
+    ), changed AS (
+      UPDATE public.neyvix_memories m
+      SET is_private = ${isPrivate}, updated_at = now()
+      FROM target t
+      WHERE m.id = t.id
+      RETURNING m.id, m.user_id, m.memory_key
+    )
+    INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
+    SELECT user_id, id, 'privacy', 'user', jsonb_build_object('key', memory_key, 'shared_with_ai', ${!isPrivate})
+    FROM changed
+    RETURNING memory_id
+  ` as Array<{ memory_id: string }>;
+  return rows.length === 1;
+}
+
 export async function getMemoryContext(email: string, limit = 12) {
   const sql = getSql();
   if (!sql || !(await schemaReady(sql))) return [];
