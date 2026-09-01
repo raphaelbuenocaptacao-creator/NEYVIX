@@ -14,6 +14,7 @@ export default function ContentPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<ContentItem[]>([]);
+  const [deletingId, setDeletingId] = useState("");
 
   async function loadHistory() {
     try {
@@ -25,6 +26,25 @@ export default function ContentPage() {
   }
 
   useEffect(() => { void loadHistory(); }, []);
+
+  async function removeContent(item: ContentItem) {
+    if (deletingId || !window.confirm(`Excluir este ${item.kind}? Esta ação remove apenas este item da sua biblioteca.`)) return;
+    setDeletingId(item.id);
+    setError("");
+    try {
+      const response = await fetch("/api/content", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id }),
+      });
+      if (!response.ok) throw new Error("Não foi possível excluir o conteúdo.");
+      setHistory((current) => current.filter((content) => content.id !== item.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível excluir o conteúdo.");
+    } finally {
+      setDeletingId("");
+    }
+  }
 
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,7 +96,7 @@ export default function ContentPage() {
           <label htmlFor="brief">Briefing</label>
           <textarea id="brief" value={brief} onChange={(e)=>setBrief(e.target.value)} placeholder="Ex.: lançamento do NEYVIX, público empreendedor, tom futurista e objetivo." maxLength={2000} rows={10}/>
           <div className={styles.footer}><span>{brief.length}/2000</span><button type="submit" disabled={loading || !brief.trim()}>{loading ? "Criando..." : "Gerar conteúdo →"}</button></div>
-          {error ? <p className={styles.error}>{error}</p> : null}
+          {error ? <p className={styles.error} role="alert">{error}</p> : null}
         </form>
 
         <section className={`${styles.card} ${styles.result}`}>
@@ -84,14 +104,14 @@ export default function ContentPage() {
             <div><p className={styles.eyebrow}>02 · RESULTADO</p><h2>Conteúdo pronto</h2></div>
             <span className={result ? styles.ready : styles.waiting}>{result ? `${format} · salvo` : "Aguardando"}</span>
           </div>
-          {loading ? <div className={styles.pipeline}><i/><i/><i/><i/><span>Escrevendo e estruturando</span></div> : null}
+          {loading ? <div className={styles.pipeline} aria-live="polite"><i/><i/><i/><i/><span>Escrevendo e estruturando</span></div> : null}
           {result ? <pre>{result}</pre> : <div className={styles.emptyState}><strong>Seu conteúdo aparecerá aqui.</strong><p>Escolha um formato e envie um briefing para gerar a primeira versão.</p></div>}
         </section>
       </section>
 
       <section className={styles.historySection}>
         <div className={styles.historyHead}><div><p className={styles.eyebrow}>BIBLIOTECA REAL</p><h2>Conteúdos recentes</h2></div><span>{history.length} salvos</span></div>
-        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.kind}</small><strong>{item.content.slice(0, 110)}{item.content.length > 110 ? "…" : ""}</strong><span>{new Date(item.created_at).toLocaleString("pt-BR")}</span></article>) : <p className={styles.historyEmpty}>Seus próximos conteúdos salvos aparecerão aqui.</p>}</div>
+        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.kind}</small><strong>{item.content.slice(0, 110)}{item.content.length > 110 ? "…" : ""}</strong><span>{new Date(item.created_at).toLocaleString("pt-BR")}</span><button type="button" onClick={() => void removeContent(item)} disabled={deletingId === item.id} aria-label={`Excluir ${item.kind}`}>{deletingId === item.id ? "Excluindo…" : "Excluir"}</button></article>) : <p className={styles.historyEmpty}>Seus próximos conteúdos salvos aparecerão aqui.</p>}</div>
       </section>
     </main>
   );
