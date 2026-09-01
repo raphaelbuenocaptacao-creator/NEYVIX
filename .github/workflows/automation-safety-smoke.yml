@@ -1,0 +1,154 @@
+name: NEYVIX Automation Safety Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  automation-safety-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Resolve deployment URL
+        id: target
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          base="${DEPLOYMENT_URL%/}"
+          case "$base" in
+            https://*) ;;
+            *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
+          esac
+          echo "deployment=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Select reachable NEYVIX host
+        id: access
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          probe() {
+            local base="$1"
+            local code
+            code="$(curl --silent --show-error --location \
+              --retry 2 --retry-delay 1 --max-time 20 \
+              "${headers[@]}" \
+              -o /tmp/health.json -w '%{http_code}' \
+              "$base/api/health")"
+            if [ "$code" = "200" ] && jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null 2>&1; then
+              echo "base=$base" >> "$GITHUB_OUTPUT"
+              return 0
+            fi
+            return 1
+          }
+
+          if probe "${NEYVIX_PRODUCTION_CANDIDATE%/}"; then
+            exit 0
+          fi
+          probe "${{ steps.target.outputs.deployment }}"
+
+      - name: Keep automation workspace behind login
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --max-time 20 \
+            "${headers[@]}" \
+            -D /tmp/automation-page.headers -o /dev/null -w '%{http_code}' \
+            "$base/automation")"
+          echo "Automation workspace without session HTTP: $code"
+          test "$code" = "307" -o "$code" = "308"
+          grep -Eiq '^location: .*\/login\?next=%2Fautomation|^location: .*\/login\?next=/automation' /tmp/automation-page.headers
+
+      - name: Reject unauthenticated automation API mutations
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          request() {
+            local method="$1"
+            local url="$2"
+            local body="${3:-}"
+            local out="$4"
+            local code
+            if [ -n "$body" ]; then
+              code="$(curl --silent --show-error --max-time 20 \
+                "${headers[@]}" \
+                -H 'content-type: application/json' \
+                -X "$method" -d "$body" \
+                -D "$out.headers" -o "$out.json" -w '%{http_code}' \
+                "$url")"
+            else
+              code="$(curl --silent --show-error --max-time 20 \
+                "${headers[@]}" \
+                -X "$method" \
+                -D "$out.headers" -o "$out.json" -w '%{http_code}' \
+                "$url")"
+            fi
+            echo "$method $url => $code"
+            test "$code" = "401"
+            jq -e '.error | strings | length > 0' "$out.json" >/dev/null
+            grep -Eiq '^cache-control: .*no-store' "$out.headers"
+            grep -Eiq '^referrer-policy: no-referrer' "$out.headers"
+          }
+
+          request GET "$base/api/automation" "" /tmp/automation-get
+          request POST "$base/api/automation" '{"name":"synthetic-unauthenticated"}' /tmp/automation-post
+          request PATCH "$base/api/automation" '{"id":"00000000-0000-4000-8000-000000000000","status":"paused"}' /tmp/automation-patch
+          request DELETE "$base/api/automation?id=00000000-0000-4000-8000-000000000000" "" /tmp/automation-delete
+
+      - name: Reject unauthenticated approval decisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --max-time 20 \
+            "${headers[@]}" \
+            -H 'content-type: application/json' \
+            -X PATCH -d '{"decision":"approved"}' \
+            -D /tmp/approval.headers -o /tmp/approval.json -w '%{http_code}' \
+            "$base/api/automation/approvals/00000000-0000-4000-8000-000000000000")"
+          echo "Approval decision without session HTTP: $code"
+          test "$code" = "401"
+          jq -e '.error | strings | length > 0' /tmp/approval.json >/dev/null
+          grep -Eiq '^cache-control: .*no-store' /tmp/approval.headers
