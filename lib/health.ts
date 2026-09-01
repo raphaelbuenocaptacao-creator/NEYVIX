@@ -15,6 +15,7 @@ export type HealthStatus = {
   schema: {
     automation: "ready" | "missing" | "unknown";
     memory: "ready" | "missing" | "unknown";
+    productRecords: "ready" | "partial" | "missing" | "unknown";
     ecosystem: "ready" | "partial" | "missing" | "unknown";
   };
   integrations: {
@@ -54,6 +55,7 @@ function unavailableSchema() {
   return {
     automation: "unknown" as const,
     memory: "unknown" as const,
+    productRecords: "unknown" as const,
     ecosystem: "unknown" as const,
   };
 }
@@ -108,6 +110,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         to_regclass('public.neyvix_approval_requests') IS NOT NULL AS approval_requests_table,
         to_regclass('public.neyvix_memories') IS NOT NULL AS memories_table,
         to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_events_table,
+        to_regclass('public.neyvix_studio_projects') IS NOT NULL AS studio_projects_table,
+        to_regclass('public.neyvix_content_items') IS NOT NULL AS content_items_table,
         to_regclass('public.conversations') IS NOT NULL AS conversations_table,
         to_regclass('public.chat_messages') IS NOT NULL AS chat_messages_table,
         to_regclass('public.social_profiles') IS NOT NULL AS social_profiles_table,
@@ -158,6 +162,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const estateReady = Boolean(catalog.estate_sites_table) && Boolean(catalog.estate_properties_table);
     const automationReady = Boolean(catalog.automations_table) && Boolean(catalog.approval_requests_table);
     const memoryReady = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
+    const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
+    const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
 
     const ecosystemTablesReady = [
       catalog.conversations_table,
@@ -190,10 +196,16 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       schema: {
         automation: automationReady ? "ready" : "missing",
         memory: memoryReady ? "ready" : "missing",
+        productRecords,
         ecosystem,
       },
       integrations,
-      launchReady: coreReady && automationReady && memoryReady && ecosystem === "ready" && externalReady,
+      launchReady: coreReady
+        && automationReady
+        && memoryReady
+        && productRecords === "ready"
+        && ecosystem === "ready"
+        && externalReady,
     };
   } catch {
     return {
