@@ -14,6 +14,7 @@ export default function StudioPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<StudioItem[]>([]);
+  const [deletingId, setDeletingId] = useState("");
 
   async function loadHistory() {
     try {
@@ -25,6 +26,25 @@ export default function StudioPage() {
   }
 
   useEffect(() => { void loadHistory(); }, []);
+
+  async function removeProject(item: StudioItem) {
+    if (deletingId || !window.confirm(`Excluir o projeto “${item.title}”? Esta ação remove apenas este blueprint do seu histórico.`)) return;
+    setDeletingId(item.id);
+    setError("");
+    try {
+      const response = await fetch("/api/studio", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id }),
+      });
+      if (!response.ok) throw new Error("Não foi possível excluir o projeto.");
+      setHistory((current) => current.filter((project) => project.id !== item.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível excluir o projeto.");
+    } finally {
+      setDeletingId("");
+    }
+  }
 
   async function build(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,7 +95,7 @@ export default function StudioPage() {
             <span>{idea.length}/2500</span>
             <button type="submit" disabled={loading || !idea.trim()}>{loading ? "Arquitetando..." : "Gerar blueprint →"}</button>
           </div>
-          {error ? <p className={styles.error}>{error}</p> : null}
+          {error ? <p className={styles.error} role="alert">{error}</p> : null}
         </form>
 
         <section className={`${styles.card} ${styles.result}`}>
@@ -83,14 +103,14 @@ export default function StudioPage() {
             <div><p className={styles.eyebrow}>02 · BLUEPRINT</p><h2>Arquitetura do produto</h2></div>
             <span className={result ? styles.ready : styles.waiting}>{result ? "Gerado e salvo" : "Aguardando"}</span>
           </div>
-          {loading ? <div className={styles.pipeline}><i/><i/><i/><i/><span>Estruturando produto</span></div> : null}
+          {loading ? <div className={styles.pipeline} aria-live="polite"><i/><i/><i/><i/><span>Estruturando produto</span></div> : null}
           {result ? <pre>{result}</pre> : <div className={styles.emptyState}><strong>Seu blueprint aparecerá aqui.</strong><p>Próxima evolução: geração de código, validação em sandbox e publicação pelo NEYVIX Deploy.</p></div>}
         </section>
       </section>
 
       <section className={styles.historySection}>
         <div className={styles.historyHead}><div><p className={styles.eyebrow}>HISTÓRICO REAL</p><h2>Projetos recentes</h2></div><span>{history.length} salvos</span></div>
-        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.status}</small><strong>{item.title}</strong><span>{new Date(item.updated_at).toLocaleString("pt-BR")}</span></article>) : <p className={styles.historyEmpty}>Seus próximos blueprints salvos aparecerão aqui.</p>}</div>
+        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.status}</small><strong>{item.title}</strong><span>{new Date(item.updated_at).toLocaleString("pt-BR")}</span><button type="button" onClick={() => void removeProject(item)} disabled={deletingId === item.id} aria-label={`Excluir ${item.title}`}>{deletingId === item.id ? "Excluindo…" : "Excluir"}</button></article>) : <p className={styles.historyEmpty}>Seus próximos blueprints salvos aparecerão aqui.</p>}</div>
       </section>
     </main>
   );
