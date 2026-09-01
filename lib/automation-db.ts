@@ -117,6 +117,26 @@ export async function createAutomation(email: string, input: {
   };
 }
 
+export async function deleteAutomation(email: string, automationId: string) {
+  const sql = getSql();
+  if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
+  if (!(await schemaReady(sql))) return { ok: false as const, reason: "schema_unavailable" as const };
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const rows = await sql`
+    DELETE FROM public.neyvix_automations a
+    USING public.users u
+    WHERE a.id::text = ${automationId}
+      AND a.user_id = u.id
+      AND lower(u.email) = ${normalizedEmail}
+      AND COALESCE(u.is_active, true) = true
+    RETURNING a.id
+  `;
+
+  if (!rows[0]) return { ok: false as const, reason: "not_found_or_forbidden" as const };
+  return { ok: true as const, id: String(rows[0].id) };
+}
+
 export async function decideApproval(email: string, approvalId: string, decision: "approved" | "rejected", note = "") {
   const sql = getSql();
   if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
