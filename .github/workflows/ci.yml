@@ -43,6 +43,9 @@ jobs:
       - name: Studio and Content ownership contract
         run: node scripts/verify-product-records-contract.mjs
 
+      - name: Approval authorization contract
+        run: node scripts/verify-approval-authorization-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 
