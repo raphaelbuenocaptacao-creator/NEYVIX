@@ -117,6 +117,40 @@ export async function createAutomation(email: string, input: {
   };
 }
 
+export async function updateAutomationStatus(email: string, automationId: string, status: "active" | "paused") {
+  const sql = getSql();
+  if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
+  if (!(await schemaReady(sql))) return { ok: false as const, reason: "schema_unavailable" as const };
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const rows = await sql`
+    UPDATE public.neyvix_automations a
+    SET status = ${status},
+        updated_at = now()
+    FROM public.users u
+    WHERE a.id::text = ${automationId}
+      AND a.user_id = u.id
+      AND lower(u.email) = ${normalizedEmail}
+      AND COALESCE(u.is_active, true) = true
+      AND a.status IN ('draft', 'active', 'paused')
+    RETURNING a.id, a.name, a.status, a.trigger_type, a.action_type, a.updated_at
+  `;
+
+  if (!rows[0]) return { ok: false as const, reason: "not_found_or_forbidden" as const };
+  const row = rows[0];
+  return {
+    ok: true as const,
+    automation: {
+      id: String(row.id),
+      name: String(row.name),
+      status: String(row.status),
+      triggerType: String(row.trigger_type),
+      actionType: String(row.action_type),
+      updatedAt: String(row.updated_at),
+    },
+  };
+}
+
 export async function deleteAutomation(email: string, automationId: string) {
   const sql = getSql();
   if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
