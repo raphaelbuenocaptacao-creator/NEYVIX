@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 const files = {
   db: await readFile(new URL("../lib/drive-db.ts", import.meta.url), "utf8"),
   api: await readFile(new URL("../app/api/drive/route.ts", import.meta.url), "utf8"),
+  page: await readFile(new URL("../app/drive/page.tsx", import.meta.url), "utf8"),
+  layout: await readFile(new URL("../app/drive/layout.tsx", import.meta.url), "utf8"),
+  ecosystem: await readFile(new URL("../app/ecosystem/page.tsx", import.meta.url), "utf8"),
   schema: await readFile(new URL("../database/002_ecosystem.sql", import.meta.url), "utf8"),
 };
 
@@ -20,6 +23,14 @@ const checks = [
   ["drive validates UUID identifiers", /UUID_RE[\s\S]*UUID_RE\.test\(id\)/m.test(files.api)],
   ["drive limits names", /MAX_NAME_LENGTH = 160[\s\S]*status: 413/m.test(files.api)],
   ["drive responses are private", /Cache-Control.*no-store[\s\S]*Referrer-Policy.*no-referrer/m.test(files.api)],
+  ["drive route is protected before rendering", /requireActiveSession\("\/drive"\)/.test(files.layout)],
+  ["drive UI lists through private API", /fetch\(`\/api\/drive\$\{query\}`[\s\S]*cache: "no-store"/m.test(files.page)],
+  ["drive UI creates nested folders", /method: "POST"[\s\S]*parentId: currentParent/m.test(files.page)],
+  ["drive UI supports rename", /method: "PUT"[\s\S]*id: item\.id[\s\S]*name/m.test(files.page)],
+  ["drive UI only requests safe folder deletion", /method: "DELETE"[\s\S]*id: item\.id/m.test(files.page)],
+  ["drive UI handles loading error empty and success feedback", /styles\.loading[\s\S]*role="alert"[\s\S]*role="status"[\s\S]*styles\.emptyState/m.test(files.page)],
+  ["ecosystem exposes Drive as MVP with live route", /NEYVIX Drive", status: "MVP"[\s\S]*href: "\/drive"/m.test(files.ecosystem)],
+  ["drive clearly labels binary upload as unavailable", /Upload binário ainda não está habilitado/.test(files.page)],
   ["drive does not expose binary upload yet", !/multipart\/form-data|putBlob|uploadFile|storage provider/i.test(files.api)],
 ];
 
@@ -29,4 +40,4 @@ for (const [name, ok] of checks) {
   if (!ok) failed = true;
 }
 if (failed) process.exit(1);
-console.log(`PASS - ${checks.length} Drive persistence/ownership guarantees verified`);
+console.log(`PASS - ${checks.length} Drive persistence/ownership/UI guarantees verified`);
