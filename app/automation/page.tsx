@@ -1,17 +1,17 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { SESSION_COOKIE, readSession } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/lib/auth";
 import { listAutomationWorkspace } from "@/lib/automation-db";
 import AutomationWorkspace from "@/components/automation-workspace";
+import { readActiveSession } from "@/lib/session";
 
 const statusLabel: Record<string, string> = { draft: "Rascunho", active: "Ativa", paused: "Pausada", archived: "Arquivada", pending: "Pendente", approved: "Aprovada", rejected: "Rejeitada", cancelled: "Cancelada" };
 
 export default async function AutomationPage() {
   const store = await cookies();
-  let session = null;
-  try { session = readSession(store.get(SESSION_COOKIE)?.value); } catch { session = null; }
-  if (!session) redirect("/login");
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
+  if (!session) redirect("/login?next=/automation");
 
   let workspace = { automations: [], approvals: [], schemaReady: false } as Awaited<ReturnType<typeof listAutomationWorkspace>>;
   try { workspace = await listAutomationWorkspace(session.email); } catch (error) { console.error("Falha ao carregar o NEYVIX Automation", error); }
