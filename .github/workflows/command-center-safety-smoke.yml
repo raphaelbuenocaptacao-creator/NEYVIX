@@ -1,0 +1,140 @@
+name: NEYVIX Command Center Safety Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  command-center-safety-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Resolve deployment URL
+        id: target
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          base="${DEPLOYMENT_URL%/}"
+          case "$base" in
+            https://*) ;;
+            *) echo "Deployment URL must use HTTPS" >&2; exit 1 ;;
+          esac
+          echo "deployment=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Select reachable NEYVIX host
+        id: access
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          probe() {
+            local base="$1"
+            local code
+            code="$(curl --silent --show-error --location \
+              --retry 2 --retry-delay 1 --max-time 20 \
+              "${headers[@]}" \
+              -o /tmp/health.json -w '%{http_code}' \
+              "$base/api/health")"
+            if [ "$code" = "200" ] && jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null 2>&1; then
+              echo "base=$base" >> "$GITHUB_OUTPUT"
+              return 0
+            fi
+            return 1
+          }
+
+          if probe "${NEYVIX_PRODUCTION_CANDIDATE%/}"; then
+            exit 0
+          fi
+          probe "${{ steps.target.outputs.deployment }}"
+
+      - name: Keep private workspaces behind login
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          assert_login_redirect() {
+            local path="$1"
+            local encoded="$2"
+            local stem="$3"
+            local code
+            code="$(curl --silent --show-error --max-time 20 \
+              "${headers[@]}" \
+              -D "/tmp/${stem}.headers" -o /dev/null -w '%{http_code}' \
+              "$base$path")"
+            echo "$path without session HTTP: $code"
+            test "$code" = "307" -o "$code" = "308"
+            grep -Eiq "^location: .*\\/login\\?next=(${encoded}|${path})" "/tmp/${stem}.headers"
+          }
+
+          assert_login_redirect "/dashboard" "%2Fdashboard" "dashboard"
+          assert_login_redirect "/admin" "%2Fadmin" "admin"
+
+      - name: Reject unauthenticated identity reads
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          code="$(curl --silent --show-error --max-time 20 \
+            "${headers[@]}" \
+            -D /tmp/me.headers -o /tmp/me.json -w '%{http_code}' \
+            "$base/api/auth/me")"
+          echo "Identity read without session HTTP: $code"
+          test "$code" = "401"
+          jq -e '.error | strings | length > 0' /tmp/me.json >/dev/null
+          grep -Eiq '^cache-control: .*no-store' /tmp/me.headers
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/me.headers
+
+      - name: Verify public health remains readable
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          code="$(curl --silent --show-error --location --max-time 20 \
+            "${headers[@]}" \
+            -D /tmp/health.headers -o /tmp/health.json -w '%{http_code}' \
+            "$base/api/health")"
+          echo "Health HTTP: $code"
+          test "$code" = "200"
+          jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null
