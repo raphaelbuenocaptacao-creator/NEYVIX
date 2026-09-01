@@ -46,6 +46,9 @@ jobs:
       - name: Approval authorization contract
         run: node scripts/verify-approval-authorization-contract.mjs
 
+      - name: Automation lifecycle contract
+        run: node scripts/verify-automation-lifecycle-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 
