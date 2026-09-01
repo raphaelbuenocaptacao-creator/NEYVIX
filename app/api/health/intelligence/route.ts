@@ -24,7 +24,9 @@ function validHttpsUrl(value?: string) {
 
 export async function GET() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
-  const gatewayConfigured = validHttpsUrl(process.env.NEYVIX_AI_GATEWAY_URL);
+  const gatewayUrlConfigured = validHttpsUrl(process.env.NEYVIX_AI_GATEWAY_URL);
+  const gatewaySecretConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_SECRET?.trim());
+  const gatewayConfigured = gatewayUrlConfigured && gatewaySecretConfigured;
   const memoryAiContext = process.env.NEYVIX_MEMORY_AI_CONTEXT === "true";
 
   if (!databaseUrl) {
@@ -33,7 +35,7 @@ export async function GET() {
       service: "neyvix-intelligence",
       status: "unavailable",
       database: "not_configured",
-      ai: { gatewayConfigured, messageStore: false },
+      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false },
       memory: { store: false, events: false, aiContextEnabled: memoryAiContext },
     }, 503);
   }
@@ -60,7 +62,8 @@ export async function GET() {
       database: "connected",
       ai: {
         gatewayConfigured,
-        gatewaySecretConfigured: Boolean(process.env.NEYVIX_AI_GATEWAY_SECRET?.trim()),
+        gatewayUrlConfigured,
+        gatewaySecretConfigured,
         messageStore: aiMessages,
       },
       memory: {
@@ -76,7 +79,7 @@ export async function GET() {
       service: "neyvix-intelligence",
       status: "unavailable",
       database: "error",
-      ai: { gatewayConfigured, messageStore: false },
+      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false },
       memory: { store: false, events: false, aiContextEnabled: memoryAiContext },
     }, 503);
   }
