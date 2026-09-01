@@ -43,6 +43,27 @@ jobs:
           test "$code" = "200"
           jq -e '.ok == true and .database == "connected" and .ai.messageStore == true and .memory.store == true and .memory.events == true' /tmp/intelligence.json >/dev/null
 
+      - name: Verify AI gateway readiness semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            (.ai.gatewayUrlConfigured | type) == "boolean" and
+            (.ai.gatewaySecretConfigured | type) == "boolean" and
+            (.ai.gatewayConfigured | type) == "boolean" and
+            (.ai.gatewayConfigured == (.ai.gatewayUrlConfigured and .ai.gatewaySecretConfigured)) and
+            (if .ai.gatewayConfigured then .status == "ready" else .status == "partial" end)
+          ' /tmp/intelligence.json >/dev/null
+
+          gateway_url="$(jq -r '.ai.gatewayUrlConfigured' /tmp/intelligence.json)"
+          gateway_secret="$(jq -r '.ai.gatewaySecretConfigured' /tmp/intelligence.json)"
+          gateway_ready="$(jq -r '.ai.gatewayConfigured' /tmp/intelligence.json)"
+          state="$(jq -r '.status' /tmp/intelligence.json)"
+          echo "AI gateway URL configured: $gateway_url"
+          echo "AI gateway secret configured: $gateway_secret"
+          echo "AI gateway ready: $gateway_ready"
+          echo "Intelligence status: $state"
+
       - name: Verify anonymous intelligence boundaries
         shell: bash
         run: |
