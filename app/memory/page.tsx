@@ -18,9 +18,10 @@ const eventLabels: Record<string, string> = {
   upsert: "Memória salva ou atualizada",
   delete: "Memória apagada",
   recall: "Memória consultada pela NEYVIX AI",
+  privacy: "Permissão de uso pela AI alterada",
 };
 
-export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ saved?: string; deleted?: string; error?: string; shared?: string }> }) {
+export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ saved?: string; deleted?: string; error?: string; shared?: string; privacy?: string }> }) {
   const params = await searchParams;
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
@@ -32,7 +33,13 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
   ]);
   const notice = params.saved === "1"
     ? (params.shared === "1" ? "Memória salva e autorizada para contexto da NEYVIX AI." : "Memória salva como privada.")
-    : params.deleted === "1" ? "Memória removida." : params.error ? notices[params.error] : null;
+    : params.deleted === "1"
+      ? "Memória removida."
+      : params.privacy === "shared"
+        ? "Memória autorizada para contexto da NEYVIX AI."
+        : params.privacy === "private"
+          ? "Memória marcada como privada e removida do contexto da AI."
+          : params.error ? notices[params.error] : null;
 
   return <main className="shell">
     <section className="hero">
@@ -56,7 +63,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
         <label><input type="checkbox" name="shareWithAi" /> Permitir que esta memória seja usada como contexto pela NEYVIX AI quando eu ativar memória na conversa.</label>
         <button className="primary-button" type="submit">Salvar na memória</button>
       </form>
-      <p className="lead">Por padrão, toda memória é privada. Salvar novamente a mesma chave atualiza a memória e a preferência de compartilhamento.</p>
+      <p className="lead">Por padrão, toda memória é privada. Você pode mudar a permissão de uso pela AI diretamente em cada card, sem reescrever o conteúdo.</p>
     </section>
 
     <section className="grid" style={{ marginTop: "2rem" }}>
@@ -66,17 +73,24 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
         <p>{memory.value}</p>
         <p>{memory.isPrivate ? "Privada · não enviada à AI" : "Autorizada para contexto da AI"}</p>
         <p>Origem: {memory.source} · Atualizada em {new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(memory.updatedAt))}</p>
-        <form action="/api/memory/delete" method="post">
-          <input type="hidden" name="id" value={memory.id} />
-          <button className="secondary" type="submit">Apagar memória</button>
-        </form>
+        <div className="actions">
+          <form action="/api/memory/privacy" method="post">
+            <input type="hidden" name="id" value={memory.id} />
+            <input type="hidden" name="mode" value={memory.isPrivate ? "shared" : "private"} />
+            <button className="secondary" type="submit">{memory.isPrivate ? "Permitir na AI" : "Tornar privada"}</button>
+          </form>
+          <form action="/api/memory/delete" method="post">
+            <input type="hidden" name="id" value={memory.id} />
+            <button className="secondary" type="submit">Apagar memória</button>
+          </form>
+        </div>
       </article>) : <article><span>MEMORY</span><h2>Nenhuma memória salva ainda.</h2><p>Adicione a primeira informação acima. O histórico de conversas da AI continua separado desta memória de longo prazo.</p></article>}
     </section>
 
     <section className="hero" style={{ marginTop: "1.5rem" }}>
       <p className="eyebrow">ATIVIDADE E PRIVACIDADE</p>
       <h2>Você pode ver quando sua memória foi alterada ou consultada.</h2>
-      <p className="lead">Consultas feitas pela NEYVIX AI só aparecem aqui quando uma memória previamente autorizada é carregada como contexto. Memórias privadas não entram nesse fluxo.</p>
+      <p className="lead">Consultas feitas pela NEYVIX AI só aparecem aqui quando uma memória previamente autorizada é carregada como contexto. Memórias privadas não entram nesse fluxo. Mudanças de permissão também ficam auditadas.</p>
       {events.length ? <div className="grid" style={{ marginTop: "1rem" }}>
         {events.map((event) => <article key={event.id}>
           <span>{event.source.toUpperCase()}</span>
