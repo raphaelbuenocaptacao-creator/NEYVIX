@@ -40,6 +40,9 @@ jobs:
       - name: Intelligence security contract
         run: node scripts/verify-intelligence-contract.mjs
 
+      - name: Studio and Content ownership contract
+        run: node scripts/verify-product-records-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 
