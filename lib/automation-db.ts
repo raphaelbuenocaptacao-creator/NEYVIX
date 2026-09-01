@@ -134,7 +134,10 @@ export async function decideApproval(email: string, approvalId: string, decision
       AND r.status = 'pending'
       AND lower(u.email) = ${normalizedEmail}
       AND COALESCE(u.is_active, true) = true
-      AND (r.assigned_to IS NULL OR r.assigned_to = u.id)
+      AND (
+        r.assigned_to = u.id
+        OR (r.assigned_to IS NULL AND r.requested_by = u.id)
+      )
     RETURNING r.id, r.title, r.status, r.created_at
   `;
 
