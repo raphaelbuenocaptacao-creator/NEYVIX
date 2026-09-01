@@ -109,7 +109,11 @@ export async function POST(request: Request) {
         WHERE token_hash = ${tokenHash} AND used_at IS NULL
       `;
       console.warn("NEYVIX magic-login delivery failed", delivered.reason);
-      return secureRedirect("/login?magic=unavailable");
+      // Once the transport is globally ready, never reveal whether a specific
+      // address exists or whether provider delivery failed for that address.
+      // The token is burned above, so returning the generic public success state
+      // cannot create a usable authentication path.
+      return secureRedirect("/login?magic=sent");
     }
 
     return secureRedirect("/login?magic=sent");
