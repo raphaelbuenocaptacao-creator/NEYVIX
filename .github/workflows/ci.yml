@@ -52,6 +52,9 @@ jobs:
       - name: Admin and User 360 authorization contract
         run: node scripts/verify-admin-user360-contract.mjs
 
+      - name: Command Center authorization contract
+        run: node scripts/verify-command-center-authorization-contract.mjs
+
       - name: Readiness smoke check
         run: npm run smoke
 

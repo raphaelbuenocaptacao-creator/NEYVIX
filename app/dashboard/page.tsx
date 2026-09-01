@@ -5,6 +5,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getRecentActivity, getTrialStatus } from "@/lib/db";
 import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlements";
+import { canAccessAdmin, getUserRole } from "@/lib/user-role";
 
 const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar", "ai"],
@@ -16,6 +17,14 @@ const modules = [
   ["Deploy", "/deploy", "Projetos, versões e publicação", "Publicar", "deploy"],
   ["Admin", "/admin", "Usuários, acesso, uso e operação", "Controlar", "admin"],
   ["Ecossistema", "/ecosystem", "Explore todo o universo de produtos NEYVIX", "Explorar", null],
+] as const;
+
+const quickCommands = [
+  ["Criar um app", "/studio", "studio"],
+  ["Criar site imobiliário", "/estate", "estate"],
+  ["Criar campanha", "/content", "content"],
+  ["Planejar automação", "/automation", "automation"],
+  ["Ver planos", "/plans", null],
 ] as const;
 
 type ActivityRow = { source: string; kind: string; summary: string; created_at: string };
@@ -43,8 +52,11 @@ export default async function DashboardPage() {
 
   let activity: ActivityRow[] = [];
   let trial: { status?: string; trial_ends_at?: string } | null = null;
-  const isSuperadmin = session.isSuperadmin;
-  const entitlements = await getEntitlements(session.email);
+  const [entitlements, role] = await Promise.all([
+    getEntitlements(session.email),
+    getUserRole(session.email),
+  ]);
+  const adminAllowed = canAccessAdmin(role);
 
   try {
     const [recent, trialStatus] = await Promise.all([
@@ -56,10 +68,11 @@ export default async function DashboardPage() {
     console.error("Falha ao carregar atividade do Command Center", error);
   }
 
-  const visibleModules = (isSuperadmin ? modules : modules.filter(([name]) => name !== "Admin"));
+  const visibleModules = modules.filter(([name]) => name !== "Admin" || adminAllowed);
   const trialLabel = entitlements.plan === "trial" && trial?.trial_ends_at
     ? `Trial Pro até ${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(trial.trial_ends_at))}`
     : `Plano: ${entitlements.plan.toUpperCase()}`;
+  const aiAllowed = canUse(entitlements, "ai");
 
   return (
     <main className="command-shell">
@@ -70,8 +83,8 @@ export default async function DashboardPage() {
 
       <section className="command-hero-card">
         <div className="command-hero-copy"><div className="live-pill"><span /> NEYVIX PRONTA</div><h1>O que você quer fazer acontecer?</h1><p className="muted">Comece pela intenção. A NEYVIX conecta você à inteligência, ao workspace e à camada de execução certa.</p></div>
-        <Link href="/ai" className="command-prompt-box"><span className="command-key">N</span><span className="command-placeholder">Peça para a NEYVIX criar, planejar, analisar ou automatizar…</span><span className="command-enter">Abrir AI ↗</span></Link>
-        <div className="quick-command-row"><Link href="/studio">Criar um app</Link><Link href="/estate">Criar site imobiliário</Link><Link href="/content">Criar campanha</Link><Link href="/automation">Planejar automação</Link><Link href="/plans">Ver planos</Link></div>
+        <Link href={aiAllowed ? "/ai" : "/plans"} className="command-prompt-box"><span className="command-key">N</span><span className="command-placeholder">{aiAllowed ? "Peça para a NEYVIX criar, planejar, analisar ou automatizar…" : "NEYVIX AI não está incluída no seu acesso atual."}</span><span className="command-enter">{aiAllowed ? "Abrir AI ↗" : "Ver planos ＋"}</span></Link>
+        <div className="quick-command-row">{quickCommands.map(([label, href, feature]) => { const allowed = !feature || canUse(entitlements, feature as EntitlementFeature); return <Link key={label} href={allowed ? href : "/plans"}>{allowed ? label : `${label} · Upgrade`}</Link>; })}</div>
       </section>
 
       <section className="command-layout">
@@ -79,7 +92,7 @@ export default async function DashboardPage() {
           <div className="section-heading compact-heading"><p className="eyebrow">SEU ECOSSISTEMA</p><h2>Tudo funciona como um só workspace.</h2></div>
           <div className="command-module-grid">
             {visibleModules.map(([name, href, description, action, feature], index) => {
-              const allowed = !feature || canUse(entitlements, feature as EntitlementFeature);
+              const allowed = name === "Admin" ? adminAllowed : (!feature || canUse(entitlements, feature as EntitlementFeature));
               const target = allowed ? href : "/plans";
               return (
                 <Link key={name} href={target} className="command-module-card">
