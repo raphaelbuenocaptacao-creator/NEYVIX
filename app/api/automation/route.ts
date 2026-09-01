@@ -2,13 +2,14 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
-import { createAutomation, deleteAutomation, listAutomationWorkspace } from "@/lib/automation-db";
+import { createAutomation, deleteAutomation, listAutomationWorkspace, updateAutomationStatus } from "@/lib/automation-db";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_NAME = 120;
 const MAX_DESCRIPTION = 1000;
 const ALLOWED_TRIGGER_TYPES = new Set(["manual", "schedule", "event", "webhook"]);
 const ALLOWED_ACTION_TYPES = new Set(["workflow", "ai", "mail", "content", "studio"]);
+const ALLOWED_STATUS_UPDATES = new Set(["active", "paused"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function getSession() {
@@ -79,6 +80,45 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Falha ao criar automação", error);
     return NextResponse.json({ error: "Não foi possível criar a automação" }, { status: 503, headers: privateHeaders });
+  }
+}
+
+export async function PATCH(request: Request) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: privateHeaders });
+  const denied = await checkAccess(session.email);
+  if (denied) return denied;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Corpo JSON inválido" }, { status: 400, headers: privateHeaders });
+  }
+  if (typeof body !== "object" || body === null) {
+    return NextResponse.json({ error: "Dados de atualização inválidos" }, { status: 400, headers: privateHeaders });
+  }
+
+  const data = body as Record<string, unknown>;
+  const id = String(data.id ?? "").trim();
+  const status = String(data.status ?? "").trim().toLowerCase();
+  if (!UUID_RE.test(id)) {
+    return NextResponse.json({ error: "Identificador de automação inválido" }, { status: 400, headers: privateHeaders });
+  }
+  if (!ALLOWED_STATUS_UPDATES.has(status)) {
+    return NextResponse.json({ error: "Estado de automação não permitido" }, { status: 400, headers: privateHeaders });
+  }
+
+  try {
+    const result = await updateAutomationStatus(session.email, id, status as "active" | "paused");
+    if (!result.ok) {
+      const responseStatus = result.reason === "not_found_or_forbidden" ? 404 : 503;
+      return NextResponse.json({ error: responseStatus === 404 ? "Automação não encontrada" : "Não foi possível atualizar a automação" }, { status: responseStatus, headers: privateHeaders });
+    }
+    return NextResponse.json(result.automation, { headers: privateHeaders });
+  } catch (error) {
+    console.error("Falha ao atualizar automação", error);
+    return NextResponse.json({ error: "Não foi possível atualizar a automação" }, { status: 503, headers: privateHeaders });
   }
 }
 
