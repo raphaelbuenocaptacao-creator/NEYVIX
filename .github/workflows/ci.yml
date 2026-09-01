@@ -49,6 +49,9 @@ jobs:
       - name: Studio and Content ownership contract
         run: node scripts/verify-product-records-contract.mjs
 
+      - name: Drive ownership contract
+        run: node scripts/verify-drive-contract.mjs
+
       - name: Health schema readiness contract
         run: node scripts/verify-health-schema-contract.mjs
 
