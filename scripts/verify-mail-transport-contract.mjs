@@ -3,6 +3,8 @@ import fs from "node:fs";
 const transport = fs.readFileSync("lib/mail-transport.ts", "utf8");
 const request = fs.readFileSync("app/api/auth/magic-login/request/route.ts", "utf8");
 
+const deliveryFailureBlock = request.match(/if \(!delivered\.ok\) \{[\s\S]*?\n    \}/)?.[0] ?? "";
+
 const checks = [
   ["webhook requires URL and secret", /MAIL_TRANSPORT_URL[\s\S]*MAIL_TRANSPORT_SECRET/.test(transport)],
   ["webhook requires HTTPS", /url\.protocol === "https:"/.test(transport)],
@@ -12,7 +14,9 @@ const checks = [
   ["delivery uses validated Resend sender", /if \(resend\?\.valid\)/.test(transport) && /from: resend\.from/.test(transport)],
   ["mail transport has timeout", /AbortController/.test(transport) && /MAIL_TIMEOUT_MS/.test(transport)],
   ["magic login checks transport readiness before token creation", request.indexOf("if (!sql || !transport.ready)") < request.indexOf("randomBytes(32)")],
-  ["failed delivery burns the generated token", /if \(!delivered\.ok\)[\s\S]*SET used_at = now\(\)/.test(request)],
+  ["failed delivery burns the generated token", /SET used_at = now\(\)/.test(deliveryFailureBlock)],
+  ["failed delivery does not reveal account existence", /secureRedirect\("\/login\?magic=sent"\)/.test(deliveryFailureBlock) && !/magic=unavailable/.test(deliveryFailureBlock)],
+  ["unknown account and delivery failure share public success state", /if \(!user\)[\s\S]*?secureRedirect\("\/login\?magic=sent"\)/.test(request) && /if \(!delivered\.ok\)[\s\S]*?secureRedirect\("\/login\?magic=sent"\)/.test(request)],
   ["magic link uses canonical trusted HTTPS origin", /trustedPublicOrigin/.test(request) && /url\.protocol === "https:"/.test(request)],
 ];
 
