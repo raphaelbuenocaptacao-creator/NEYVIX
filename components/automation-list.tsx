@@ -24,6 +24,34 @@ export default function AutomationList({ automations }: { automations: Automatio
   const [busyId, setBusyId] = useState("");
   const [message, setMessage] = useState("");
 
+  async function rename(item: AutomationItem) {
+    if (busyId || item.status === "archived") return;
+    const nextName = window.prompt("Novo nome da automação", item.name)?.trim();
+    if (!nextName || nextName === item.name) return;
+    if (nextName.length > 120) {
+      setMessage("O nome da automação deve ter no máximo 120 caracteres.");
+      return;
+    }
+
+    setBusyId(item.id);
+    setMessage("");
+    try {
+      const response = await fetch("/api/automation", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ id: item.id, name: nextName }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Não foi possível renomear a automação");
+      setMessage(`Automação “${item.name}” renomeada para “${nextName}”.`);
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao renomear automação");
+    } finally {
+      setBusyId("");
+    }
+  }
+
   async function setStatus(item: AutomationItem, status: "active" | "paused") {
     if (busyId) return;
     setBusyId(item.id);
@@ -80,18 +108,28 @@ export default function AutomationList({ automations }: { automations: Automatio
             <p>Atualizada em {new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(automation.updatedAt))}</p>
             <div className="actions">
               {automation.status !== "archived" ? (
-                <button
-                  type="button"
-                  onClick={() => void setStatus(automation, automation.status === "active" ? "paused" : "active")}
-                  disabled={Boolean(busyId)}
-                  aria-busy={busyId === automation.id}
-                >
-                  {busyId === automation.id
-                    ? "Atualizando..."
-                    : automation.status === "active"
-                      ? "Pausar"
-                      : "Ativar"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void rename(automation)}
+                    disabled={Boolean(busyId)}
+                    aria-busy={busyId === automation.id}
+                  >
+                    {busyId === automation.id ? "Atualizando..." : "Renomear"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void setStatus(automation, automation.status === "active" ? "paused" : "active")}
+                    disabled={Boolean(busyId)}
+                    aria-busy={busyId === automation.id}
+                  >
+                    {busyId === automation.id
+                      ? "Atualizando..."
+                      : automation.status === "active"
+                        ? "Pausar"
+                        : "Ativar"}
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"
