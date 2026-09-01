@@ -11,6 +11,10 @@ export function canAccessAdmin(role: NeyvixRole) {
   return role === "cro" || role === "admin" || role === "superadmin";
 }
 
+export function canInspectUser360(role: NeyvixRole) {
+  return role === "admin" || role === "superadmin";
+}
+
 export function roleLabel(role: NeyvixRole) {
   if (role === "cro") return "CRO";
   if (role === "admin") return "ADMIN";

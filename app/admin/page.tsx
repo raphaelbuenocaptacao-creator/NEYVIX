@@ -7,7 +7,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { getAdminUserSummaries, type AdminUserSummary } from "@/lib/db";
 import { getAdminSystemSummary, type AdminSystemSummary } from "@/lib/admin-system";
 import { readActiveSession } from "@/lib/session";
-import { canAccessAdmin, getUserRole, roleLabel } from "@/lib/user-role";
+import { canAccessAdmin, canInspectUser360, getUserRole, roleLabel } from "@/lib/user-role";
 
 export default async function AdminPage() {
   const store = await cookies();
@@ -16,12 +16,13 @@ export default async function AdminPage() {
 
   const role = await getUserRole(session.email);
   if (!canAccessAdmin(role)) redirect("/dashboard?error=admin_access");
+  const canInspectUsers = canInspectUser360(role);
 
   let users: AdminUserSummary[] = [];
   let system: AdminSystemSummary | null = null;
   try {
     [users, system] = await Promise.all([
-      getAdminUserSummaries(),
+      canInspectUsers ? getAdminUserSummaries() : Promise.resolve([]),
       getAdminSystemSummary(),
     ]);
   } catch (error) {
@@ -64,8 +65,10 @@ export default async function AdminPage() {
     {
       label: "OPERAÇÕES",
       title: "User 360",
-      state: system?.activeWithoutSubscription ? `${system.activeWithoutSubscription} atenção` : "Consistente",
-      text: "Visão real de identidade, assinatura e atividade por usuário, sem alterar dados automaticamente.",
+      state: canInspectUsers ? (system?.activeWithoutSubscription ? `${system.activeWithoutSubscription} atenção` : "Consistente") : "Restrito",
+      text: canInspectUsers
+        ? "Visão real de identidade, assinatura e atividade por usuário, sem alterar dados automaticamente."
+        : "Detalhes pessoais e históricos ficam disponíveis apenas para administradores autorizados.",
     },
   ];
 
@@ -81,7 +84,7 @@ export default async function AdminPage() {
         <div>
           <p className="eyebrow">NEYVIX ADMIN · OPERAÇÃO MESTRA</p>
           <h1>Veja o ecossistema. Controle o sistema.</h1>
-          <p className={styles.lead}>Identidade, inteligência, memória e criação convergem aqui. O User 360 reúne o contexto real de cada pessoa sem transformar estado desconhecido em status positivo.</p>
+          <p className={styles.lead}>Identidade, inteligência, memória e criação convergem aqui. O User 360 aplica menor privilégio: telemetria operacional continua disponível sem expor detalhes pessoais a papéis que não precisam deles.</p>
         </div>
         <div className={styles.coreOrb} aria-hidden="true"><span>CORE</span></div>
       </section>
@@ -93,7 +96,15 @@ export default async function AdminPage() {
         <div><span>AI</span><strong>{system?.gatewayConfigured && system.gatewaySecretConfigured ? "Gateway pronto" : system?.gatewayConfigured ? "Gateway parcial" : "Gateway indisponível"}</strong></div>
       </section>
 
-      <UserInspector users={users} />
+      {canInspectUsers ? (
+        <UserInspector users={users} />
+      ) : (
+        <section className={styles.user360Empty}>
+          <p className="eyebrow">USER 360 · ACESSO RESTRITO</p>
+          <h2>Telemetria sem exposição desnecessária</h2>
+          <p>Seu papel pode acompanhar o estado operacional do ecossistema, mas e-mails, históricos de AI e atividade individual exigem permissão de administrador.</p>
+        </section>
+      )}
 
       <section className={styles.grid}>
         {modules.map((item) => (
