@@ -15,6 +15,9 @@ export default function ContentPage() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<ContentItem[]>([]);
   const [deletingId, setDeletingId] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [editValue, setEditValue] = useState("");
+  const [savingId, setSavingId] = useState("");
 
   async function loadHistory() {
     try {
@@ -28,7 +31,7 @@ export default function ContentPage() {
   useEffect(() => { void loadHistory(); }, []);
 
   async function removeContent(item: ContentItem) {
-    if (deletingId || !window.confirm(`Excluir este ${item.kind}? Esta ação remove apenas este item da sua biblioteca.`)) return;
+    if (deletingId || savingId || !window.confirm(`Excluir este ${item.kind}? Esta ação remove apenas este item da sua biblioteca.`)) return;
     setDeletingId(item.id);
     setError("");
     try {
@@ -39,10 +42,50 @@ export default function ContentPage() {
       });
       if (!response.ok) throw new Error("Não foi possível excluir o conteúdo.");
       setHistory((current) => current.filter((content) => content.id !== item.id));
+      if (editingId === item.id) { setEditingId(""); setEditValue(""); }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível excluir o conteúdo.");
     } finally {
       setDeletingId("");
+    }
+  }
+
+  function beginEdit(item: ContentItem) {
+    if (deletingId || savingId) return;
+    setEditingId(item.id);
+    setEditValue(item.content);
+    setError("");
+  }
+
+  function cancelEdit() {
+    if (savingId) return;
+    setEditingId("");
+    setEditValue("");
+  }
+
+  async function saveEdit(item: ContentItem) {
+    const clean = editValue.trim();
+    if (!clean || savingId || clean === item.content) {
+      if (clean === item.content) cancelEdit();
+      return;
+    }
+    setSavingId(item.id);
+    setError("");
+    try {
+      const response = await fetch("/api/content", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, content: clean }),
+      });
+      const data = await response.json() as { item?: ContentItem; error?: string };
+      if (!response.ok || !data.item) throw new Error(data.error || "Não foi possível salvar a edição.");
+      setHistory((current) => current.map((content) => content.id === item.id ? { ...content, content: data.item?.content ?? clean } : content));
+      setEditingId("");
+      setEditValue("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar a edição.");
+    } finally {
+      setSavingId("");
     }
   }
 
@@ -96,7 +139,7 @@ export default function ContentPage() {
           <label htmlFor="brief">Briefing</label>
           <textarea id="brief" value={brief} onChange={(e)=>setBrief(e.target.value)} placeholder="Ex.: lançamento do NEYVIX, público empreendedor, tom futurista e objetivo." maxLength={2000} rows={10}/>
           <div className={styles.footer}><span>{brief.length}/2000</span><button type="submit" disabled={loading || !brief.trim()}>{loading ? "Criando..." : "Gerar conteúdo →"}</button></div>
-          {error ? <p className={styles.error} role="alert">{error}</p> : null}
+          {error ? <p className={styles.error} role="alert" aria-live="assertive">{error}</p> : null}
         </form>
 
         <section className={`${styles.card} ${styles.result}`}>
@@ -111,7 +154,21 @@ export default function ContentPage() {
 
       <section className={styles.historySection}>
         <div className={styles.historyHead}><div><p className={styles.eyebrow}>BIBLIOTECA REAL</p><h2>Conteúdos recentes</h2></div><span>{history.length} salvos</span></div>
-        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.kind}</small><strong>{item.content.slice(0, 110)}{item.content.length > 110 ? "…" : ""}</strong><span>{new Date(item.created_at).toLocaleString("pt-BR")}</span><button type="button" onClick={() => void removeContent(item)} disabled={deletingId === item.id} aria-label={`Excluir ${item.kind}`}>{deletingId === item.id ? "Excluindo…" : "Excluir"}</button></article>) : <p className={styles.historyEmpty}>Seus próximos conteúdos salvos aparecerão aqui.</p>}</div>
+        <div className={styles.historyGrid}>{history.length ? history.map((item) => {
+          const isEditing = editingId === item.id;
+          return <article key={item.id} className={styles.historyCard}>
+            <small>{item.kind}</small>
+            {isEditing ? <textarea value={editValue} onChange={(event) => setEditValue(event.target.value)} maxLength={80000} rows={8} aria-label={`Editar ${item.kind}`} autoFocus /> : <strong>{item.content.slice(0, 110)}{item.content.length > 110 ? "…" : ""}</strong>}
+            <span>{new Date(item.created_at).toLocaleString("pt-BR")}</span>
+            <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+              {isEditing ? <>
+                <button type="button" onClick={() => void saveEdit(item)} disabled={savingId === item.id || !editValue.trim()}>{savingId === item.id ? "Salvando…" : "Salvar"}</button>
+                <button type="button" onClick={cancelEdit} disabled={Boolean(savingId)}>Cancelar</button>
+              </> : <button type="button" onClick={() => beginEdit(item)} disabled={Boolean(deletingId || savingId)} aria-label={`Editar ${item.kind}`}>Editar</button>}
+              <button type="button" onClick={() => void removeContent(item)} disabled={deletingId === item.id || savingId === item.id} aria-label={`Excluir ${item.kind}`}>{deletingId === item.id ? "Excluindo…" : "Excluir"}</button>
+            </div>
+          </article>;
+        }) : <p className={styles.historyEmpty}>Seus próximos conteúdos salvos aparecerão aqui.</p>}</div>
       </section>
     </main>
   );
