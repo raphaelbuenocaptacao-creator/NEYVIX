@@ -4,17 +4,20 @@
 
 `Browser -> NEYVIX /api/ai -> n8n production webhook -> Google Gemini -> n8n -> NEYVIX -> Browser`
 
-The browser never needs the Gemini API key and should not call the n8n production webhook directly.
+The browser never receives the Gemini API key or the n8n production webhook URL. The NEYVIX server is the only supported gateway client.
 
-## Required production environment variable
+## Required production environment variables
 
-Configure the deployment environment with:
+Configure the deployment environment with both values:
 
 ```text
-NEYVIX_AI_GATEWAY_URL=<n8n production webhook URL>
+NEYVIX_AI_GATEWAY_URL=<n8n production webhook HTTPS URL>
+NEYVIX_AI_GATEWAY_SECRET=<shared server-to-server secret>
 ```
 
-Do not prefix this variable with `NEXT_PUBLIC_`. The URL is consumed only by the NEYVIX server route.
+Do not prefix either variable with `NEXT_PUBLIC_`. Both values are server-only. The n8n webhook must validate the same bearer secret before invoking any model or downstream workflow.
+
+NEYVIX intentionally fails closed when the URL is not HTTPS or when the shared secret is absent. `/api/health/intelligence` reports the gateway as ready only when both are configured.
 
 ## API contract
 
@@ -30,27 +33,30 @@ Content-Type: application/json
 Successful response:
 
 ```json
-{"answer":"Resposta gerada pela NEYVIX AI"}
+{"answer":"Resposta gerada pela NEYVIX AI","memoryUsed":0}
 ```
 
-## Security already implemented
+## Security implemented
 
 - Requires an active NEYVIX ID session before proxying a request.
-- Keeps the n8n gateway URL on the server.
+- Applies durable account-scoped rate limiting.
+- Keeps gateway URL and secret server-side.
+- Requires HTTPS plus an authenticated Bearer header for every upstream AI request.
 - Validates input and limits prompts to 4,000 characters.
-- Enforces HTTPS for the upstream gateway.
+- Limits upstream responses to 24,000 characters.
 - Uses a 45-second upstream timeout.
-- Does not expose the Gemini API key to the browser.
+- Sends only a pseudonymous hash as the gateway user identifier.
+- Keeps authenticated AI responses `no-store` with `no-referrer`.
+- Does not log upstream response bodies on gateway errors.
+- Uses NEYVIX Memory only on explicit request and only when `NEYVIX_MEMORY_AI_CONTEXT=true`; private memories are never included.
 
 ## Before public launch
 
-1. Add rate limiting per NEYVIX account/IP using a durable store.
-2. Protect the n8n production webhook with a secret/header and configure the same secret server-side.
-3. Record request usage (not private prompt content by default) for quotas and abuse monitoring.
-4. Add trial credits and plan-based AI limits.
-5. Add moderation/safety controls appropriate to the products enabled in NEYVIX Studio.
-6. Pin a production Gemini model instead of relying indefinitely on a preview model.
-7. Add structured JSON responses for NEYVIX Studio workflows.
+1. Record privacy-preserving request usage for quotas and abuse monitoring without storing private prompt content by default.
+2. Add trial credits and plan-based AI limits.
+3. Add moderation/safety controls appropriate to the products enabled in NEYVIX Studio.
+4. Pin the production model instead of relying indefinitely on a preview model.
+5. Add structured JSON responses for NEYVIX Studio workflows.
 
 ## NEYVIX Studio next milestone
 
