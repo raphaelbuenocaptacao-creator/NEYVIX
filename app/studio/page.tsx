@@ -15,6 +15,10 @@ export default function StudioPage() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<StudioItem[]>([]);
   const [deletingId, setDeletingId] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [draftTitle, setDraftTitle] = useState("");
+  const [savingId, setSavingId] = useState("");
+  const [notice, setNotice] = useState("");
 
   async function loadHistory() {
     try {
@@ -27,10 +31,50 @@ export default function StudioPage() {
 
   useEffect(() => { void loadHistory(); }, []);
 
+  function beginRename(item: StudioItem) {
+    if (savingId || deletingId) return;
+    setEditingId(item.id);
+    setDraftTitle(item.title);
+    setError("");
+    setNotice("");
+  }
+
+  function cancelRename() {
+    if (savingId) return;
+    setEditingId("");
+    setDraftTitle("");
+  }
+
+  async function saveRename(item: StudioItem) {
+    const clean = draftTitle.trim();
+    if (!clean || savingId) return;
+    setSavingId(item.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/studio", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, title: clean }),
+      });
+      const data = await response.json().catch(() => null) as { item?: StudioItem; error?: string } | null;
+      if (!response.ok || !data?.item) throw new Error(data?.error || "Não foi possível renomear o projeto.");
+      setHistory((current) => current.map((project) => project.id === item.id ? { ...project, ...data.item } : project));
+      setEditingId("");
+      setDraftTitle("");
+      setNotice("Nome do projeto atualizado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível renomear o projeto.");
+    } finally {
+      setSavingId("");
+    }
+  }
+
   async function removeProject(item: StudioItem) {
-    if (deletingId || !window.confirm(`Excluir o projeto “${item.title}”? Esta ação remove apenas este blueprint do seu histórico.`)) return;
+    if (deletingId || savingId || !window.confirm(`Excluir o projeto “${item.title}”? Esta ação remove apenas este blueprint do seu histórico.`)) return;
     setDeletingId(item.id);
     setError("");
+    setNotice("");
     try {
       const response = await fetch("/api/studio", {
         method: "DELETE",
@@ -39,6 +83,8 @@ export default function StudioPage() {
       });
       if (!response.ok) throw new Error("Não foi possível excluir o projeto.");
       setHistory((current) => current.filter((project) => project.id !== item.id));
+      if (editingId === item.id) cancelRename();
+      setNotice("Projeto removido do histórico.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível excluir o projeto.");
     } finally {
@@ -50,7 +96,7 @@ export default function StudioPage() {
     event.preventDefault();
     const clean = idea.trim();
     if (!clean || loading) return;
-    setLoading(true); setError(""); setResult("");
+    setLoading(true); setError(""); setNotice(""); setResult("");
     const instruction = `Você é o NEYVIX Studio, um arquiteto de produto e software. Transforme a ideia abaixo em uma especificação objetiva de MVP pronta para construção. Responda em português do Brasil com: nome sugerido, proposta de valor, público, telas, fluxo principal, funcionalidades do MVP, modelo de dados, APIs/integrações, regras de segurança e plano de implementação em 5 etapas. Não invente integrações já concluídas. Ideia do usuário: ${clean}`;
     try {
       const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: instruction }) });
@@ -60,6 +106,7 @@ export default function StudioPage() {
       const saved = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: clean, blueprint: data.answer }) });
       if (!saved.ok) throw new Error("O blueprint foi gerado, mas não foi possível salvar no histórico.");
       await loadHistory();
+      setNotice("Blueprint gerado e salvo no seu histórico.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível conectar ao NEYVIX Studio.");
     } finally { setLoading(false); }
@@ -95,7 +142,8 @@ export default function StudioPage() {
             <span>{idea.length}/2500</span>
             <button type="submit" disabled={loading || !idea.trim()}>{loading ? "Arquitetando..." : "Gerar blueprint →"}</button>
           </div>
-          {error ? <p className={styles.error} role="alert">{error}</p> : null}
+          {error ? <p className={styles.error} role="alert" aria-live="assertive">{error}</p> : null}
+          {notice ? <p aria-live="polite">{notice}</p> : null}
         </form>
 
         <section className={`${styles.card} ${styles.result}`}>
@@ -110,7 +158,7 @@ export default function StudioPage() {
 
       <section className={styles.historySection}>
         <div className={styles.historyHead}><div><p className={styles.eyebrow}>HISTÓRICO REAL</p><h2>Projetos recentes</h2></div><span>{history.length} salvos</span></div>
-        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.status}</small><strong>{item.title}</strong><span>{new Date(item.updated_at).toLocaleString("pt-BR")}</span><button type="button" onClick={() => void removeProject(item)} disabled={deletingId === item.id} aria-label={`Excluir ${item.title}`}>{deletingId === item.id ? "Excluindo…" : "Excluir"}</button></article>) : <p className={styles.historyEmpty}>Seus próximos blueprints salvos aparecerão aqui.</p>}</div>
+        <div className={styles.historyGrid}>{history.length ? history.map((item) => <article key={item.id} className={styles.historyCard}><small>{item.status}</small>{editingId === item.id ? <><input aria-label={`Novo nome para ${item.title}`} value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} maxLength={120} autoFocus/><div><button type="button" onClick={() => void saveRename(item)} disabled={savingId === item.id || !draftTitle.trim()}>{savingId === item.id ? "Salvando…" : "Salvar"}</button><button type="button" onClick={cancelRename} disabled={savingId === item.id}>Cancelar</button></div></> : <><strong>{item.title}</strong><span>{new Date(item.updated_at).toLocaleString("pt-BR")}</span><div><button type="button" onClick={() => beginRename(item)} disabled={Boolean(deletingId || savingId)}>Renomear</button><button type="button" onClick={() => void removeProject(item)} disabled={deletingId === item.id || Boolean(savingId)} aria-label={`Excluir ${item.title}`}>{deletingId === item.id ? "Excluindo…" : "Excluir"}</button></div></>}</article>) : <p className={styles.historyEmpty}>Seus próximos blueprints salvos aparecerão aqui.</p>}</div>
       </section>
     </main>
   );
