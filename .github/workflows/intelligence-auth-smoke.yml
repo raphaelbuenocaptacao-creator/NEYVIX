@@ -49,11 +49,17 @@ jobs:
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
           cookies=/tmp/intelligence-auth-cookies.txt
+          smoke_memory_id=""
 
           echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
           echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
 
           cleanup_session() {
+            if [ -n "${smoke_memory_id:-}" ] && [ -s "$cookies" ]; then
+              curl --silent --show-error --max-time 20 -X POST -b "$cookies" \
+                --data-urlencode "id=$smoke_memory_id" \
+                -o /dev/null "$base/api/memory/delete" || true
+            fi
             if [ -s "$cookies" ] && grep -Eq 'neyvix_session' "$cookies"; then
               curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout" || true
             fi
@@ -89,11 +95,53 @@ jobs:
           esac
 
           case "$memory_code" in
-            200) jq -e 'type == "object"' /tmp/intelligence-memory.json >/dev/null ;;
+            200) jq -e 'type == "object" and (.memories | type == "array") and (.events | type == "array")' /tmp/intelligence-memory.json >/dev/null ;;
             403) jq -e '.error == "upgrade_required" or .code == "upgrade_required"' /tmp/intelligence-memory.json >/dev/null ;;
             *) echo "Memory entitlement contract returned unexpected HTTP $memory_code" >&2; cat /tmp/intelligence-memory.json >&2; exit 1 ;;
           esac
 
+          if [ "$memory_code" = "200" ]; then
+            smoke_key="smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            smoke_value="NEYVIX Memory E2E ${GITHUB_SHA:0:12}"
+
+            create_code="$(curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" \
+              -D /tmp/memory-create.headers -o /tmp/memory-create.body -w '%{http_code}' \
+              --data-urlencode "key=$smoke_key" \
+              --data-urlencode 'category=smoke' \
+              --data-urlencode "value=$smoke_value" \
+              "$base/api/memory")"
+            create_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/memory-create.headers)"
+            echo "Memory create HTTP: ${create_status:-$create_code}"
+            test "${create_status:-$create_code}" = "303"
+            grep -Eqi '^location: .*saved=1' /tmp/memory-create.headers
+
+            read_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/memory-after-create.json -w '%{http_code}' "$base/api/memory")"
+            test "$read_code" = "200"
+            smoke_memory_id="$(jq -r --arg key "$smoke_key" --arg value "$smoke_value" '.memories[]? | select(.key == $key and .category == "smoke" and .value == $value and .isPrivate == true) | .id' /tmp/memory-after-create.json | head -n1)"
+            [[ "$smoke_memory_id" =~ ^[0-9a-fA-F-]{36}$ ]]
+
+            delete_code="$(curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" \
+              -D /tmp/memory-delete.headers -o /tmp/memory-delete.body -w '%{http_code}' \
+              --data-urlencode "id=$smoke_memory_id" \
+              "$base/api/memory/delete")"
+            delete_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/memory-delete.headers)"
+            echo "Memory delete HTTP: ${delete_status:-$delete_code}"
+            test "${delete_status:-$delete_code}" = "303"
+            grep -Eqi '^location: .*deleted=1' /tmp/memory-delete.headers
+            smoke_memory_id=""
+
+            final_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/memory-after-delete.json -w '%{http_code}' "$base/api/memory")"
+            test "$final_code" = "200"
+            jq -e --arg key "$smoke_key" 'all(.memories[]?; .key != $key)' /tmp/memory-after-delete.json >/dev/null
+
+            echo "PASS: private Memory CRUD completed create → read → delete → absence verification with cleanup protection."
+            echo "### NEYVIX Memory E2E: PASS" >> "$GITHUB_STEP_SUMMARY"
+            echo "Authenticated private-memory create/read/delete was verified in production and the synthetic record was removed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### NEYVIX Memory E2E: NOT TESTED" >> "$GITHUB_STEP_SUMMARY"
+            echo "The dedicated smoke account does not currently have Memory entitlement, so no mutation was attempted." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           echo "PASS: authenticated session reaches AI and Memory and both enforce a valid entitlement contract (200 or explicit upgrade_required)."
           echo "### Intelligence Auth Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production login → active session → NEYVIX ID → AI history + Memory with entitlement-aware responses; no generation or user-data mutation was performed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Validated production login → active session → NEYVIX ID → AI history + Memory with entitlement-aware responses. Memory CRUD is exercised only when entitlement is active." >> "$GITHUB_STEP_SUMMARY"
