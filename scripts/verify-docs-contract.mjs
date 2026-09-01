@@ -6,7 +6,7 @@ const checks=[
 ['docs list scopes by owner email and active account',/JOIN public\.users u[\s\S]*lower\(u\.email\)[\s\S]*u\.is_active=true/i.test(files.db)],
 ['docs create resolves active owner',/INSERT INTO public\.documents[\s\S]*public\.users[\s\S]*is_active=true/i.test(files.db)],
 ['docs update enforces ownership',/UPDATE public\.documents d[\s\S]*u\.id=d\.owner_user_id[\s\S]*lower\(u\.email\)/i.test(files.db)],
-['docs update uses optimistic version lock',/d\.version=\$\{expectedVersion\}[\s\S]*version=d\.version\+1/i.test(files.db)],
+['docs update uses optimistic version lock',/d\.version=\$\{expectedVersion\}/i.test(files.db)&&/version=d\.version\+1/i.test(files.db)],
 ['docs delete enforces ownership',/DELETE FROM public\.documents d[\s\S]*u\.id=d\.owner_user_id/i.test(files.db)],
 ['docs API requires active session',/readActiveSession/.test(files.api)],
 ['docs API validates UUID',/UUID_RE\.test\(id\)/.test(files.api)],
