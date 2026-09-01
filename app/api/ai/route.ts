@@ -13,13 +13,24 @@ const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
 const TIMEOUT_MS = 45_000;
 
-function getGatewayUrl() {
+function privateJson(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, max-age=0",
+      "Referrer-Policy": "no-referrer",
+    },
+  });
+}
+
+function getGatewayConfig() {
   const url = process.env.NEYVIX_AI_GATEWAY_URL?.trim();
-  if (!url) return null;
+  const secret = process.env.NEYVIX_AI_GATEWAY_SECRET?.trim();
+  if (!url || !secret) return null;
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") return null;
-    return parsed.toString();
+    return { url: parsed.toString(), secret };
   } catch {
     return null;
   }
@@ -33,20 +44,20 @@ export async function GET() {
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) {
-    return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    return privateJson({ error: "Autenticação necessária ou conta inativa" }, 401);
   }
 
   const access = await getProductAccess(session.email, "ai");
   if (!access.allowed) {
-    return NextResponse.json(upgradeRequiredPayload("ai", "Start"), { status: 403, headers: { "Cache-Control": "no-store" } });
+    return privateJson(upgradeRequiredPayload("ai", "Start"), 403);
   }
 
   try {
     const messages = await listAiHistory(session.email, 40);
-    return NextResponse.json({ messages, count: messages.length }, { headers: { "Cache-Control": "no-store" } });
+    return privateJson({ messages, count: messages.length });
   } catch (error) {
     console.warn("Unable to load NEYVIX AI history", error);
-    return NextResponse.json({ error: "Não foi possível carregar o histórico da NEYVIX AI" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    return privateJson({ error: "Não foi possível carregar o histórico da NEYVIX AI" }, 503);
   }
 }
 
@@ -54,23 +65,33 @@ export async function POST(request: Request) {
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
 
-  if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+  if (!session) return privateJson({ error: "Autenticação necessária ou conta inativa" }, 401);
 
   const access = await getProductAccess(session.email, "ai");
   if (!access.allowed) {
-    return NextResponse.json(upgradeRequiredPayload("ai", "Start"), { status: 403, headers: { "Cache-Control": "no-store" } });
+    return privateJson(upgradeRequiredPayload("ai", "Start"), 403);
   }
 
   const aiBucket = rateLimitBucket(session.email);
   if (await isRateLimited("ai", aiBucket, 30, 10)) {
-    return NextResponse.json({ error: "Muitas solicitações à NEYVIX AI em pouco tempo. Aguarde alguns minutos e tente novamente.", code: "rate_limited" }, { status: 429, headers: { "Cache-Control": "no-store", "Retry-After": "120" } });
+    return NextResponse.json(
+      { error: "Muitas solicitações à NEYVIX AI em pouco tempo. Aguarde alguns minutos e tente novamente.", code: "rate_limited" },
+      {
+        status: 429,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+          "Referrer-Policy": "no-referrer",
+          "Retry-After": "120",
+        },
+      },
+    );
   }
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Corpo JSON inválido" }, { status: 400 });
+    return privateJson({ error: "Corpo JSON inválido" }, 400);
   }
 
   const prompt = typeof body === "object" && body !== null && "prompt" in body
@@ -80,19 +101,20 @@ export async function POST(request: Request) {
     ? (body as { useMemory?: unknown }).useMemory === true
     : false;
 
-  if (!prompt) return NextResponse.json({ error: "Digite uma solicitação" }, { status: 400 });
+  if (!prompt) return privateJson({ error: "Digite uma solicitação" }, 400);
   if (prompt.length > MAX_PROMPT_LENGTH) {
-    return NextResponse.json({ error: `A solicitação deve ter no máximo ${MAX_PROMPT_LENGTH} caracteres` }, { status: 413 });
+    return privateJson({ error: `A solicitação deve ter no máximo ${MAX_PROMPT_LENGTH} caracteres` }, 413);
   }
 
-  const gatewayUrl = getGatewayUrl();
-  if (!gatewayUrl) return NextResponse.json({ error: "O gateway da NEYVIX AI não está configurado" }, { status: 503 });
+  const gateway = getGatewayConfig();
+  if (!gateway) {
+    return privateJson({ error: "O gateway seguro da NEYVIX AI não está configurado" }, 503);
+  }
 
   await recordRateLimitEvent("ai", aiBucket);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const gatewaySecret = process.env.NEYVIX_AI_GATEWAY_SECRET?.trim();
 
   try {
     try { await saveAiMessage(session.email, "user", prompt); }
@@ -108,12 +130,12 @@ export async function POST(request: Request) {
       }
     }
 
-    const upstream = await fetch(gatewayUrl, {
+    const upstream = await fetch(gateway.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Accept": "text/plain, application/json",
-        ...(gatewaySecret ? { "Authorization": `Bearer ${gatewaySecret}` } : {}),
+        "Authorization": `Bearer ${gateway.secret}`,
       },
       body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
       signal: controller.signal,
@@ -122,25 +144,25 @@ export async function POST(request: Request) {
 
     const text = await upstream.text();
     if (!upstream.ok) {
-      console.error("NEYVIX AI gateway error", upstream.status, text.slice(0, 500));
-      return NextResponse.json({ error: "A NEYVIX AI está temporariamente indisponível" }, { status: 502 });
+      console.error("NEYVIX AI gateway error", upstream.status);
+      return privateJson({ error: "A NEYVIX AI está temporariamente indisponível" }, 502);
     }
 
     if (!text.trim()) {
-      return NextResponse.json({ error: "A NEYVIX AI retornou uma resposta vazia" }, { status: 502 });
+      return privateJson({ error: "A NEYVIX AI retornou uma resposta vazia" }, 502);
     }
     if (text.length > MAX_RESPONSE_LENGTH) {
       console.error("NEYVIX AI gateway response exceeded limit", text.length);
-      return NextResponse.json({ error: "A resposta da NEYVIX AI excedeu o limite permitido" }, { status: 502 });
+      return privateJson({ error: "A resposta da NEYVIX AI excedeu o limite permitido" }, 502);
     }
 
     try { await saveAiMessage(session.email, "assistant", text); }
     catch (dbError) { console.warn("Unable to persist NEYVIX AI assistant message", dbError); }
 
-    return NextResponse.json({ answer: text, memoryUsed: memory.length }, { headers: { "Cache-Control": "no-store" } });
+    return privateJson({ answer: text, memoryUsed: memory.length });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
-    return NextResponse.json({ error: timedOut ? "A solicitação da IA excedeu o tempo limite" : "Não foi possível conectar à NEYVIX AI" }, { status: timedOut ? 504 : 502 });
+    return privateJson({ error: timedOut ? "A solicitação da IA excedeu o tempo limite" : "Não foi possível conectar à NEYVIX AI" }, timedOut ? 504 : 502);
   } finally {
     clearTimeout(timeout);
   }
