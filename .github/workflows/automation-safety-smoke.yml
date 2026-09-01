@@ -130,6 +130,7 @@ jobs:
 
           request GET "$base/api/automation" "" /tmp/automation-get
           request POST "$base/api/automation" '{"name":"synthetic-unauthenticated"}' /tmp/automation-post
+          request PUT "$base/api/automation" '{"id":"00000000-0000-4000-8000-000000000000","name":"synthetic-rename"}' /tmp/automation-put
           request PATCH "$base/api/automation" '{"id":"00000000-0000-4000-8000-000000000000","status":"paused"}' /tmp/automation-patch
           request DELETE "$base/api/automation?id=00000000-0000-4000-8000-000000000000" "" /tmp/automation-delete
 
