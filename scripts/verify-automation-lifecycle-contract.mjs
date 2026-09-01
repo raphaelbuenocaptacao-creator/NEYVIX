@@ -13,12 +13,20 @@ const checks = [
   ["delete route requires active session", /export async function DELETE[\s\S]*if \(!session\)[\s\S]*status:\s*401/.test(route)],
   ["delete route checks automation entitlement", /export async function DELETE[\s\S]*checkAccess\(session\.email\)/.test(route)],
   ["delete route validates UUID", /UUID_RE\.test\(id\)/.test(route)],
+  ["status transition is implemented", /export async function updateAutomationStatus\(/.test(db)],
+  ["status transition binds owner and active account", /UPDATE public\.neyvix_automations a[\s\S]*a\.user_id\s*=\s*u\.id[\s\S]*lower\(u\.email\)[\s\S]*COALESCE\(u\.is_active, true\)\s*=\s*true/.test(db)],
+  ["status transition cannot mutate archived records", /a\.status IN \('draft', 'active', 'paused'\)/.test(db)],
+  ["status route requires active session and entitlement", /export async function PATCH[\s\S]*if \(!session\)[\s\S]*checkAccess\(session\.email\)/.test(route)],
+  ["status route validates UUID", /export async function PATCH[\s\S]*UUID_RE\.test\(id\)/.test(route)],
+  ["status route allowlists active and paused only", /ALLOWED_STATUS_UPDATES = new Set\(\["active", "paused"\]\)/.test(route)],
   ["automation API responses are private", /Referrer-Policy":\s*"no-referrer"/.test(route) && /Cache-Control":\s*"no-store"/.test(route)],
   ["workspace page revalidates active session", /readActiveSession/.test(page) && !/\breadSession\(/.test(page)],
   ["workspace exposes owner delete flow", /<AutomationList\s+automations=\{workspace\.automations\}/.test(page) && /method:\s*"DELETE"/.test(list)],
+  ["workspace exposes pause and activate flow", /method:\s*"PATCH"/.test(list) && /"Pausar"/.test(list) && /"Ativar"/.test(list)],
+  ["archived automation has no status mutation control", /automation\.status !== "archived"/.test(list)],
   ["delete experience asks for confirmation", /window\.confirm\(/.test(list)],
-  ["delete experience refreshes verified server state", /router\.refresh\(\)/.test(list)],
-  ["delete feedback is accessible", /role="status"/.test(list) && /aria-live="polite"/.test(list) && /aria-busy=/.test(list)],
+  ["mutations refresh verified server state", /router\.refresh\(\)/.test(list)],
+  ["mutation feedback is accessible", /role="status"/.test(list) && /aria-live="polite"/.test(list) && /aria-busy=/.test(list)],
 ];
 
 let failed = 0;
