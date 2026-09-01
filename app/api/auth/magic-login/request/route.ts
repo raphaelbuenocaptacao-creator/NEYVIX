@@ -5,6 +5,9 @@ import { deliverMail, getMailTransportStatus } from "@/lib/mail-transport";
 import { clientAddress, isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 
 const MAGIC_LOGIN_TTL_MINUTES = 10;
+const MAGIC_LOGIN_ACCOUNT_LIMIT = 5;
+const MAGIC_LOGIN_ORIGIN_LIMIT = 20;
+const MAGIC_LOGIN_RATE_WINDOW_MINUTES = 30;
 const MAGIC_LOGIN_TOKEN_NAMESPACE = "neyvix:magic-login:v1:";
 const DEFAULT_PUBLIC_ORIGIN = "https://neyvix.vercel.app";
 
@@ -50,8 +53,27 @@ export async function POST(request: Request) {
       return secureRedirect("/login?magic=invalid");
     }
 
-    const bucket = rateLimitBucket(`magic-login|${email}|${clientAddress(request)}`);
-    if (await isRateLimited("magic_login_request", bucket, 5, 30)) {
+    // Rate-limit both the target account and the request origin independently.
+    // A combined email+IP bucket can be bypassed by rotating either dimension.
+    const address = clientAddress(request);
+    const accountBucket = rateLimitBucket(`magic-login|account|${email}`);
+    const originBucket = rateLimitBucket(`magic-login|origin|${address}`);
+    const [accountLimited, originLimited] = await Promise.all([
+      isRateLimited(
+        "magic_login_request_account",
+        accountBucket,
+        MAGIC_LOGIN_ACCOUNT_LIMIT,
+        MAGIC_LOGIN_RATE_WINDOW_MINUTES,
+      ),
+      isRateLimited(
+        "magic_login_request_origin",
+        originBucket,
+        MAGIC_LOGIN_ORIGIN_LIMIT,
+        MAGIC_LOGIN_RATE_WINDOW_MINUTES,
+      ),
+    ]);
+
+    if (accountLimited || originLimited) {
       return secureRedirect("/login?magic=rate_limit");
     }
 
@@ -61,7 +83,12 @@ export async function POST(request: Request) {
       return secureRedirect("/login?magic=unavailable");
     }
 
-    await recordRateLimitEvent("magic_login_request", bucket);
+    // Record both dimensions before account lookup so unknown addresses and
+    // known accounts have the same public throttling behavior.
+    await Promise.all([
+      recordRateLimitEvent("magic_login_request_account", accountBucket),
+      recordRateLimitEvent("magic_login_request_origin", originBucket),
+    ]);
 
     const users = await sql`
       SELECT id, email, COALESCE(NULLIF(name, ''), split_part(email, '@', 1)) AS name
