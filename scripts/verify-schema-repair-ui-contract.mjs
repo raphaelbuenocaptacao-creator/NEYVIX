@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 const page = await readFile(new URL("../app/admin/page.tsx", import.meta.url), "utf8");
 const panel = await readFile(new URL("../app/admin/SchemaRepairPanel.tsx", import.meta.url), "utf8");
 
+// Inspect only the mount effect body. A file-wide greedy expression can incorrectly
+// match the separately declared repair() handler that appears later in the module.
+const mountEffect = panel.match(/useEffect\(\(\) => \{([\s\S]*?)\}\s*,\s*\[\]\s*\);/)?.[1] ?? "";
+
 const checks = [
   ["panel is rendered only for superadmin", /role === "superadmin" \? <SchemaRepairPanel/.test(page)],
   ["panel inspects through guarded endpoint", /fetch\("\/api\/admin\/schema-repair"/.test(panel)],
@@ -10,7 +14,8 @@ const checks = [
   ["repair uses POST", /method: "POST"/.test(panel)],
   ["repair sends confirmation payload", /JSON\.stringify\(\{ confirmation \}\)/.test(panel)],
   ["repair requires exact confirmation before enabling", /confirmation === CONFIRMATION/.test(panel)],
-  ["panel never auto-runs repair", !/useEffect\([\s\S]*repair\(/.test(panel)],
+  ["panel mount effect is present", mountEffect.length > 0],
+  ["panel never auto-runs repair", mountEffect.length > 0 && !/\brepair\s*\(/.test(mountEffect)],
   ["panel exposes database Drive and Docs states", /BANCO/.test(panel) && /DRIVE/.test(panel) && /DOCS/.test(panel)],
   ["panel surfaces failures instead of optimistic success", /setError/.test(panel) && /response\.ok/.test(panel)],
 ];
