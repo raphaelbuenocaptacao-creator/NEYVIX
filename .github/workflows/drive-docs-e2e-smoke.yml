@@ -19,8 +19,6 @@ jobs:
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
-      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
     steps:
       - name: Acquire GitHub OIDC token
         shell: bash
@@ -58,14 +56,9 @@ jobs:
             exit 1
           }
 
-          if [ -z "${NEYVIX_SMOKE_EMAIL:-}" ] || [ -z "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
-            fail_stage smoke-credentials-missing
-          fi
-          echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
-          echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
-
           drive_id=""
           doc_id=""
+          account_registered=false
           cleanup() {
             set +e
             if [ -n "$doc_id" ]; then
@@ -77,6 +70,10 @@ jobs:
               curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE \
                 -H 'content-type: application/json' \
                 --data "{\"id\":\"$drive_id\"}" "$base/api/drive" >/dev/null 2>&1 || true
+            fi
+            if [ "$account_registered" = true ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -c "$cookies" -X DELETE \
+                "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
             fi
           }
           trap cleanup EXIT
@@ -97,16 +94,29 @@ jobs:
 
           jq -e '.checks.database == "connected" and .checks.schema.drive == "ready" and .checks.schema.docs == "ready" and ((.checks.schema.repairRequired // []) | length == 0)' /tmp/health.json >/dev/null || fail_stage health-drive-docs-readiness
 
+          # Self-provision an isolated NEYVIX ID. The password exists only in this
+          # runner process and is never stored in GitHub, Vercel, source or logs.
+          handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+          echo "::add-mask::${handle}@neyvix.com"
+
           curl --silent --show-error --max-time 20 "${headers[@]}" \
             -H 'content-type: application/x-www-form-urlencoded' \
-            -c "$cookies" -D /tmp/login.headers -o /tmp/login.body \
-            --data-urlencode "email=$NEYVIX_SMOKE_EMAIL" \
-            --data-urlencode "password=$NEYVIX_SMOKE_PASSWORD" \
-            --data-urlencode 'next=/dashboard' \
-            "$base/api/auth/login" >/dev/null || fail_stage login-request
-          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/login.headers)"
-          [ "$login_status" = "303" ] || fail_stage login-status
+            -c "$cookies" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX E2E Smoke' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
           grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-check-request
+          [ "$me_code" = "200" ] || fail_stage session-check-status
+          jq -e --arg email "${handle}@neyvix.com" '.user.email == $email' /tmp/me.json >/dev/null || fail_stage session-identity
 
           suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)"
           folder_name="E2E Drive ${suffix}"
@@ -176,9 +186,16 @@ jobs:
           curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/docs-final.json "$base/api/docs" || fail_stage docs-final-read
           jq -e --arg title "$doc_renamed" '.documents | all(.title != $title)' /tmp/docs-final.json >/dev/null || fail_stage docs-delete-not-persisted
 
-          echo "PASS: authenticated Drive + Docs create/read/update/delete persisted in production."
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -c "$cookies" -X DELETE \
+            -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          account_registered=false
+
+          echo "PASS: NEYVIX ID session + Drive/Docs CRUD persisted in production; ephemeral account cleaned."
           {
             echo "### Drive + Docs E2E Smoke: PASS"
             echo
-            echo "Authenticated production CRUD persistence verified for both modules."
+            echo "NEYVIX ID registration/session and production CRUD persistence verified for Drive + Docs."
+            echo "Ephemeral smoke identity and created records were removed after verification."
           } >> "$GITHUB_STEP_SUMMARY"
