@@ -31,6 +31,9 @@ jobs:
       - name: Auth SQL contract
         run: node scripts/verify-auth-sql-contract.mjs
 
+      - name: Identity privacy contract
+        run: node scripts/verify-auth-me-privacy-contract.mjs
+
       - name: Magic login security contract
         run: node scripts/verify-magic-login-contract.mjs
 
