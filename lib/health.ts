@@ -16,8 +16,10 @@ export type HealthStatus = {
     automation: "ready" | "missing" | "unknown";
     memory: "ready" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
+    drive: "ready" | "missing" | "unknown";
     docs: "ready" | "missing" | "unknown";
     ecosystem: "ready" | "partial" | "missing" | "unknown";
+    repairRequired: string[];
   };
   integrations: {
     aiGateway: boolean;
@@ -57,8 +59,10 @@ function unavailableSchema() {
     automation: "unknown" as const,
     memory: "unknown" as const,
     productRecords: "unknown" as const,
+    drive: "unknown" as const,
     docs: "unknown" as const,
     ecosystem: "unknown" as const,
+    repairRequired: [] as string[],
   };
 }
 
@@ -93,8 +97,6 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   try {
     const sql = neon(databaseUrl);
 
-    // Only inspect catalog metadata first. This keeps a missing application table from
-    // being misreported as a database connectivity failure.
     const catalogRows = await sql`
       SELECT
         to_regclass('public.projects') IS NOT NULL AS projects_table,
@@ -166,7 +168,12 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const memoryReady = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
+    const driveReady = Boolean(catalog.drive_items_table);
     const docsReady = Boolean(catalog.documents_table);
+    const repairRequired = [
+      !driveReady ? "drive_items" : null,
+      !docsReady ? "documents" : null,
+    ].filter((value): value is string => Boolean(value));
 
     const ecosystemTablesReady = [
       catalog.conversations_table,
@@ -200,14 +207,17 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         automation: automationReady ? "ready" : "missing",
         memory: memoryReady ? "ready" : "missing",
         productRecords,
+        drive: driveReady ? "ready" : "missing",
         docs: docsReady ? "ready" : "missing",
         ecosystem,
+        repairRequired,
       },
       integrations,
       launchReady: coreReady
         && automationReady
         && memoryReady
         && productRecords === "ready"
+        && driveReady
         && docsReady
         && ecosystem === "ready"
         && externalReady,
