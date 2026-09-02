@@ -19,6 +19,9 @@ const checks = [
   ["service verifies Drive readiness after repair", /status\.drive !== "ready"/.test(service)],
   ["service verifies Docs readiness after repair", /status\.docs !== "ready"/.test(service)],
   ["endpoint is idempotent when already ready", /before\.repairRequired\.length === 0/.test(route) && /changed: false/.test(route)],
+  ["partial schema is never advertised as executable", /!partialSchema/.test(route) && /blockedReason: partialSchema \? PARTIAL_SCHEMA_CODE : null/.test(route)],
+  ["partial schema write is refused explicitly", /hasPartialSchema\(before\)/.test(route) && /status: 409/.test(route)],
+  ["partial schema refusal has stable machine code", /PARTIAL_SCHEMA_REQUIRES_MANUAL_REPAIR/.test(route)],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
