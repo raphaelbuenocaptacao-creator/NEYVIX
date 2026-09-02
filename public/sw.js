@@ -1,7 +1,6 @@
 const CACHE_PREFIX = "neyvix-shell-";
-const CACHE = `${CACHE_PREFIX}v5-safe`;
+const CACHE = `${CACHE_PREFIX}v6-static-only`;
 const SHELL = [
-  "/",
   "/manifest.webmanifest",
   "/neyvix-icon-192.svg",
   "/neyvix-icon-512.svg",
@@ -52,14 +51,6 @@ function isPrivate(request, url) {
   return false;
 }
 
-function isSafeResponse(response) {
-  if (!response || !response.ok || response.redirected || response.type === "opaque") return false;
-  if (response.status === 206 || response.headers.has("content-range")) return false;
-  if (response.headers.has("set-cookie")) return false;
-  const cacheControl = response.headers.get("cache-control") || "";
-  return !/(private|no-store)/i.test(cacheControl);
-}
-
 function isShellRequest(request, url) {
   return !isPrivate(request, url) && !url.search && SHELL.includes(url.pathname);
 }
@@ -69,6 +60,8 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (isPrivate(request, url)) return;
 
+  // Documents are always network-only. This prevents a page rendered for one
+  // authenticated session from being replayed later from a shared PWA cache.
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
@@ -77,8 +70,7 @@ self.addEventListener("fetch", (event) => {
           if (preload) return preload;
           return await fetch(request, { cache: "no-store" });
         } catch {
-          if (url.search) return Response.error();
-          return caches.match("/").then((cached) => cached || Response.error());
+          return Response.error();
         }
       })(),
     );
@@ -88,10 +80,6 @@ self.addEventListener("fetch", (event) => {
   if (!isShellRequest(request, url)) return;
 
   event.respondWith(
-    caches.match(request).then(async (cached) => {
-      if (cached) return cached;
-      const response = await fetch(request, { cache: "no-store" });
-      return isSafeResponse(response) ? response : response;
-    }),
+    caches.match(request).then((cached) => cached || fetch(request, { cache: "no-store" })),
   );
 });
