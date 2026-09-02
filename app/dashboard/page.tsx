@@ -11,6 +11,7 @@ const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar", "ai"],
   ["Studio", "/studio", "Transforme ideias em blueprints de produto", "Construir", "studio"],
   ["Content", "/content", "Crie campanhas, roteiros e materiais de lançamento", "Criar", "content"],
+  ["Docs", "/docs", "Crie e edite documentos privados com versionamento seguro", "Escrever", null],
   ["Automation", "/automation", "Crie fluxos e mantenha ações sensíveis sob aprovação", "Automatizar", "automation"],
   ["Estate", "/estate", "Crie sites imobiliários profissionais prontos para divulgação", "Criar site", "estate"],
   ["Mail", "/mail", "Comunique-se dentro da mesma identidade", "Conectar", "mail"],
@@ -21,6 +22,7 @@ const modules = [
 
 const quickCommands = [
   ["Criar um app", "/studio", "studio"],
+  ["Criar documento", "/docs", null],
   ["Criar site imobiliário", "/estate", "estate"],
   ["Criar campanha", "/content", "content"],
   ["Planejar automação", "/automation", "automation"],
@@ -31,7 +33,7 @@ type ActivityRow = { source: string; kind: string; summary: string; created_at: 
 
 const sourceMeta: Record<string, { icon: string; title: string }> = {
   ai: { icon: "AI", title: "NEYVIX AI" }, studio: { icon: "ST", title: "NEYVIX Studio" }, content: { icon: "CT", title: "NEYVIX Content" },
-  estate: { icon: "ES", title: "NEYVIX Estate" }, automation: { icon: "AU", title: "NEYVIX Automation" }, approval: { icon: "AP", title: "Aprovações" },
+  docs: { icon: "DC", title: "NEYVIX Docs" }, estate: { icon: "ES", title: "NEYVIX Estate" }, automation: { icon: "AU", title: "NEYVIX Automation" }, approval: { icon: "AP", title: "Aprovações" },
 };
 
 function relativeTime(value: string) {
