@@ -73,6 +73,9 @@ jobs:
       - name: Health readiness truth contract
         run: node scripts/verify-health-readiness-truth-contract.mjs
 
+      - name: Health actionable blockers contract
+        run: node scripts/verify-health-blockers-contract.mjs
+
       - name: Approval authorization contract
         run: node scripts/verify-approval-authorization-contract.mjs
 
