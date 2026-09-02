@@ -16,8 +16,8 @@ export type HealthStatus = {
     automation: "ready" | "missing" | "unknown";
     memory: "ready" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
-    drive: "ready" | "missing" | "unknown";
-    docs: "ready" | "missing" | "unknown";
+    drive: "ready" | "partial" | "missing" | "unknown";
+    docs: "ready" | "partial" | "missing" | "unknown";
     ecosystem: "ready" | "partial" | "missing" | "unknown";
     repairRequired: string[];
   };
@@ -32,6 +32,13 @@ export type HealthStatus = {
   };
   launchReady: boolean;
 };
+
+const DRIVE_REQUIRED_COLUMNS = [
+  "id", "owner_user_id", "parent_id", "kind", "name", "mime_type", "size_bytes", "storage_key", "metadata", "created_at", "updated_at",
+] as const;
+const DOCS_REQUIRED_COLUMNS = [
+  "id", "owner_user_id", "drive_item_id", "title", "content", "version", "created_at", "updated_at",
+] as const;
 
 function validHttps(value: string | undefined) {
   if (!value?.trim()) return false;
@@ -72,6 +79,11 @@ function unavailableAuth() {
     activeUsers: null,
     usersWithoutPassword: null,
   };
+}
+
+function shapeState(exists: boolean, actualColumns: Set<string>, requiredColumns: readonly string[]) {
+  if (!exists) return "missing" as const;
+  return requiredColumns.every((column) => actualColumns.has(column)) ? "ready" as const : "partial" as const;
 }
 
 export async function getHealthStatus(): Promise<HealthStatus> {
@@ -168,8 +180,19 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const memoryReady = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
-    const driveReady = Boolean(catalog.drive_items_table);
-    const docsReady = Boolean(catalog.documents_table);
+
+    const shapeRows = await sql`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN ('drive_items', 'documents')
+    ` as Array<{ table_name: string; column_name: string }>;
+    const driveColumns = new Set(shapeRows.filter((column) => column.table_name === "drive_items").map((column) => column.column_name));
+    const docsColumns = new Set(shapeRows.filter((column) => column.table_name === "documents").map((column) => column.column_name));
+    const drive = shapeState(Boolean(catalog.drive_items_table), driveColumns, DRIVE_REQUIRED_COLUMNS);
+    const docs = shapeState(Boolean(catalog.documents_table), docsColumns, DOCS_REQUIRED_COLUMNS);
+    const driveReady = drive === "ready";
+    const docsReady = docs === "ready";
     const repairRequired = [
       !driveReady ? "drive_items" : null,
       !docsReady ? "documents" : null,
@@ -179,8 +202,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       catalog.conversations_table,
       catalog.chat_messages_table,
       catalog.social_profiles_table,
-      catalog.drive_items_table,
-      catalog.documents_table,
+      driveReady,
+      docsReady,
       catalog.meetings_table,
       catalog.deploy_projects_table,
       catalog.cloud_resources_table,
@@ -207,8 +230,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         automation: automationReady ? "ready" : "missing",
         memory: memoryReady ? "ready" : "missing",
         productRecords,
-        drive: driveReady ? "ready" : "missing",
-        docs: docsReady ? "ready" : "missing",
+        drive,
+        docs,
         ecosystem,
         repairRequired,
       },
