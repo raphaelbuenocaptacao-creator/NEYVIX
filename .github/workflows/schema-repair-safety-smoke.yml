@@ -1,0 +1,88 @@
+name: NEYVIX Schema Repair Safety Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  schema-repair-safety-smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify anonymous schema repair access is denied
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          check() {
+            local base="${1%/}"
+            local prefix="$2"
+            local get_headers="${prefix}-get.headers"
+            local get_body="${prefix}-get.json"
+            local post_headers="${prefix}-post.headers"
+            local post_body="${prefix}-post.json"
+            local get_code post_code
+
+            get_code="$(curl --silent --show-error --location \
+              --retry 3 --retry-delay 2 --max-time 20 \
+              "${headers[@]}" \
+              -D "$get_headers" -o "$get_body" -w '%{http_code}' \
+              "$base/api/admin/schema-repair")"
+
+            post_code="$(curl --silent --show-error --location \
+              --retry 3 --retry-delay 2 --max-time 20 \
+              "${headers[@]}" \
+              -H 'Content-Type: application/json' \
+              -X POST -d '{"confirmation":"REPAIR_DRIVE_DOCS"}' \
+              -D "$post_headers" -o "$post_body" -w '%{http_code}' \
+              "$base/api/admin/schema-repair")"
+
+            echo "Schema repair anonymous GET HTTP: $get_code"
+            echo "Schema repair anonymous POST HTTP: $post_code"
+            test "$get_code" = "403"
+            test "$post_code" = "403"
+            jq -e '.error == "Acesso restrito ao superadministrador"' "$get_body" >/dev/null
+            jq -e '.error == "Acesso restrito ao superadministrador"' "$post_body" >/dev/null
+            grep -qi '^cache-control:.*no-store' "$get_headers"
+            grep -qi '^referrer-policy:.*no-referrer' "$get_headers"
+            grep -qi '^cache-control:.*no-store' "$post_headers"
+            grep -qi '^referrer-policy:.*no-referrer' "$post_headers"
+
+            if grep -q 'requiredConfirmation' "$post_body"; then
+              echo 'Anonymous response leaked repair confirmation details.' >&2
+              return 1
+            fi
+          }
+
+          if check "${NEYVIX_PRODUCTION_CANDIDATE}" /tmp/schema-production; then
+            exit 0
+          fi
+
+          check "${DEPLOYMENT_URL}" /tmp/schema-deployment
