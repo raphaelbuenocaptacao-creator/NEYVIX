@@ -1,4 +1,5 @@
-const CACHE = "neyvix-shell-v4-safe";
+const CACHE_PREFIX = "neyvix-shell-";
+const CACHE = `${CACHE_PREFIX}v5-safe`;
 const SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -20,7 +21,9 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       await Promise.all(
-        (await caches.keys()).filter((key) => key !== CACHE).map((key) => caches.delete(key)),
+        (await caches.keys())
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+          .map((key) => caches.delete(key)),
       );
       if (self.registration.navigationPreload) {
         await self.registration.navigationPreload.enable();
@@ -39,10 +42,22 @@ function hasSensitiveQuery(url) {
 
 function isPrivate(request, url) {
   if (request.method !== "GET") return true;
-  if (request.headers.has("authorization") || request.headers.has("cookie")) return true;
+  if (
+    request.headers.has("authorization") ||
+    request.headers.has("cookie") ||
+    request.headers.has("range")
+  ) return true;
   if (url.origin !== self.location.origin) return true;
   if (PRIVATE_PATH.test(url.pathname) || hasSensitiveQuery(url)) return true;
   return false;
+}
+
+function isSafeResponse(response) {
+  if (!response || !response.ok || response.redirected || response.type === "opaque") return false;
+  if (response.status === 206 || response.headers.has("content-range")) return false;
+  if (response.headers.has("set-cookie")) return false;
+  const cacheControl = response.headers.get("cache-control") || "";
+  return !/(private|no-store)/i.test(cacheControl);
 }
 
 function isShellRequest(request, url) {
@@ -73,6 +88,10 @@ self.addEventListener("fetch", (event) => {
   if (!isShellRequest(request, url)) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request, { cache: "no-store" })),
+    caches.match(request).then(async (cached) => {
+      if (cached) return cached;
+      const response = await fetch(request, { cache: "no-store" });
+      return isSafeResponse(response) ? response : response;
+    }),
   );
 });
