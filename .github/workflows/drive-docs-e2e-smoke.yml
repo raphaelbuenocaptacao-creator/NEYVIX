@@ -1,6 +1,8 @@
 name: NEYVIX Drive Docs E2E Smoke
 
 on:
+  push:
+    branches: [main]
   deployment_status:
 
 permissions:
@@ -10,10 +12,10 @@ permissions:
 jobs:
   drive-docs-e2e:
     if: >-
-      github.event.deployment_status.state == 'success' &&
-      github.event.deployment_status.environment_url != ''
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
@@ -79,9 +81,21 @@ jobs:
           }
           trap cleanup EXIT
 
-          health_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health")" || fail_stage health-request
-          [ "$health_code" = "200" ] || fail_stage health-status
-          jq -e '.database == "connected" and .schema.drive == "ready" and .schema.docs == "ready" and ((.schema.repairRequired // []) | length == 0)' /tmp/health.json >/dev/null || fail_stage health-drive-docs-readiness
+          # Wait until production actually serves this commit. This prevents a push
+          # workflow from accidentally validating the previous Vercel release.
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+
+          jq -e '.checks.database == "connected" and .checks.schema.drive == "ready" and .checks.schema.docs == "ready" and ((.checks.schema.repairRequired // []) | length == 0)' /tmp/health.json >/dev/null || fail_stage health-drive-docs-readiness
 
           curl --silent --show-error --max-time 20 "${headers[@]}" \
             -H 'content-type: application/x-www-form-urlencoded' \
