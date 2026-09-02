@@ -19,7 +19,7 @@ export async function GET() {
   return NextResponse.json(
     {
       service: "NEYVIX",
-      status: accessReady ? "operacional" : "degradado",
+      status: ecosystemReady ? "operacional" : "degradado",
       readiness: {
         access: accessReady,
         ecosystem: ecosystemReady,
@@ -49,6 +49,9 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     },
     {
+      // Keep the endpoint usable as a liveness/access probe while the broader
+      // ecosystem is degraded. Consumers must use status/readiness.ecosystem
+      // or launchReady for launch readiness.
       status: accessReady ? 200 : 503,
       headers: {
         "Cache-Control": "no-store",
