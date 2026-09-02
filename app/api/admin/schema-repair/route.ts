@@ -7,6 +7,7 @@ import { inspectDriveDocsRepair, repairDriveDocsSchema } from "@/lib/schema-repa
 
 const PRIVATE_HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
 const CONFIRMATION = "REPAIR_DRIVE_DOCS";
+const PARTIAL_SCHEMA_CODE = "PARTIAL_SCHEMA_REQUIRES_MANUAL_REPAIR";
 
 async function requireSuperadmin() {
   const store = await cookies();
@@ -16,12 +17,21 @@ async function requireSuperadmin() {
   return role === "superadmin" ? session : null;
 }
 
+function hasPartialSchema(status: { drive: string; docs: string }) {
+  return status.drive === "partial" || status.docs === "partial";
+}
+
 export async function GET() {
   const session = await requireSuperadmin();
   if (!session) return NextResponse.json({ error: "Acesso restrito ao superadministrador" }, { status: 403, headers: PRIVATE_HEADERS });
   try {
     const status = await inspectDriveDocsRepair();
-    return NextResponse.json({ status, executable: status.database === "connected" && status.repairRequired.length > 0 }, { headers: PRIVATE_HEADERS });
+    const partialSchema = hasPartialSchema(status);
+    return NextResponse.json({
+      status,
+      executable: status.database === "connected" && status.repairRequired.length > 0 && !partialSchema,
+      blockedReason: partialSchema ? PARTIAL_SCHEMA_CODE : null,
+    }, { headers: PRIVATE_HEADERS });
   } catch (error) {
     console.error("Falha ao inspecionar schema Drive/Docs", error);
     return NextResponse.json({ error: "Não foi possível inspecionar o schema agora" }, { status: 503, headers: PRIVATE_HEADERS });
@@ -41,6 +51,14 @@ export async function POST(request: Request) {
     const before = await inspectDriveDocsRepair();
     if (before.repairRequired.length === 0) {
       return NextResponse.json({ changed: false, before, after: before }, { headers: PRIVATE_HEADERS });
+    }
+    if (hasPartialSchema(before)) {
+      return NextResponse.json({
+        error: "Schema parcial detectado; reparo automático recusado para preservar dados existentes",
+        code: PARTIAL_SCHEMA_CODE,
+        changed: false,
+        before,
+      }, { status: 409, headers: PRIVATE_HEADERS });
     }
     const after = await repairDriveDocsSchema();
     return NextResponse.json({ changed: true, before, after }, { headers: PRIVATE_HEADERS });
