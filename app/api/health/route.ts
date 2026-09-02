@@ -15,6 +15,11 @@ export async function GET() {
   const ecosystemReady = health.launchReady
     && authReady
     && (!production || sessionKeyDedicated);
+  const releaseSha = process.env.VERCEL_GIT_COMMIT_SHA
+    ?? process.env.GITHUB_SHA
+    ?? "unknown";
+  const releaseEnvironment = process.env.VERCEL_ENV
+    ?? (production ? "production" : "development");
 
   const blockers = [
     health.database !== "connected" ? `database:${health.database}` : null,
@@ -41,6 +46,10 @@ export async function GET() {
   return NextResponse.json(
     {
       service: "NEYVIX",
+      release: {
+        sha: releaseSha,
+        environment: releaseEnvironment,
+      },
       status: ecosystemReady ? "operacional" : "degradado",
       readiness: {
         access: accessReady,
