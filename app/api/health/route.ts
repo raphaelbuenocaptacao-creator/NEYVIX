@@ -16,6 +16,28 @@ export async function GET() {
     && authReady
     && (!production || sessionKeyDedicated);
 
+  const blockers = [
+    health.database !== "connected" ? `database:${health.database}` : null,
+    health.project !== "ready" ? `project:${health.project}` : null,
+    !authSchemaReady ? `auth_schema:${health.auth.schema}` : null,
+    !sessionKey.ready ? "auth_session_secret:not_configured" : null,
+    production && !sessionKeyDedicated ? "auth_session_secret:dedicated_required" : null,
+    health.schema.automation !== "ready" ? `schema:automation:${health.schema.automation}` : null,
+    health.schema.memory !== "ready" ? `schema:memory:${health.schema.memory}` : null,
+    health.schema.productRecords !== "ready" ? `schema:product_records:${health.schema.productRecords}` : null,
+    health.schema.drive !== "ready" ? `schema:drive:${health.schema.drive}` : null,
+    health.schema.docs !== "ready" ? `schema:docs:${health.schema.docs}` : null,
+    health.schema.ecosystem !== "ready" ? `schema:ecosystem:${health.schema.ecosystem}` : null,
+    ...health.schema.repairRequired.map((table) => `schema_repair:${table}`),
+    !health.integrations.aiGateway ? "integration:ai_gateway" : null,
+    !health.integrations.billingWebhook ? "integration:billing_webhook" : null,
+    !health.integrations.checkout ? "integration:checkout" : null,
+    !health.integrations.planEnforcement ? "integration:plan_enforcement" : null,
+    !health.integrations.mailTransport ? "integration:mail_transport" : null,
+    !health.integrations.mailInbound ? "integration:mail_inbound" : null,
+    !health.integrations.storage ? "integration:storage" : null,
+  ].filter((value): value is string => Boolean(value));
+
   return NextResponse.json(
     {
       service: "NEYVIX",
@@ -24,6 +46,7 @@ export async function GET() {
         access: accessReady,
         ecosystem: ecosystemReady,
       },
+      blockers,
       checks: {
         database: health.database,
         project: health.project,
@@ -50,8 +73,8 @@ export async function GET() {
     },
     {
       // Keep the endpoint usable as a liveness/access probe while the broader
-      // ecosystem is degraded. Consumers must use status/readiness.ecosystem
-      // or launchReady for launch readiness.
+      // ecosystem is degraded. Consumers must use status/readiness.ecosystem,
+      // blockers, or launchReady for launch readiness.
       status: accessReady ? 200 : 503,
       headers: {
         "Cache-Control": "no-store",
