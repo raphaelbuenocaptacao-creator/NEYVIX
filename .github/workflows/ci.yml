@@ -70,6 +70,9 @@ jobs:
       - name: Health schema readiness contract
         run: node scripts/verify-health-schema-contract.mjs
 
+      - name: Health readiness truth contract
+        run: node scripts/verify-health-readiness-truth-contract.mjs
+
       - name: Approval authorization contract
         run: node scripts/verify-approval-authorization-contract.mjs
 
