@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-const sql = await readFile(new URL("../database/003_repair_drive_docs.sql", import.meta.url), "utf8");
+const sql = await readFile(new URL("../database/014_repair_drive_docs.sql", import.meta.url), "utf8");
 const executableSql = sql.replace(/--.*$/gm, "");
 
 const checks = [

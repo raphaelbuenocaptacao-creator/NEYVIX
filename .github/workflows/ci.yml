@@ -28,6 +28,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Migration order contract
+        run: node scripts/verify-migration-order-contract.mjs
+
       - name: Auth SQL contract
         run: node scripts/verify-auth-sql-contract.mjs
 
