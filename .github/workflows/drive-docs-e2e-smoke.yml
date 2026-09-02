@@ -1,0 +1,170 @@
+name: NEYVIX Drive Docs E2E Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  drive-docs-e2e:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
+      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify authenticated Drive and Docs CRUD persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/neyvix-drive-docs-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_DRIVE_DOCS_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Drive Docs E2E::${stage}"
+            {
+              echo "### Drive + Docs E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          if [ -z "${NEYVIX_SMOKE_EMAIL:-}" ] || [ -z "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
+            fail_stage smoke-credentials-missing
+          fi
+          echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
+          echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
+
+          drive_id=""
+          doc_id=""
+          cleanup() {
+            set +e
+            if [ -n "$doc_id" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE \
+                -H 'content-type: application/json' \
+                --data "{\"id\":\"$doc_id\"}" "$base/api/docs" >/dev/null 2>&1 || true
+            fi
+            if [ -n "$drive_id" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE \
+                -H 'content-type: application/json' \
+                --data "{\"id\":\"$drive_id\"}" "$base/api/drive" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          health_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health")" || fail_stage health-request
+          [ "$health_code" = "200" ] || fail_stage health-status
+          jq -e '.database == "connected" and .schema.drive == "ready" and .schema.docs == "ready" and ((.schema.repairRequired // []) | length == 0)' /tmp/health.json >/dev/null || fail_stage health-drive-docs-readiness
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$cookies" -D /tmp/login.headers -o /tmp/login.body \
+            --data-urlencode "email=$NEYVIX_SMOKE_EMAIL" \
+            --data-urlencode "password=$NEYVIX_SMOKE_PASSWORD" \
+            --data-urlencode 'next=/dashboard' \
+            "$base/api/auth/login" >/dev/null || fail_stage login-request
+          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/login.headers)"
+          [ "$login_status" = "303" ] || fail_stage login-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)"
+          folder_name="E2E Drive ${suffix}"
+          folder_renamed="E2E Drive OK ${suffix}"
+          doc_title="E2E Docs ${suffix}"
+          doc_renamed="E2E Docs OK ${suffix}"
+          doc_text="NEYVIX persistence verified ${suffix}"
+
+          drive_create_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X POST \
+            -H 'content-type: application/json' --data "$(jq -nc --arg name "$folder_name" '{name:$name}')" \
+            -o /tmp/drive-create.json -w '%{http_code}' "$base/api/drive")" || fail_stage drive-create-request
+          [ "$drive_create_code" = "201" ] || fail_stage drive-create-status
+          drive_id="$(jq -r '.item.id // empty' /tmp/drive-create.json)"
+          [[ "$drive_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage drive-create-payload
+
+          drive_list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-list.json -w '%{http_code}' "$base/api/drive")" || fail_stage drive-list-request
+          [ "$drive_list_code" = "200" ] || fail_stage drive-list-status
+          jq -e --arg id "$drive_id" --arg name "$folder_name" '.items | any(.id == $id and .name == $name and .kind == "folder")' /tmp/drive-list.json >/dev/null || fail_stage drive-create-not-persisted
+
+          drive_update_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X PUT \
+            -H 'content-type: application/json' --data "$(jq -nc --arg id "$drive_id" --arg name "$folder_renamed" '{id:$id,name:$name}')" \
+            -o /tmp/drive-update.json -w '%{http_code}' "$base/api/drive")" || fail_stage drive-update-request
+          [ "$drive_update_code" = "200" ] || fail_stage drive-update-status
+          jq -e --arg id "$drive_id" --arg name "$folder_renamed" '.item.id == $id and .item.name == $name' /tmp/drive-update.json >/dev/null || fail_stage drive-update-payload
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-list-updated.json "$base/api/drive" || fail_stage drive-reload-request
+          jq -e --arg id "$drive_id" --arg name "$folder_renamed" '.items | any(.id == $id and .name == $name)' /tmp/drive-list-updated.json >/dev/null || fail_stage drive-update-not-persisted
+
+          doc_create_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X POST \
+            -H 'content-type: application/json' --data "$(jq -nc --arg title "$doc_title" '{title:$title}')" \
+            -o /tmp/doc-create.json -w '%{http_code}' "$base/api/docs")" || fail_stage docs-create-request
+          [ "$doc_create_code" = "201" ] || fail_stage docs-create-status
+          doc_id="$(jq -r '.document.id // empty' /tmp/doc-create.json)"
+          doc_version="$(jq -r '.document.version // empty' /tmp/doc-create.json)"
+          [[ "$doc_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage docs-create-payload
+          [[ "$doc_version" =~ ^[0-9]+$ ]] || fail_stage docs-version-payload
+
+          docs_list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/docs-list.json -w '%{http_code}' "$base/api/docs")" || fail_stage docs-list-request
+          [ "$docs_list_code" = "200" ] || fail_stage docs-list-status
+          jq -e --arg id "$doc_id" --arg title "$doc_title" '.documents | any(.id == $id and .title == $title)' /tmp/docs-list.json >/dev/null || fail_stage docs-create-not-persisted
+
+          doc_update_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X PUT \
+            -H 'content-type: application/json' \
+            --data "$(jq -nc --arg id "$doc_id" --arg title "$doc_renamed" --arg text "$doc_text" --argjson version "$doc_version" '{id:$id,title:$title,text:$text,version:$version}')" \
+            -o /tmp/doc-update.json -w '%{http_code}' "$base/api/docs")" || fail_stage docs-update-request
+          [ "$doc_update_code" = "200" ] || fail_stage docs-update-status
+          next_version="$(jq -r '.document.version // empty' /tmp/doc-update.json)"
+          [ "$next_version" = "$((doc_version + 1))" ] || fail_stage docs-version-not-incremented
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/docs-list-updated.json "$base/api/docs" || fail_stage docs-reload-request
+          jq -e --arg id "$doc_id" --arg title "$doc_renamed" --arg text "$doc_text" --argjson version "$next_version" '.documents | any(.id == $id and .title == $title and .text == $text and .version == $version)' /tmp/docs-list-updated.json >/dev/null || fail_stage docs-update-not-persisted
+
+          doc_delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE \
+            -H 'content-type: application/json' --data "$(jq -nc --arg id "$doc_id" '{id:$id}')" \
+            -o /tmp/doc-delete.json -w '%{http_code}' "$base/api/docs")" || fail_stage docs-delete-request
+          [ "$doc_delete_code" = "200" ] || fail_stage docs-delete-status
+          doc_id=""
+
+          drive_delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE \
+            -H 'content-type: application/json' --data "$(jq -nc --arg id "$drive_id" '{id:$id}')" \
+            -o /tmp/drive-delete.json -w '%{http_code}' "$base/api/drive")" || fail_stage drive-delete-request
+          [ "$drive_delete_code" = "200" ] || fail_stage drive-delete-status
+          drive_id=""
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-final.json "$base/api/drive" || fail_stage drive-final-read
+          jq -e --arg name "$folder_renamed" '.items | all(.name != $name)' /tmp/drive-final.json >/dev/null || fail_stage drive-delete-not-persisted
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/docs-final.json "$base/api/docs" || fail_stage docs-final-read
+          jq -e --arg title "$doc_renamed" '.documents | all(.title != $title)' /tmp/docs-final.json >/dev/null || fail_stage docs-delete-not-persisted
+
+          echo "PASS: authenticated Drive + Docs create/read/update/delete persisted in production."
+          {
+            echo "### Drive + Docs E2E Smoke: PASS"
+            echo
+            echo "Authenticated production CRUD persistence verified for both modules."
+          } >> "$GITHUB_STEP_SUMMARY"
