@@ -2,14 +2,44 @@ import { neon } from "@neondatabase/serverless";
 
 export type DriveDocsRepairStatus = {
   database: "connected" | "not_configured";
-  drive: "ready" | "missing";
-  docs: "ready" | "missing";
+  drive: "ready" | "partial" | "missing";
+  docs: "ready" | "partial" | "missing";
   repairRequired: string[];
 };
+
+const DRIVE_REQUIRED_COLUMNS = [
+  "id",
+  "owner_user_id",
+  "parent_id",
+  "kind",
+  "name",
+  "mime_type",
+  "size_bytes",
+  "storage_key",
+  "metadata",
+  "created_at",
+  "updated_at",
+] as const;
+
+const DOCS_REQUIRED_COLUMNS = [
+  "id",
+  "owner_user_id",
+  "drive_item_id",
+  "title",
+  "content",
+  "version",
+  "created_at",
+  "updated_at",
+] as const;
 
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
+}
+
+function shapeState(exists: boolean, actualColumns: Set<string>, requiredColumns: readonly string[]) {
+  if (!exists) return "missing" as const;
+  return requiredColumns.every((column) => actualColumns.has(column)) ? "ready" as const : "partial" as const;
 }
 
 export async function inspectDriveDocsRepair(): Promise<DriveDocsRepairStatus> {
@@ -24,13 +54,26 @@ export async function inspectDriveDocsRepair(): Promise<DriveDocsRepairStatus> {
       to_regclass('public.documents') IS NOT NULL AS documents_table
   `;
   const row = rows[0] ?? {};
-  const driveReady = Boolean(row.drive_items_table);
-  const docsReady = Boolean(row.documents_table);
+  const hasDrive = Boolean(row.drive_items_table);
+  const hasDocs = Boolean(row.documents_table);
+
+  const columnRows = await sql`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name IN ('drive_items', 'documents')
+  ` as Array<{ table_name: string; column_name: string }>;
+
+  const driveColumns = new Set(columnRows.filter((column) => column.table_name === "drive_items").map((column) => column.column_name));
+  const docsColumns = new Set(columnRows.filter((column) => column.table_name === "documents").map((column) => column.column_name));
+  const drive = shapeState(hasDrive, driveColumns, DRIVE_REQUIRED_COLUMNS);
+  const docs = shapeState(hasDocs, docsColumns, DOCS_REQUIRED_COLUMNS);
+
   return {
     database: "connected",
-    drive: driveReady ? "ready" : "missing",
-    docs: docsReady ? "ready" : "missing",
-    repairRequired: [!driveReady ? "drive_items" : null, !docsReady ? "documents" : null].filter((value): value is string => Boolean(value)),
+    drive,
+    docs,
+    repairRequired: [drive !== "ready" ? "drive_items" : null, docs !== "ready" ? "documents" : null].filter((value): value is string => Boolean(value)),
   };
 }
 
@@ -39,6 +82,8 @@ export async function repairDriveDocsSchema(): Promise<DriveDocsRepairStatus> {
   if (!sql) throw new Error("DATABASE_URL is not configured");
 
   // Deliberately additive/idempotent. No DROP, TRUNCATE, DELETE, UPDATE or ALTER is executed here.
+  // Existing partial tables are never reported as repaired: CREATE TABLE IF NOT EXISTS cannot
+  // safely infer how to backfill or constrain an unknown production shape.
   await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
   await sql`
     CREATE TABLE IF NOT EXISTS public.drive_items (
