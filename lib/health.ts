@@ -16,6 +16,7 @@ export type HealthStatus = {
     automation: "ready" | "missing" | "unknown";
     memory: "ready" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
+    docs: "ready" | "missing" | "unknown";
     ecosystem: "ready" | "partial" | "missing" | "unknown";
   };
   integrations: {
@@ -56,6 +57,7 @@ function unavailableSchema() {
     automation: "unknown" as const,
     memory: "unknown" as const,
     productRecords: "unknown" as const,
+    docs: "unknown" as const,
     ecosystem: "unknown" as const,
   };
 }
@@ -164,6 +166,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const memoryReady = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
+    const docsReady = Boolean(catalog.documents_table);
 
     const ecosystemTablesReady = [
       catalog.conversations_table,
@@ -197,6 +200,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         automation: automationReady ? "ready" : "missing",
         memory: memoryReady ? "ready" : "missing",
         productRecords,
+        docs: docsReady ? "ready" : "missing",
         ecosystem,
       },
       integrations,
@@ -204,6 +208,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         && automationReady
         && memoryReady
         && productRecords === "ready"
+        && docsReady
         && ecosystem === "ready"
         && externalReady,
     };
