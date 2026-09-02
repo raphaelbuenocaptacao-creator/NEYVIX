@@ -10,6 +10,10 @@ const requiredFragments = [
   "INSERT INTO public.users",
   "INSERT INTO public.subscriptions",
   "JOIN new_subscription",
+  "AS project_ready",
+  "AS plan_ready",
+  'throw new Error("NEYVIX signup configuration missing active project")',
+  'throw new Error("NEYVIX signup configuration missing active plan")',
 ];
 
 for (const fragment of requiredFragments) {
@@ -43,6 +47,16 @@ if (conflictGuards.length < 2) {
   process.exit(1);
 }
 
+const readinessCheckIndex = source.indexOf("const readinessRows = await sql`");
+const compatibilityCheckIndex = source.indexOf("const compatibilityRows = await sql`");
+const insertIndex = source.indexOf("INSERT INTO public.users");
+if (readinessCheckIndex < 0 || compatibilityCheckIndex < 0 || insertIndex < 0 || readinessCheckIndex > insertIndex) {
+  console.error(
+    "NEYVIX auth SQL contract failed: signup project/plan readiness must be checked before any user insert.",
+  );
+  process.exit(1);
+}
+
 console.log(
-  `NEYVIX auth SQL contract PASS: ${typedPlanCodeUses.length} typed plan metadata parameters and ${conflictGuards.length} conflict guards verified.`,
+  `NEYVIX auth SQL contract PASS: canonical signup readiness, ${typedPlanCodeUses.length} typed plan metadata parameters and ${conflictGuards.length} conflict guards verified.`,
 );
