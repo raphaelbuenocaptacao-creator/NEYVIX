@@ -35,6 +35,33 @@ export async function createRegisteredUser(
   const handle = normalizedEmail.split("@", 1)[0];
   const selectedPlanCode = planCode?.trim().toLowerCase() || "start-monthly";
 
+  const readinessRows = await sql`
+    SELECT
+      EXISTS (
+        SELECT 1
+        FROM public.projects p
+        WHERE p.slug = 'neyvix' AND p.is_active = true
+      ) AS project_ready,
+      EXISTS (
+        SELECT 1
+        FROM public.plans pl
+        JOIN public.projects p ON p.id = pl.project_id
+        WHERE p.slug = 'neyvix'
+          AND p.is_active = true
+          AND pl.code = ${selectedPlanCode}
+          AND pl.is_active = true
+      ) AS plan_ready
+  `;
+  const projectReady = Boolean(readinessRows[0]?.project_ready);
+  const planReady = Boolean(readinessRows[0]?.plan_ready);
+
+  if (!projectReady) {
+    throw new Error("NEYVIX signup configuration missing active project");
+  }
+  if (!planReady) {
+    throw new Error("NEYVIX signup configuration missing active plan");
+  }
+
   const compatibilityRows = await sql`
     SELECT
       EXISTS (
