@@ -1,0 +1,70 @@
+name: NEYVIX Drive Docs Readiness Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  drive-docs-readiness:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      NEYVIX_PRODUCTION_CANDIDATE: https://neyvix.vercel.app
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify Drive and Docs schema readiness
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          check() {
+            local base="${1%/}"
+            local body="$2"
+            local code
+            code="$(curl --silent --show-error --location \
+              --retry 3 --retry-delay 2 --max-time 20 \
+              "${headers[@]}" \
+              -o "$body" -w '%{http_code}' \
+              "$base/api/health")"
+            echo "Drive/Docs health HTTP: $code"
+            jq -e . "$body" >/dev/null
+            jq '{status,readiness,drive:.checks.schema.drive,docs:.checks.schema.docs,repairRequired:.checks.schema.repairRequired,blockers}' "$body"
+            test "$code" = "200"
+            jq -e '
+              .checks.database == "connected" and
+              .checks.schema.drive == "ready" and
+              .checks.schema.docs == "ready" and
+              (.checks.schema.repairRequired | length) == 0 and
+              ([.blockers[]? | select(startswith("schema:drive:") or startswith("schema:docs:") or startswith("schema_repair:drive_items") or startswith("schema_repair:documents"))] | length) == 0
+            ' "$body" >/dev/null
+          }
+
+          if check "${NEYVIX_PRODUCTION_CANDIDATE}" /tmp/drive-docs-production.json; then
+            exit 0
+          fi
+
+          check "${DEPLOYMENT_URL}" /tmp/drive-docs-deployment.json
