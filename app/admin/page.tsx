@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import styles from "./admin.module.css";
 import UserInspector from "./UserInspector";
+import SchemaRepairPanel from "./SchemaRepairPanel";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { getAdminUserSummaries, type AdminUserSummary } from "@/lib/db";
 import { getAdminSystemSummary, type AdminSystemSummary } from "@/lib/admin-system";
@@ -95,6 +96,8 @@ export default async function AdminPage() {
         <div><span>SEM ASSINATURA</span><strong>{system ? `${system.activeWithoutSubscription} ativos` : "Não verificado"}</strong></div>
         <div><span>AI</span><strong>{system?.gatewayConfigured && system.gatewaySecretConfigured ? "Gateway pronto" : system?.gatewayConfigured ? "Gateway parcial" : "Gateway indisponível"}</strong></div>
       </section>
+
+      {role === "superadmin" ? <SchemaRepairPanel /> : null}
 
       {canInspectUsers ? (
         <UserInspector users={users} />
