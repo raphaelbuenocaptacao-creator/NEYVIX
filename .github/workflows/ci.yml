@@ -85,6 +85,9 @@ jobs:
       - name: Health release traceability contract
         run: node scripts/verify-health-release-contract.mjs
 
+      - name: PWA cache isolation contract
+        run: node scripts/verify-pwa-cache-isolation-contract.mjs
+
       - name: Approval authorization contract
         run: node scripts/verify-approval-authorization-contract.mjs
 
