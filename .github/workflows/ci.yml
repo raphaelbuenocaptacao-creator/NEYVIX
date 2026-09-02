@@ -58,6 +58,9 @@ jobs:
       - name: Drive and Docs additive repair contract
         run: node scripts/verify-drive-docs-repair-contract.mjs
 
+      - name: Guarded schema repair endpoint contract
+        run: node scripts/verify-schema-repair-endpoint-contract.mjs
+
       - name: Health schema readiness contract
         run: node scripts/verify-health-schema-contract.mjs
 
