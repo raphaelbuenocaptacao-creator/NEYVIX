@@ -1,0 +1,127 @@
+name: NEYVIX Command Center E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  command-center-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify authenticated Command Center and admin isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/neyvix-command-center-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_COMMAND_CENTER_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Command Center E2E::${stage}"
+            {
+              echo "### Command Center E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
+
+          handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+          echo "::add-mask::$email"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$cookies" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX Command Center E2E' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-check-request
+          [ "$me_code" = "200" ] || fail_stage session-check-status
+          jq -e --arg email "$email" '.authenticated == true and .user.email == $email' /tmp/me.json >/dev/null || fail_stage session-identity
+
+          dashboard_code="$(curl --silent --show-error --max-time 30 "${headers[@]}" -b "$cookies" -D /tmp/dashboard.headers -o /tmp/dashboard.html -w '%{http_code}' "$base/dashboard")" || fail_stage dashboard-request
+          [ "$dashboard_code" = "200" ] || fail_stage dashboard-status
+          grep -Fq 'CENTRAL DE COMANDO' /tmp/dashboard.html || fail_stage dashboard-brand-marker
+          grep -Fq 'SEU ECOSSISTEMA' /tmp/dashboard.html || fail_stage dashboard-ecosystem-marker
+          grep -Fq 'Pulso do sistema' /tmp/dashboard.html || fail_stage dashboard-activity-marker
+          grep -Fq "$email" /tmp/dashboard.html || fail_stage dashboard-session-identity
+          if grep -Eq 'href="/admin"' /tmp/dashboard.html; then
+            fail_stage regular-user-admin-link-exposed
+          fi
+
+          admin_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -D /tmp/admin.headers -o /tmp/admin.body -w '%{http_code}' "$base/admin")" || fail_stage admin-isolation-request
+          [ "$admin_code" = "307" ] || [ "$admin_code" = "308" ] || fail_stage admin-isolation-status
+          grep -Eiq '^location: .*\/dashboard\?error=admin_access' /tmp/admin.headers || fail_stage admin-isolation-location
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          account_registered=false
+
+          {
+            echo "### Command Center E2E Smoke: PASS"
+            echo
+            echo "Verified production NEYVIX ID/session, authenticated Command Center rendering, identity-bound dashboard content, regular-user admin-link suppression, server-side /admin denial, and ephemeral-account cleanup."
+            echo "No privileged account, external provider, billing, payment, mail, webhook, AI generation or destructive database operation is invoked by this smoke."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: authenticated Command Center and regular-user admin isolation verified in production."
