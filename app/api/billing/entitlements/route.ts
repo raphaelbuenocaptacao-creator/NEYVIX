@@ -1,6 +1,8 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { requireActiveSession } from "@/lib/require-active-session";
+import { SESSION_COOKIE } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { readActiveSession } from "@/lib/session";
 
 const PRIVATE_HEADERS = {
   "Cache-Control": "no-store, max-age=0",
@@ -8,27 +10,29 @@ const PRIVATE_HEADERS = {
   "X-Content-Type-Options": "nosniff",
 };
 
+function privateJson(body: unknown, status = 200) {
+  return NextResponse.json(body, { status, headers: PRIVATE_HEADERS });
+}
+
 export async function GET() {
-  const session = await requireActiveSession();
+  const store = await cookies();
+  const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401, headers: PRIVATE_HEADERS });
+    return privateJson({ ok: false, error: "unauthorized" }, 401);
   }
 
   const entitlements = await getEntitlements(session.email);
 
-  return NextResponse.json(
-    {
-      ok: true,
-      scope: "self",
-      billing: {
-        plan: entitlements.plan,
-        status: entitlements.status,
-        trialEndsAt: entitlements.trialEndsAt,
-        enforcementEnabled: entitlements.enforcementEnabled,
-        source: entitlements.source,
-      },
-      entitlements: entitlements.features,
+  return privateJson({
+    ok: true,
+    scope: "self",
+    billing: {
+      plan: entitlements.plan,
+      status: entitlements.status,
+      trialEndsAt: entitlements.trialEndsAt,
+      enforcementEnabled: entitlements.enforcementEnabled,
+      source: entitlements.source,
     },
-    { headers: PRIVATE_HEADERS },
-  );
+    entitlements: entitlements.features,
+  });
 }
