@@ -30,7 +30,7 @@ export default function AiPage() {
   const [memoryUsed, setMemoryUsed] = useState<number | null>(null);
   const [intelligenceStatus, setIntelligenceStatus] = useState<IntelligenceStatus>("checking");
   const turns = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
-  const generationUnavailable = intelligenceStatus === "partial" || intelligenceStatus === "unavailable";
+  const generationUnavailable = intelligenceStatus !== "ready";
 
   useEffect(() => {
     let active = true;
@@ -170,7 +170,7 @@ export default function AiPage() {
           <div className={styles.metaCard}>
             <span>READINESS</span>
             <strong>{intelligenceStatus === "ready" ? "Geração pronta" : intelligenceStatus === "checking" ? "Verificando" : "Modo preservação"}</strong>
-            <small>{generationUnavailable ? "Histórico e Memory seguem disponíveis sem prometer geração externa" : "Estado lido do health real da inteligência"}</small>
+            <small>{intelligenceStatus === "checking" ? "Geração bloqueada até o health confirmar prontidão" : generationUnavailable ? "Histórico e Memory seguem disponíveis sem prometer geração externa" : "Estado lido do health real da inteligência"}</small>
           </div>
         </aside>
 
