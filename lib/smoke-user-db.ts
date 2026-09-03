@@ -18,13 +18,20 @@ export async function deleteEphemeralSmokeUser(email: string) {
   const sql = getSql();
   if (!sql) return false;
 
+  // There is currently no loans table in the NEYVIX production schema. The
+  // previous cleanup queried public.loans unconditionally, so every cleanup
+  // failed before the user DELETE could run. Stay conservative if a loans
+  // table is introduced later: refuse automatic deletion until its ownership
+  // semantics are explicitly reviewed instead of guessing about borrower data.
+  const relations = await sql`
+    SELECT to_regclass('public.loans')::text AS loans_table
+  `;
+  if (relations[0]?.loans_table) return false;
+
   const rows = await sql`
     DELETE FROM public.users u
     WHERE u.email = ${normalizedEmail}
       AND u.is_superadmin = false
-      AND NOT EXISTS (
-        SELECT 1 FROM public.loans l WHERE l.borrower_id = u.id
-      )
     RETURNING u.id
   `;
 
