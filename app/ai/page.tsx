@@ -6,6 +6,7 @@ import styles from "./page.module.css";
 
 type Message = { role: "user" | "assistant"; content: string };
 type HistoryMessage = { role: "user" | "assistant" | "system"; content: string; createdAt?: string };
+type IntelligenceStatus = "checking" | "ready" | "partial" | "unavailable";
 
 const welcomeMessage: Message = {
   role: "assistant",
@@ -27,7 +28,9 @@ export default function AiPage() {
   const [needsLogin, setNeedsLogin] = useState(false);
   const [useMemory, setUseMemory] = useState(false);
   const [memoryUsed, setMemoryUsed] = useState<number | null>(null);
+  const [intelligenceStatus, setIntelligenceStatus] = useState<IntelligenceStatus>("checking");
   const turns = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
+  const generationUnavailable = intelligenceStatus === "partial" || intelligenceStatus === "unavailable";
 
   useEffect(() => {
     let active = true;
@@ -59,9 +62,35 @@ export default function AiPage() {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    async function checkIntelligence() {
+      try {
+        const response = await fetch("/api/health/intelligence", { cache: "no-store" });
+        const data = (await response.json()) as { status?: string; ai?: { gatewayConfigured?: boolean } };
+        if (!active) return;
+        if (data.status === "ready" && data.ai?.gatewayConfigured === true) {
+          setIntelligenceStatus("ready");
+        } else if (data.status === "partial") {
+          setIntelligenceStatus("partial");
+        } else {
+          setIntelligenceStatus("unavailable");
+        }
+      } catch {
+        if (active) setIntelligenceStatus("unavailable");
+      }
+    }
+    void checkIntelligence();
+    return () => { active = false; };
+  }, []);
+
   async function sendPrompt(value: string) {
     const clean = value.trim();
     if (!clean || loading) return;
+    if (generationUnavailable) {
+      setError("O núcleo de geração da NEYVIX AI não está pronto agora. Seu histórico e Memory continuam preservados.");
+      return;
+    }
     setError("");
     setNeedsLogin(false);
     setPrompt("");
@@ -94,12 +123,20 @@ export default function AiPage() {
     void sendPrompt(prompt);
   }
 
+  const statusLabel = intelligenceStatus === "ready"
+    ? "NÚCLEO DE IA PRONTO"
+    : intelligenceStatus === "checking"
+      ? "VALIDANDO NÚCLEO DE IA"
+      : intelligenceStatus === "partial"
+        ? "IA PARCIAL · GERAÇÃO INDISPONÍVEL"
+        : "NÚCLEO DE IA INDISPONÍVEL";
+
   return (
     <main className={styles.shell}>
       <div className={styles.aurora} aria-hidden="true" />
       <header className={styles.topbar}>
         <Link className={styles.brand} href="/dashboard">NEYVIX</Link>
-        <div className={styles.status}><span /> NÚCLEO DE IA CONFIGURADO</div>
+        <div className={styles.status} title="Estado verificado em tempo real pelo health de inteligência"><span /> {statusLabel}</div>
         <Link className={styles.back} href="/dashboard">Central de Comando</Link>
       </header>
 
@@ -115,7 +152,7 @@ export default function AiPage() {
           <p className={styles.sideTitle}>Atalhos rápidos</p>
           <div className={styles.suggestions}>
             {suggestions.map(([label, suggestion]) => (
-              <button key={label} type="button" className={styles.suggestion} onClick={() => void sendPrompt(suggestion)} disabled={loading || needsLogin || historyLoading}>
+              <button key={label} type="button" className={styles.suggestion} onClick={() => void sendPrompt(suggestion)} disabled={loading || needsLogin || historyLoading || generationUnavailable}>
                 <span>{label}</span><strong>{suggestion}</strong>
               </button>
             ))}
@@ -129,6 +166,11 @@ export default function AiPage() {
             <span>MEMORY</span>
             <strong>{useMemory ? "Contexto autorizado" : "Privado por padrão"}</strong>
             <small>{memoryUsed === null ? "Você controla quando usar memória" : `${memoryUsed} memórias usadas na última resposta`}</small>
+          </div>
+          <div className={styles.metaCard}>
+            <span>READINESS</span>
+            <strong>{intelligenceStatus === "ready" ? "Geração pronta" : intelligenceStatus === "checking" ? "Verificando" : "Modo preservação"}</strong>
+            <small>{generationUnavailable ? "Histórico e Memory seguem disponíveis sem prometer geração externa" : "Estado lido do health real da inteligência"}</small>
           </div>
         </aside>
 
@@ -146,14 +188,14 @@ export default function AiPage() {
 
           <form className={styles.composer} onSubmit={submit}>
             <div className={styles.inputFrame}>
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Diga à NEYVIX o que você quer fazer acontecer..." maxLength={4000} rows={4} disabled={needsLogin || historyLoading} />
+              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={generationUnavailable ? "Geração temporariamente indisponível; seu histórico permanece seguro." : "Diga à NEYVIX o que você quer fazer acontecer..."} maxLength={4000} rows={4} disabled={needsLogin || historyLoading || generationUnavailable} />
               <label style={{ display: "flex", gap: ".55rem", alignItems: "center", padding: ".35rem 0" }}>
-                <input type="checkbox" checked={useMemory} onChange={(event) => setUseMemory(event.target.checked)} disabled={loading || historyLoading} />
+                <input type="checkbox" checked={useMemory} onChange={(event) => setUseMemory(event.target.checked)} disabled={loading || historyLoading || generationUnavailable} />
                 Usar somente memórias que eu autorizei para a AI nesta solicitação
               </label>
               <div className={styles.footer}>
                 <span>{prompt.length}/4000</span>
-                {needsLogin ? <Link className={styles.send} href="/login?next=/ai">Entrar novamente →</Link> : <button className={styles.send} type="submit" disabled={loading || historyLoading || !prompt.trim()}>{loading ? "Processando" : historyLoading ? "Sincronizando" : "Enviar para a NEYVIX AI →"}</button>}
+                {needsLogin ? <Link className={styles.send} href="/login?next=/ai">Entrar novamente →</Link> : <button className={styles.send} type="submit" disabled={loading || historyLoading || generationUnavailable || !prompt.trim()}>{loading ? "Processando" : historyLoading ? "Sincronizando" : generationUnavailable ? "Geração indisponível" : "Enviar para a NEYVIX AI →"}</button>}
               </div>
             </div>
             {error ? <p className={styles.error} role="status">{error}</p> : null}
