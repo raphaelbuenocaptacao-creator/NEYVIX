@@ -1,0 +1,145 @@
+name: NEYVIX Automation E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  automation-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify inert Automation CRUD persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/neyvix-automation-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_AUTOMATION_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Automation E2E::${stage}"
+            {
+              echo "### Automation E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          automation_id=""
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ -n "$automation_id" ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/automation?id=$automation_id" >/dev/null 2>&1 || true
+            fi
+            if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+          echo "::add-mask::$email"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/register.headers -o /tmp/register.body --data-urlencode 'name=NEYVIX Automation E2E' --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-check-request
+          [ "$me_code" = "200" ] || fail_stage session-check-status
+          jq -e --arg email "$email" '.authenticated == true and .user.email == $email' /tmp/me.json >/dev/null || fail_stage session-identity
+
+          before_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/automation-before.json -w '%{http_code}' "$base/api/automation")" || fail_stage automation-list-request
+          [ "$before_code" = "200" ] || fail_stage automation-list-status
+          jq -e '.schemaReady == true and (.automations | type == "array") and (.approvals | type == "array")' /tmp/automation-before.json >/dev/null || fail_stage automation-list-payload
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)"
+          create_name="Automation smoke ${suffix}"
+          create_payload="$(jq -nc --arg name "$create_name" '{name:$name,description:"Inert production persistence smoke",triggerType:"manual",actionType:"workflow"}')"
+          create_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -H 'content-type: application/json' -o /tmp/automation-create.json -w '%{http_code}' --data "$create_payload" "$base/api/automation")" || fail_stage automation-create-request
+          [ "$create_code" = "201" ] || fail_stage automation-create-status
+          automation_id="$(jq -r '.id // empty' /tmp/automation-create.json)"
+          [[ "$automation_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage automation-create-payload
+          jq -e --arg name "$create_name" '.name == $name and .status == "draft" and .triggerType == "manual" and .actionType == "workflow"' /tmp/automation-create.json >/dev/null || fail_stage automation-create-shape
+
+          renamed="Automation renamed ${suffix}"
+          rename_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X PUT -H 'content-type: application/json' -o /tmp/automation-rename.json -w '%{http_code}' --data "$(jq -nc --arg id "$automation_id" --arg name "$renamed" '{id:$id,name:$name}')" "$base/api/automation")" || fail_stage automation-rename-request
+          [ "$rename_code" = "200" ] || fail_stage automation-rename-status
+          jq -e --arg id "$automation_id" --arg name "$renamed" '.id == $id and .name == $name' /tmp/automation-rename.json >/dev/null || fail_stage automation-rename-payload
+
+          pause_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X PATCH -H 'content-type: application/json' -o /tmp/automation-pause.json -w '%{http_code}' --data "$(jq -nc --arg id "$automation_id" '{id:$id,status:"paused"}')" "$base/api/automation")" || fail_stage automation-pause-request
+          [ "$pause_code" = "200" ] || fail_stage automation-pause-status
+          jq -e --arg id "$automation_id" '.id == $id and .status == "paused"' /tmp/automation-pause.json >/dev/null || fail_stage automation-pause-payload
+
+          reload_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/automation-after.json -w '%{http_code}' "$base/api/automation")" || fail_stage automation-reload-request
+          [ "$reload_code" = "200" ] || fail_stage automation-reload-status
+          jq -e --arg id "$automation_id" --arg name "$renamed" '.automations | any(.id == $id and .name == $name and .status == "paused" and .triggerType == "manual" and .actionType == "workflow")' /tmp/automation-after.json >/dev/null || fail_stage automation-not-persisted
+
+          delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/automation-delete.json -w '%{http_code}' "$base/api/automation?id=$automation_id")" || fail_stage automation-delete-request
+          [ "$delete_code" = "200" ] || fail_stage automation-delete-status
+          jq -e --arg id "$automation_id" '.ok == true and .id == $id' /tmp/automation-delete.json >/dev/null || fail_stage automation-delete-payload
+          automation_id=""
+
+          verify_delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/automation-deleted.json -w '%{http_code}' "$base/api/automation")" || fail_stage automation-delete-reload-request
+          [ "$verify_delete_code" = "200" ] || fail_stage automation-delete-reload-status
+          jq -e --arg name "$renamed" '.automations | all(.name != $name)' /tmp/automation-deleted.json >/dev/null || fail_stage automation-delete-not-persisted
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          account_registered=false
+
+          {
+            echo "### Automation E2E Smoke: PASS"
+            echo
+            echo "Verified production NEYVIX ID/session and inert Automation CRUD persistence with manual/workflow draft, rename, pause, reload, delete, and ephemeral-account cleanup."
+            echo "No automation execution, mail, AI provider, webhook, billing or payment action is invoked by this smoke."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: inert Automation CRUD persistence verified in production; ephemeral identity cleaned."
