@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 const billingDb = readFileSync(new URL("../lib/billing-db.ts", import.meta.url), "utf8");
 const webhook = readFileSync(new URL("../app/api/billing/webhook/route.ts", import.meta.url), "utf8");
+const entitlements = readFileSync(new URL("../lib/entitlements.ts", import.meta.url), "utf8");
 
 const checks = [
   ["webhook secret is required", webhook.includes("NEYVIX_BILLING_WEBHOOK_SECRET") && webhook.includes("!configuredSecret || !providedSecret")],
@@ -15,6 +16,9 @@ const checks = [
   ["billing events are scoped to active NEYVIX project", billingDb.includes("p.slug = 'neyvix'") && billingDb.includes("p.is_active = true")],
   ["only active users can be healed", billingDb.includes("u.is_active = true")],
   ["plan must resolve inside NEYVIX project", billingDb.includes("pl.project_id = p.id") && billingDb.includes("pl.is_active = true")],
+  ["trial grants PRO feature set only", entitlements.includes('plan: "trial"') && entitlements.includes("features: PRO")],
+  ["legacy fallback remains compatibility-scoped", entitlements.includes('plan: "legacy"') && entitlements.includes("features: BUSINESS")],
+  ["authorization always respects resolved feature list", entitlements.includes("return entitlements.features.includes(feature);") && !entitlements.includes("return !entitlements.enforcementEnabled || entitlements.features.includes(feature);")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
