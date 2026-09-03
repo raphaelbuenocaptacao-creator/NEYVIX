@@ -1,0 +1,110 @@
+name: NEYVIX Intelligence Readiness Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  intelligence-readiness-smoke:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify production intelligence readiness contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_INTELLIGENCE_READINESS_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Intelligence Readiness::${stage}"
+            {
+              echo "### Intelligence Readiness Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+              echo "- Expected SHA: \`$GITHUB_SHA\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          readiness_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -D /tmp/intelligence.headers -o /tmp/intelligence.json -w '%{http_code}' \
+            "$base/api/health/intelligence")" || fail_stage readiness-request
+
+          [ "$readiness_code" = "200" ] || fail_stage readiness-http-status
+          grep -Eqi '^cache-control:.*no-store' /tmp/intelligence.headers || fail_stage readiness-cache-policy
+          grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' /tmp/intelligence.headers || fail_stage readiness-referrer-policy
+
+          jq -e '
+            .service == "neyvix-intelligence" and
+            .database == "connected" and
+            .ok == true and
+            (.status == "ready" or .status == "partial") and
+            (.ai.messageStore == true) and
+            (.memory.store == true) and
+            (.memory.events == true) and
+            (.ai.gatewayConfigured | type == "boolean") and
+            (.ai.gatewayUrlConfigured | type == "boolean") and
+            (.ai.gatewaySecretConfigured | type == "boolean") and
+            (.memory.aiContextEnabled | type == "boolean")
+          ' /tmp/intelligence.json >/dev/null || fail_stage readiness-contract
+
+          status="$(jq -r '.status' /tmp/intelligence.json)"
+          gateway="$(jq -r '.ai.gatewayConfigured' /tmp/intelligence.json)"
+          if [ "$status" = "ready" ]; then
+            [ "$gateway" = "true" ] || fail_stage ready-without-gateway
+          else
+            [ "$gateway" = "false" ] || fail_stage partial-with-configured-gateway
+          fi
+
+          {
+            echo "### Intelligence Readiness Smoke: PASS"
+            echo
+            echo "Verified exact production release SHA, database health, private no-store readiness response, AI message persistence, Memory store/events, and truthful ready/partial gateway state."
+            echo "No AI generation request or external paid provider call was made."
+            echo
+            echo "- Readiness: \`$status\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: production intelligence readiness contract verified for $GITHUB_SHA ($status)."
