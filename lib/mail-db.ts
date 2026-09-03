@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-export type MailFolder = "inbox" | "sent";
+export type MailFolder = "inbox" | "sent" | "draft";
 
 export type MailListItem = {
   id: string;
@@ -107,27 +107,67 @@ export async function saveSentMessage(input: { email: string; displayName?: stri
   return rows[0] ?? null;
 }
 
+export async function saveMailDraft(input: { email: string; displayName?: string; to?: string; subject?: string; text?: string }) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return null;
+  const mailbox = await ensureMailbox(input.email, input.displayName);
+  if (!mailbox) return null;
+
+  const sender = input.email.trim().toLowerCase();
+  const recipient = input.to?.trim().toLowerCase().slice(0, 320) || sender;
+  const rows = await sql`
+    INSERT INTO public.messages (
+      mailbox_id, sender_address, recipient_address, subject, body_text,
+      folder, status, is_read
+    ) VALUES (
+      ${String(mailbox.id)}, ${sender}, ${recipient}, ${input.subject?.trim().slice(0, 240) || ""},
+      ${input.text?.slice(0, 20000) || ""}, 'draft', 'draft', true
+    )
+    RETURNING id, created_at
+  ` as Array<{ id: string; created_at: string }>;
+  return rows[0] ?? null;
+}
+
+export async function deleteMailDraft(email: string, draftId: string) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return false;
+  const rows = await sql`
+    DELETE FROM public.messages m
+    USING public.mailboxes mb, public.users u
+    WHERE m.id = ${draftId}::uuid
+      AND m.folder = 'draft'
+      AND m.status = 'draft'
+      AND m.mailbox_id = mb.id
+      AND mb.user_id = u.id
+      AND u.is_active = true
+      AND lower(u.email) = ${email.trim().toLowerCase()}
+    RETURNING m.id
+  ` as Array<{ id: string }>;
+  return rows.length === 1;
+}
+
 export async function listMailMessages(email: string, limit = 30, folder: MailFolder = "inbox"): Promise<MailListItem[]> {
   const sql = getSql();
   if (!sql || !(await mailSchemaReady(sql))) return [];
-  const safeFolder: MailFolder = folder === "sent" ? "sent" : "inbox";
+  const safeFolder: MailFolder = folder === "sent" ? "sent" : folder === "draft" ? "draft" : "inbox";
 
   const rows = await sql`
     SELECT
       m.id,
-      CASE WHEN m.folder = 'sent' THEN m.recipient_address ELSE m.sender_address END AS correspondent,
+      CASE WHEN m.folder IN ('sent', 'draft') THEN m.recipient_address ELSE m.sender_address END AS correspondent,
       m.subject,
       left(COALESCE(NULLIF(m.body_text, ''), '[Mensagem sem prévia]'), 180) AS preview,
       m.folder,
       m.is_read,
       m.is_starred,
-      COALESCE(m.received_at, m.sent_at, m.created_at) AS occurred_at
+      COALESCE(m.received_at, m.sent_at, m.updated_at, m.created_at) AS occurred_at
     FROM public.messages m
     JOIN public.mailboxes mb ON mb.id = m.mailbox_id
     JOIN public.users u ON u.id = mb.user_id
     WHERE lower(u.email) = ${email.trim().toLowerCase()}
+      AND u.is_active = true
       AND m.folder = ${safeFolder}
-    ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
+    ORDER BY COALESCE(m.received_at, m.sent_at, m.updated_at, m.created_at) DESC
     LIMIT ${Math.max(1, Math.min(limit, 100))}
   ` as Array<{
     id: string;
