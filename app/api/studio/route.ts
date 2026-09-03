@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
-import { listStudioProjects, saveStudioProject } from "@/lib/db";
+import { listStudioProjects } from "@/lib/db";
+import { saveStudioProjectTyped } from "@/lib/studio-persistence";
 import { deleteStudioProject, updateStudioProjectTitle } from "@/lib/product-records";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const item = await saveStudioProject(session.email, prompt, blueprint);
+    const item = await saveStudioProjectTyped(session.email, prompt, blueprint);
     if (!item) return NextResponse.json({ error: "Não foi possível salvar o projeto" }, { status: 503, headers: PRIVATE_HEADERS });
     return NextResponse.json({ item }, { status: 201, headers: PRIVATE_HEADERS });
   } catch (error) {
