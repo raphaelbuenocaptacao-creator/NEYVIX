@@ -1,147 +1,172 @@
 name: NEYVIX Intelligence Auth Smoke
 
 on:
+  push:
+    branches: [main]
   deployment_status:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
-  intelligence-auth-preflight:
+  intelligence-auth-smoke:
     if: >-
-      github.event.deployment_status.state == 'success' &&
-      github.event.deployment_status.environment_url != ''
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 8
     env:
-      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
-      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
-    outputs:
-      ready: ${{ steps.credentials.outputs.ready }}
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
-      - id: credentials
-        name: Detect dedicated smoke credentials
+      - name: Acquire GitHub OIDC token
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${NEYVIX_SMOKE_EMAIL:-}" ] && [ -n "${NEYVIX_SMOKE_PASSWORD:-}" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "### Intelligence Auth Smoke: READY" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "### Intelligence Auth Smoke: NOT TESTED" >> "$GITHUB_STEP_SUMMARY"
-            echo "Dedicated smoke credentials are missing; no authenticated intelligence claim was made." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-  intelligence-auth-smoke:
-    needs: intelligence-auth-preflight
-    if: needs.intelligence-auth-preflight.outputs.ready == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
-      NEYVIX_SMOKE_EMAIL: ${{ secrets.NEYVIX_SMOKE_EMAIL }}
-      NEYVIX_SMOKE_PASSWORD: ${{ secrets.NEYVIX_SMOKE_PASSWORD }}
-    steps:
-      - name: Verify authenticated AI and Memory entitlement contract
+      - name: Verify authenticated AI history and Memory persistence
         shell: bash
         run: |
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
-          cookies=/tmp/intelligence-auth-cookies.txt
-          smoke_memory_id=""
-
-          echo "::add-mask::$NEYVIX_SMOKE_EMAIL"
-          echo "::add-mask::$NEYVIX_SMOKE_PASSWORD"
-
-          cleanup_session() {
-            if [ -n "${smoke_memory_id:-}" ] && [ -s "$cookies" ]; then
-              curl --silent --show-error --max-time 20 -X POST -b "$cookies" \
-                --data-urlencode "id=$smoke_memory_id" \
-                -o /dev/null "$base/api/memory/delete" || true
-            fi
-            if [ -s "$cookies" ] && grep -Eq 'neyvix_session' "$cookies"; then
-              curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" -o /dev/null "$base/api/auth/logout" || true
-            fi
-          }
-          trap cleanup_session EXIT
-
-          login_code="$(curl --silent --show-error --retry 2 --retry-delay 1 --max-time 20 \
-            -H 'content-type: application/x-www-form-urlencoded' \
-            -c "$cookies" -D /tmp/intelligence-login.headers -o /tmp/intelligence-login.body -w '%{http_code}' \
-            --data-urlencode "email=${NEYVIX_SMOKE_EMAIL}" \
-            --data-urlencode "password=${NEYVIX_SMOKE_PASSWORD}" \
-            --data-urlencode 'next=/dashboard' \
-            "$base/api/auth/login")"
-          login_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/intelligence-login.headers)"
-          test "${login_status:-$login_code}" = "303"
-          grep -Eq 'neyvix_session' "$cookies"
-
-          me_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/intelligence-me.json -w '%{http_code}' "$base/api/auth/me")"
-          echo "Identity HTTP: $me_code"
-          test "$me_code" = "200"
-          jq -e '.authenticated == true and .user != null' /tmp/intelligence-me.json >/dev/null
-
-          ai_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/intelligence-ai.json -w '%{http_code}' "$base/api/ai")"
-          memory_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/intelligence-memory.json -w '%{http_code}' "$base/api/memory")"
-
-          echo "Authenticated AI history HTTP: $ai_code"
-          echo "Authenticated Memory HTTP: $memory_code"
-
-          case "$ai_code" in
-            200) jq -e 'type == "object"' /tmp/intelligence-ai.json >/dev/null ;;
-            403) jq -e '.error == "upgrade_required" or .code == "upgrade_required"' /tmp/intelligence-ai.json >/dev/null ;;
-            *) echo "AI entitlement contract returned unexpected HTTP $ai_code" >&2; cat /tmp/intelligence-ai.json >&2; exit 1 ;;
-          esac
-
-          case "$memory_code" in
-            200) jq -e 'type == "object" and (.memories | type == "array") and (.events | type == "array")' /tmp/intelligence-memory.json >/dev/null ;;
-            403) jq -e '.error == "upgrade_required" or .code == "upgrade_required"' /tmp/intelligence-memory.json >/dev/null ;;
-            *) echo "Memory entitlement contract returned unexpected HTTP $memory_code" >&2; cat /tmp/intelligence-memory.json >&2; exit 1 ;;
-          esac
-
-          if [ "$memory_code" = "200" ]; then
-            smoke_key="smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            smoke_value="NEYVIX Memory E2E ${GITHUB_SHA:0:12}"
-
-            create_code="$(curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" \
-              -D /tmp/memory-create.headers -o /tmp/memory-create.body -w '%{http_code}' \
-              --data-urlencode "key=$smoke_key" \
-              --data-urlencode 'category=smoke' \
-              --data-urlencode "value=$smoke_value" \
-              "$base/api/memory")"
-            create_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/memory-create.headers)"
-            echo "Memory create HTTP: ${create_status:-$create_code}"
-            test "${create_status:-$create_code}" = "303"
-            grep -Eqi '^location: .*saved=1' /tmp/memory-create.headers
-
-            read_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/memory-after-create.json -w '%{http_code}' "$base/api/memory")"
-            test "$read_code" = "200"
-            smoke_memory_id="$(jq -r --arg key "$smoke_key" --arg value "$smoke_value" '.memories[]? | select(.key == $key and .category == "smoke" and .value == $value and .isPrivate == true) | .id' /tmp/memory-after-create.json | head -n1)"
-            [[ "$smoke_memory_id" =~ ^[0-9a-fA-F-]{36}$ ]]
-
-            delete_code="$(curl --silent --show-error --max-time 20 -X POST -b "$cookies" -c "$cookies" \
-              -D /tmp/memory-delete.headers -o /tmp/memory-delete.body -w '%{http_code}' \
-              --data-urlencode "id=$smoke_memory_id" \
-              "$base/api/memory/delete")"
-            delete_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/memory-delete.headers)"
-            echo "Memory delete HTTP: ${delete_status:-$delete_code}"
-            test "${delete_status:-$delete_code}" = "303"
-            grep -Eqi '^location: .*deleted=1' /tmp/memory-delete.headers
-            smoke_memory_id=""
-
-            final_code="$(curl --silent --show-error --max-time 20 -b "$cookies" -o /tmp/memory-after-delete.json -w '%{http_code}' "$base/api/memory")"
-            test "$final_code" = "200"
-            jq -e --arg key "$smoke_key" 'all(.memories[]?; .key != $key)' /tmp/memory-after-delete.json >/dev/null
-
-            echo "PASS: private Memory CRUD completed create → read → delete → absence verification with cleanup protection."
-            echo "### NEYVIX Memory E2E: PASS" >> "$GITHUB_STEP_SUMMARY"
-            echo "Authenticated private-memory create/read/delete was verified in production and the synthetic record was removed." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### NEYVIX Memory E2E: NOT TESTED" >> "$GITHUB_STEP_SUMMARY"
-            echo "The dedicated smoke account does not currently have Memory entitlement, so no mutation was attempted." >> "$GITHUB_STEP_SUMMARY"
+          cookies=/tmp/neyvix-intelligence-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
           fi
 
-          echo "PASS: authenticated session reaches AI and Memory and both enforce a valid entitlement contract (200 or explicit upgrade_required)."
-          echo "### Intelligence Auth Smoke: PASS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Validated production login → active session → NEYVIX ID → AI history + Memory with entitlement-aware responses. Memory CRUD is exercised only when entitlement is active." >> "$GITHUB_STEP_SUMMARY"
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_INTELLIGENCE_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Intelligence E2E::${stage}"
+            {
+              echo "### AI + Memory E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          memory_id=""
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ -n "$memory_id" ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X POST \
+                --data-urlencode "id=$memory_id" "$base/api/memory/delete" >/dev/null 2>&1 || true
+            fi
+            if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -c "$cookies" -X DELETE \
+                "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+          echo "::add-mask::$email"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$cookies" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX Intelligence E2E' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-check-request
+          [ "$me_code" = "200" ] || fail_stage session-check-status
+          jq -e --arg email "$email" '.authenticated == true and .user.email == $email' /tmp/me.json >/dev/null || fail_stage session-identity
+
+          ai_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/ai.json -w '%{http_code}' "$base/api/ai")" || fail_stage ai-history-request
+          [ "$ai_code" = "200" ] || fail_stage ai-history-status
+          jq -e '(.messages | type == "array") and (.count | type == "number")' /tmp/ai.json >/dev/null || fail_stage ai-history-payload
+
+          memory_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/memory.json -w '%{http_code}' "$base/api/memory")" || fail_stage memory-list-request
+          [ "$memory_code" = "200" ] || fail_stage memory-list-status
+          jq -e '(.memories | type == "array") and (.events | type == "array")' /tmp/memory.json >/dev/null || fail_stage memory-list-payload
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)"
+          memory_key="smoke-${suffix}"
+          memory_value="NEYVIX Memory persisted ${suffix}"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -c "$cookies" -X POST \
+            -D /tmp/memory-create.headers -o /tmp/memory-create.body \
+            --data-urlencode "key=$memory_key" \
+            --data-urlencode 'category=smoke' \
+            --data-urlencode "value=$memory_value" \
+            "$base/api/memory" >/dev/null || fail_stage memory-create-request
+          create_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/memory-create.headers)"
+          [ "$create_status" = "303" ] || fail_stage memory-create-status
+          grep -Eqi '^location: .*saved=1' /tmp/memory-create.headers || fail_stage memory-create-redirect
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/memory-after-create.json "$base/api/memory" || fail_stage memory-reload-request
+          memory_id="$(jq -r --arg key "$memory_key" --arg value "$memory_value" '.memories[]? | select(.key == $key and .category == "smoke" and .value == $value and .isPrivate == true) | .id' /tmp/memory-after-create.json | head -n1)"
+          [[ "$memory_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage memory-create-not-persisted
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -c "$cookies" -X POST \
+            -D /tmp/privacy.headers -o /tmp/privacy.body \
+            --data-urlencode "id=$memory_id" \
+            --data-urlencode 'mode=shared' \
+            "$base/api/memory/privacy" >/dev/null || fail_stage memory-privacy-request
+          privacy_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/privacy.headers)"
+          [ "$privacy_status" = "303" ] || fail_stage memory-privacy-status
+          grep -Eqi '^location: .*privacy=shared' /tmp/privacy.headers || fail_stage memory-privacy-redirect
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/memory-shared.json "$base/api/memory" || fail_stage memory-shared-reload
+          jq -e --arg id "$memory_id" '.memories | any(.id == $id and .isPrivate == false)' /tmp/memory-shared.json >/dev/null || fail_stage memory-privacy-not-persisted
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -c "$cookies" -X POST \
+            -D /tmp/memory-delete.headers -o /tmp/memory-delete.body \
+            --data-urlencode "id=$memory_id" \
+            "$base/api/memory/delete" >/dev/null || fail_stage memory-delete-request
+          delete_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/memory-delete.headers)"
+          [ "$delete_status" = "303" ] || fail_stage memory-delete-status
+          grep -Eqi '^location: .*deleted=1' /tmp/memory-delete.headers || fail_stage memory-delete-redirect
+          memory_id=""
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/memory-final.json "$base/api/memory" || fail_stage memory-final-read
+          jq -e --arg key "$memory_key" 'all(.memories[]?; .key != $key)' /tmp/memory-final.json >/dev/null || fail_stage memory-delete-not-persisted
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -c "$cookies" -X DELETE \
+            -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          account_registered=false
+
+          {
+            echo "### AI + Memory E2E Smoke: PASS"
+            echo
+            echo "Verified production NEYVIX ID/session, AI history access, Memory create/read/privacy/delete persistence and ephemeral-account cleanup."
+            echo "AI generation POST is intentionally not invoked by this smoke to avoid unintended provider usage/cost."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: authenticated AI history + Memory persistence verified in production; ephemeral identity cleaned."
