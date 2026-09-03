@@ -52,9 +52,9 @@ jobs:
           [ "$code" = "200" ] || fail_stage readiness-http-status
           grep -Eqi '^cache-control:.*no-store' /tmp/business.headers || fail_stage readiness-cache-policy
           grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' /tmp/business.headers || fail_stage readiness-referrer-policy
-          jq -e '.service == "neyvix-business" and .database == "connected" and .ok == true and (.status == "ready" or .status == "partial") and .plan.business == true and .approvals.store == true and .mail.store == true and (.mail.transport | type == "boolean")' /tmp/business.json >/dev/null || fail_stage readiness-contract
+          jq -e '.service == "neyvix-business" and .database == "connected" and .ok == true and (.status == "ready" or .status == "partial") and .plan.business == true and .authorization.business == true and .authorization.approvals == true and .authorization.mail == true and .approvals.store == true and .mail.store == true and (.mail.transport | type == "boolean")' /tmp/business.json >/dev/null || fail_stage readiness-contract
 
           status="$(jq -r '.status' /tmp/business.json)"
           transport="$(jq -r '.mail.transport' /tmp/business.json)"
           if [ "$status" = "ready" ]; then [ "$transport" = "true" ] || fail_stage ready-without-mail-transport; else [ "$transport" = "false" ] || fail_stage partial-with-ready-mail-transport; fi
-          echo "PASS: Business core readiness verified for $GITHUB_SHA ($status). No subscription, checkout, payment, mail delivery, or destructive migration was performed."
+          echo "PASS: Business plan, positive authorization resolver, stores, and transport readiness verified for $GITHUB_SHA ($status). No subscription, checkout, payment, mail delivery, or destructive migration was performed."
