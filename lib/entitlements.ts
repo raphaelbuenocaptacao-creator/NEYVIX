@@ -130,5 +130,5 @@ export async function getEntitlements(email: string): Promise<Entitlements> {
 }
 
 export function canUse(entitlements: Entitlements, feature: EntitlementFeature) {
-  return !entitlements.enforcementEnabled || entitlements.features.includes(feature);
+  return entitlements.features.includes(feature);
 }
