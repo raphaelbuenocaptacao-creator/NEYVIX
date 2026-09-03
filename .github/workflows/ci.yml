@@ -94,6 +94,9 @@ jobs:
       - name: Approval authorization contract
         run: node scripts/verify-approval-authorization-contract.mjs
 
+      - name: Approval creation contract
+        run: node scripts/verify-approval-create-contract.mjs
+
       - name: Automation lifecycle contract
         run: node scripts/verify-automation-lifecycle-contract.mjs
 
