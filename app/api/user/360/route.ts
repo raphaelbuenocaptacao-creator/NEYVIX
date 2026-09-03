@@ -24,15 +24,30 @@ export async function GET() {
   }
 
   try {
-    const [user, subscription, recentActivity, recentAi] = await Promise.all([
-      getDatabaseUserByEmail(session.email),
+    // Identity is the hard requirement. Cross-module timeline sources are intentionally
+    // soft dependencies so a partial module/schema cannot take User 360 offline.
+    const user = await getDatabaseUserByEmail(session.email);
+    if (!user || !user.is_active) {
+      return privateJson({ error: "Identidade NEYVIX indisponível" }, 404);
+    }
+
+    const [subscriptionResult, activityResult, aiResult] = await Promise.allSettled([
       getTrialStatus(session.email),
       getRecentActivity(session.email, 12),
       listAiHistory(session.email, 12),
     ]);
 
-    if (!user || !user.is_active) {
-      return privateJson({ error: "Identidade NEYVIX indisponível" }, 404);
+    const subscription = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : null;
+    const recentActivity = activityResult.status === "fulfilled" ? activityResult.value : [];
+    const recentAi = aiResult.status === "fulfilled" ? aiResult.value : [];
+    const degradedSources = [
+      subscriptionResult.status === "rejected" ? "subscription" : null,
+      activityResult.status === "rejected" ? "activity" : null,
+      aiResult.status === "rejected" ? "ai" : null,
+    ].filter((source): source is string => Boolean(source));
+
+    if (degradedSources.length > 0) {
+      console.warn("NEYVIX User 360 loaded with degraded sources", degradedSources);
     }
 
     return privateJson({
@@ -54,6 +69,10 @@ export async function GET() {
         : null,
       recentActivity,
       recentAi,
+      health: {
+        degraded: degradedSources.length > 0,
+        unavailableSources: degradedSources,
+      },
     });
   } catch (error) {
     console.warn("Unable to load NEYVIX User 360 self view", error);
