@@ -1,0 +1,163 @@
+name: NEYVIX Studio Content E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  studio-content-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify Studio and Content CRUD persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/neyvix-products-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_STUDIO_CONTENT_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Studio Content E2E::${stage}"
+            {
+              echo "### Studio + Content E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          studio_id=""
+          content_id=""
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ -n "$studio_id" ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE -H 'content-type: application/json' --data "{\"id\":\"$studio_id\"}" "$base/api/studio" >/dev/null 2>&1 || true
+            fi
+            if [ -n "$content_id" ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE -H 'content-type: application/json' --data "{\"id\":\"$content_id\"}" "$base/api/content" >/dev/null 2>&1 || true
+            fi
+            if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+          echo "::add-mask::$email"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D /tmp/register.headers -o /tmp/register.body --data-urlencode 'name=NEYVIX Studio Content E2E' --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-check-request
+          [ "$me_code" = "200" ] || fail_stage session-check-status
+          jq -e --arg email "$email" '.authenticated == true and .user.email == $email' /tmp/me.json >/dev/null || fail_stage session-identity
+
+          studio_list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/studio-before.json -w '%{http_code}' "$base/api/studio")" || fail_stage studio-list-request
+          [ "$studio_list_code" = "200" ] || fail_stage studio-list-status
+          jq -e '(.items | type == "array")' /tmp/studio-before.json >/dev/null || fail_stage studio-list-payload
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)"
+          studio_prompt="Studio smoke ${suffix}"
+          studio_blueprint="Blueprint persisted ${suffix}"
+          studio_create_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -H 'content-type: application/json' -o /tmp/studio-create.json -w '%{http_code}' --data "$(jq -nc --arg prompt "$studio_prompt" --arg blueprint "$studio_blueprint" '{prompt:$prompt,blueprint:$blueprint}')" "$base/api/studio")" || fail_stage studio-create-request
+          [ "$studio_create_code" = "201" ] || fail_stage studio-create-status
+          studio_id="$(jq -r '.item.id // empty' /tmp/studio-create.json)"
+          [[ "$studio_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage studio-create-payload
+
+          studio_title="Studio renamed ${suffix}"
+          studio_update_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X PUT -H 'content-type: application/json' -o /tmp/studio-update.json -w '%{http_code}' --data "$(jq -nc --arg id "$studio_id" --arg title "$studio_title" '{id:$id,title:$title}')" "$base/api/studio")" || fail_stage studio-update-request
+          [ "$studio_update_code" = "200" ] || fail_stage studio-update-status
+          jq -e --arg id "$studio_id" --arg title "$studio_title" '.item.id == $id and .item.title == $title' /tmp/studio-update.json >/dev/null || fail_stage studio-update-payload
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/studio-after.json "$base/api/studio" || fail_stage studio-reload-request
+          jq -e --arg id "$studio_id" --arg title "$studio_title" --arg prompt "$studio_prompt" --arg blueprint "$studio_blueprint" '.items | any(.id == $id and .title == $title and .prompt == $prompt and .blueprint.text == $blueprint)' /tmp/studio-after.json >/dev/null || fail_stage studio-not-persisted
+
+          content_list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/content-before.json -w '%{http_code}' "$base/api/content")" || fail_stage content-list-request
+          [ "$content_list_code" = "200" ] || fail_stage content-list-status
+          jq -e '(.items | type == "array")' /tmp/content-before.json >/dev/null || fail_stage content-list-payload
+
+          content_prompt="Content smoke ${suffix}"
+          content_body="Content persisted ${suffix}"
+          content_create_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -H 'content-type: application/json' -o /tmp/content-create.json -w '%{http_code}' --data "$(jq -nc --arg kind 'smoke' --arg prompt "$content_prompt" --arg content "$content_body" '{kind:$kind,prompt:$prompt,content:$content}')" "$base/api/content")" || fail_stage content-create-request
+          [ "$content_create_code" = "201" ] || fail_stage content-create-status
+          content_id="$(jq -r '.item.id // empty' /tmp/content-create.json)"
+          [[ "$content_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage content-create-payload
+
+          content_updated="Content updated and persisted ${suffix}"
+          content_update_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X PUT -H 'content-type: application/json' -o /tmp/content-update.json -w '%{http_code}' --data "$(jq -nc --arg id "$content_id" --arg content "$content_updated" '{id:$id,content:$content}')" "$base/api/content")" || fail_stage content-update-request
+          [ "$content_update_code" = "200" ] || fail_stage content-update-status
+          jq -e --arg id "$content_id" --arg content "$content_updated" '.item.id == $id and .item.content == $content' /tmp/content-update.json >/dev/null || fail_stage content-update-payload
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/content-after.json "$base/api/content" || fail_stage content-reload-request
+          jq -e --arg id "$content_id" --arg prompt "$content_prompt" --arg content "$content_updated" '.items | any(.id == $id and .kind == "smoke" and .prompt == $prompt and .content == $content)' /tmp/content-after.json >/dev/null || fail_stage content-not-persisted
+
+          studio_delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -H 'content-type: application/json' -o /tmp/studio-delete.json -w '%{http_code}' --data "$(jq -nc --arg id "$studio_id" '{id:$id}')" "$base/api/studio")" || fail_stage studio-delete-request
+          [ "$studio_delete_code" = "200" ] || fail_stage studio-delete-status
+          jq -e '.ok == true' /tmp/studio-delete.json >/dev/null || fail_stage studio-delete-payload
+          studio_id=""
+
+          content_delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -H 'content-type: application/json' -o /tmp/content-delete.json -w '%{http_code}' --data "$(jq -nc --arg id "$content_id" '{id:$id}')" "$base/api/content")" || fail_stage content-delete-request
+          [ "$content_delete_code" = "200" ] || fail_stage content-delete-status
+          jq -e '.ok == true' /tmp/content-delete.json >/dev/null || fail_stage content-delete-payload
+          content_id=""
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          account_registered=false
+
+          {
+            echo "### Studio + Content E2E Smoke: PASS"
+            echo
+            echo "Verified production NEYVIX ID/session, Studio CRUD persistence, Content CRUD persistence, deletion and ephemeral-account cleanup."
+            echo "No external generation provider is invoked by this smoke."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: Studio + Content CRUD persistence verified in production; ephemeral identity cleaned."
