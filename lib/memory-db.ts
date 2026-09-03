@@ -100,7 +100,12 @@ export async function upsertMemory(input: { email: string; key: string; category
       RETURNING id, user_id
     )
     INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
-    SELECT user_id, id, 'upsert', ${(input.source || "user").slice(0, 40)}, jsonb_build_object('key', ${key}, 'category', ${category}, 'shared_with_ai', ${!(input.isPrivate ?? true)})
+    SELECT user_id, id, 'upsert', ${(input.source || "user").slice(0, 40)},
+      jsonb_build_object(
+        'key', ${key}::text,
+        'category', ${category}::text,
+        'shared_with_ai', ${!(input.isPrivate ?? true)}::boolean
+      )
     FROM saved
     RETURNING memory_id
   ` as Array<{ memory_id: string }>;
@@ -119,7 +124,7 @@ export async function deleteMemory(email: string, id: string) {
       LIMIT 1
     ), logged AS (
       INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
-      SELECT user_id, id, 'delete', 'user', jsonb_build_object('key', memory_key) FROM target
+      SELECT user_id, id, 'delete', 'user', jsonb_build_object('key', memory_key::text) FROM target
       RETURNING memory_id
     )
     DELETE FROM public.neyvix_memories m
@@ -150,7 +155,8 @@ export async function setMemoryPrivacy(email: string, id: string, isPrivate: boo
       RETURNING m.id, m.user_id, m.memory_key
     )
     INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
-    SELECT user_id, id, 'privacy', 'user', jsonb_build_object('key', memory_key, 'shared_with_ai', ${!isPrivate})
+    SELECT user_id, id, 'privacy', 'user',
+      jsonb_build_object('key', memory_key::text, 'shared_with_ai', ${!isPrivate}::boolean)
     FROM changed
     RETURNING memory_id
   ` as Array<{ memory_id: string }>;
@@ -184,7 +190,8 @@ export async function getMemoryContext(email: string, limit = 12) {
         RETURNING id, user_id, memory_key, category
       )
       INSERT INTO public.neyvix_memory_events (user_id, memory_id, action, source, metadata)
-      SELECT user_id, id, 'recall', 'neyvix-ai', jsonb_build_object('key', memory_key, 'category', category)
+      SELECT user_id, id, 'recall', 'neyvix-ai',
+        jsonb_build_object('key', memory_key::text, 'category', category::text)
       FROM touched
     `;
   } catch (error) {
