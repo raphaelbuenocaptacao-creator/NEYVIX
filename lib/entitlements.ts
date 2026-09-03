@@ -28,6 +28,13 @@ export type Entitlements = {
   source: "database" | "fallback";
 };
 
+export type EntitlementRecord = {
+  status?: string | null;
+  trial_ends_at?: string | null;
+  plan_code?: string | null;
+  features?: unknown;
+};
+
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
@@ -81,6 +88,34 @@ function normalizeFeatures(raw: unknown, fallback: EntitlementFeature[]): Entitl
   return fallback;
 }
 
+export function resolveEntitlementRecord(
+  row: EntitlementRecord | undefined,
+  enforcementEnabled: boolean,
+  nowMs = Date.now(),
+): Entitlements {
+  if (!row) return compatibilityFallback(enforcementEnabled);
+
+  const status = row.status ?? null;
+  const trialEndsAt = row.trial_ends_at ? String(row.trial_ends_at) : null;
+  const trialActive = status === "trialing" && (!trialEndsAt || new Date(trialEndsAt).getTime() > nowMs);
+  if (trialActive) {
+    return { plan: "trial", status, features: PRO, trialEndsAt, enforcementEnabled, source: "database" };
+  }
+
+  if (status === "active") {
+    const slug = planFromCode(row.plan_code);
+    const fallbackFeatures = slug === "business" ? BUSINESS : slug === "pro" ? PRO : START;
+    const features = normalizeFeatures(row.features, fallbackFeatures);
+    return { plan: slug, status, features, trialEndsAt, enforcementEnabled, source: "database" };
+  }
+
+  if (status === "trialing" || ["expired", "cancelled", "canceled", "past_due"].includes(status ?? "")) {
+    return { plan: "expired", status, features: LIMITED, trialEndsAt, enforcementEnabled, source: "database" };
+  }
+
+  return compatibilityFallback(enforcementEnabled, status);
+}
+
 export async function getEntitlements(email: string): Promise<Entitlements> {
   const enforcementEnabled = isPlanEnforcementEnabled();
   const sql = getSql();
@@ -101,28 +136,7 @@ export async function getEntitlements(email: string): Promise<Entitlements> {
       LIMIT 1
     `;
 
-    const row = rows[0] as { status?: string; trial_ends_at?: string; plan_code?: string; features?: unknown } | undefined;
-    if (!row) return compatibilityFallback(enforcementEnabled);
-
-    const status = row.status ?? null;
-    const trialEndsAt = row.trial_ends_at ? String(row.trial_ends_at) : null;
-    const trialActive = status === "trialing" && (!trialEndsAt || new Date(trialEndsAt).getTime() > Date.now());
-    if (trialActive) {
-      return { plan: "trial", status, features: PRO, trialEndsAt, enforcementEnabled, source: "database" };
-    }
-
-    if (status === "active") {
-      const slug = planFromCode(row.plan_code);
-      const fallbackFeatures = slug === "business" ? BUSINESS : slug === "pro" ? PRO : START;
-      const features = normalizeFeatures(row.features, fallbackFeatures);
-      return { plan: slug, status, features, trialEndsAt, enforcementEnabled, source: "database" };
-    }
-
-    if (status === "trialing" || ["expired", "cancelled", "canceled", "past_due"].includes(status ?? "")) {
-      return { plan: "expired", status, features: LIMITED, trialEndsAt, enforcementEnabled, source: "database" };
-    }
-
-    return compatibilityFallback(enforcementEnabled, status);
+    return resolveEntitlementRecord(rows[0] as EntitlementRecord | undefined, enforcementEnabled);
   } catch (error) {
     console.warn("NEYVIX entitlements unavailable; applying safe fallback", error);
     return compatibilityFallback(enforcementEnabled);
