@@ -1,0 +1,60 @@
+name: NEYVIX Business Readiness Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  business-readiness-smoke:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify production Business readiness contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"); fi
+          fail_stage() { echo "::error title=NEYVIX Business Readiness::$1"; exit 1; }
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then release_ready=true; break; fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -D /tmp/business.headers -o /tmp/business.json -w '%{http_code}' "$base/api/health/business")" || fail_stage readiness-request
+          [ "$code" = "200" ] || fail_stage readiness-http-status
+          grep -Eqi '^cache-control:.*no-store' /tmp/business.headers || fail_stage readiness-cache-policy
+          grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' /tmp/business.headers || fail_stage readiness-referrer-policy
+          jq -e '.service == "neyvix-business" and .database == "connected" and .ok == true and (.status == "ready" or .status == "partial") and .plan.business == true and .approvals.store == true and .mail.store == true and (.mail.transport | type == "boolean")' /tmp/business.json >/dev/null || fail_stage readiness-contract
+
+          status="$(jq -r '.status' /tmp/business.json)"
+          transport="$(jq -r '.mail.transport' /tmp/business.json)"
+          if [ "$status" = "ready" ]; then [ "$transport" = "true" ] || fail_stage ready-without-mail-transport; else [ "$transport" = "false" ] || fail_stage partial-with-ready-mail-transport; fi
+          echo "PASS: Business core readiness verified for $GITHUB_SHA ($status). No subscription, checkout, payment, mail delivery, or destructive migration was performed."
