@@ -12,6 +12,41 @@ function getSql() {
   return url ? neon(url) : null;
 }
 
+export async function listSelfApprovals(email: string, limit = 50) {
+  const sql = getSql();
+  if (!sql) return { ok: false as const, reason: "database_unavailable" as const };
+
+  const registry = await sql`
+    SELECT to_regclass('public.neyvix_approval_requests')::text AS approvals_table
+  `;
+  if (!registry[0]?.approvals_table) {
+    return { ok: false as const, reason: "schema_unavailable" as const };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const boundedLimit = Math.max(1, Math.min(Math.trunc(limit) || 50, 50));
+  const rows = await sql`
+    SELECT r.id, r.title, r.status, r.created_at
+    FROM public.neyvix_approval_requests r
+    JOIN public.users u
+      ON (r.requested_by = u.id OR r.assigned_to = u.id)
+    WHERE lower(u.email) = ${normalizedEmail}
+      AND COALESCE(u.is_active, true) = true
+    ORDER BY r.created_at DESC
+    LIMIT ${boundedLimit}
+  `;
+
+  return {
+    ok: true as const,
+    approvals: rows.map((row) => ({
+      id: String(row.id),
+      title: String(row.title),
+      status: String(row.status),
+      createdAt: String(row.created_at),
+    } satisfies ApprovalRecord)),
+  };
+}
+
 export async function createSelfApproval(
   email: string,
   input: { title: string; payload?: Record<string, unknown> },
