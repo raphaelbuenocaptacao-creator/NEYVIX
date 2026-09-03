@@ -1,4 +1,4 @@
-name: NEYVIX Mail Draft E2E Smoke
+name: NEYVIX Mail Draft Access E2E Smoke
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   id-token: write
 
 jobs:
-  mail-draft-e2e:
+  mail-draft-access-e2e:
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
@@ -30,12 +30,12 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify inert Mail draft lifecycle in production
+      - name: Verify Mail draft access boundaries in production
         shell: bash
         run: |
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
-          cookies=/tmp/neyvix-mail-draft-cookies.txt
+          cookies=/tmp/neyvix-mail-access-cookies.txt
           headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
@@ -43,14 +43,8 @@ jobs:
 
           fail_stage() {
             local stage="$1"
-            echo "NEYVIX_MAIL_DRAFT_STAGE_FAIL=$stage" >&2
-            echo "::error title=NEYVIX Mail Draft E2E::${stage}"
-            {
-              echo "### Mail Draft E2E Smoke: FAIL"
-              echo
-              echo "- Stage: \`$stage\`"
-              echo "- Production: \`$base\`"
-            } >> "$GITHUB_STEP_SUMMARY"
+            echo "NEYVIX_MAIL_ACCESS_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Mail Draft Access E2E::${stage}"
             exit 1
           }
 
@@ -58,16 +52,10 @@ jobs:
           cleanup() {
             set +e
             if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
-              if [ -n "${draft_id:-}" ]; then
-                curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/mail/drafts?id=$draft_id" >/dev/null 2>&1 || true
-              fi
               curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
             fi
           }
           trap cleanup EXIT
-
-          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/mail-draft-anon.json -w '%{http_code}' "$base/api/mail/drafts")" || fail_stage anonymous-request
-          [ "$anonymous_code" = "401" ] || fail_stage anonymous-isolation
 
           release_ready=false
           for attempt in $(seq 1 24); do
@@ -82,7 +70,10 @@ jobs:
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
           jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
 
-          handle="e2e-smoke-mail-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/mail-anon.json -w '%{http_code}' "$base/api/mail/drafts")" || fail_stage anonymous-request
+          [ "$anonymous_code" = "401" ] || fail_stage anonymous-isolation
+
+          handle="mail-access-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           email="${handle}@neyvix.com"
           password="$(openssl rand -base64 30 | tr -d '\n')"
           echo "::add-mask::$password"
@@ -91,7 +82,7 @@ jobs:
           curl --silent --show-error --max-time 20 "${headers[@]}" \
             -H 'content-type: application/x-www-form-urlencoded' \
             -c "$cookies" -D /tmp/register.headers -o /tmp/register.body \
-            --data-urlencode 'name=NEYVIX Mail Draft E2E' \
+            --data-urlencode 'name=NEYVIX Mail Access E2E' \
             --data-urlencode "handle=$handle" \
             --data-urlencode "password=$password" \
             --data-urlencode 'plan=start' \
@@ -101,49 +92,29 @@ jobs:
           grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
           account_registered=true
 
-          subject="NEYVIX Mail Draft Smoke ${GITHUB_RUN_ID}"
-          body="Internal inert draft created by production E2E; never sent."
+          billing_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/billing.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage billing-request
+          [ "$billing_code" = "200" ] || fail_stage billing-status
+          jq -e '.billing.plan == "trial" and .billing.status == "trialing" and (.entitlements | index("mail")) == null' /tmp/billing.json >/dev/null || fail_stage trial-mail-exclusion
+
+          list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -D /tmp/mail-list.headers -o /tmp/mail-list.json -w '%{http_code}' "$base/api/mail/drafts")" || fail_stage mail-list-request
+          [ "$list_code" = "403" ] || fail_stage trial-mail-list-must-be-forbidden
+
           create_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
-            -H 'content-type: application/json' \
-            -D /tmp/mail-draft-create.headers -o /tmp/mail-draft-create.json -w '%{http_code}' \
-            --data "$(jq -nc --arg to "$email" --arg subject "$subject" --arg text "$body" '{to:$to,subject:$subject,text:$text}')" \
-            "$base/api/mail/drafts")" || fail_stage draft-create-request
-          [ "$create_code" = "201" ] || {
-            if [ "$create_code" = "403" ] && jq -e '.reason == "upgrade_required"' /tmp/mail-draft-create.json >/dev/null 2>&1; then
-              fail_stage draft-entitlement-blocked
-            fi
-            fail_stage draft-create-status
-          }
-          jq -e '.ok == true and (.draft.id | type == "string")' /tmp/mail-draft-create.json >/dev/null || fail_stage draft-create-payload
-          draft_id="$(jq -r '.draft.id' /tmp/mail-draft-create.json)"
+            -H 'content-type: application/json' -o /tmp/mail-create.json -w '%{http_code}' \
+            --data "$(jq -nc --arg to "$email" '{to:$to,subject:"Forbidden trial draft",text:"Must not persist"}')" \
+            "$base/api/mail/drafts")" || fail_stage mail-create-request
+          [ "$create_code" = "403" ] || fail_stage trial-mail-create-must-be-forbidden
 
-          list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
-            -D /tmp/mail-draft-list.headers -o /tmp/mail-draft-list.json -w '%{http_code}' \
-            "$base/api/mail/drafts")" || fail_stage draft-list-request
-          [ "$list_code" = "200" ] || fail_stage draft-list-status
-          jq -e --arg id "$draft_id" --arg subject "$subject" '.folder == "draft" and (.drafts | type == "array") and any(.drafts[]; .id == $id and .subject == $subject and .folder == "draft")' /tmp/mail-draft-list.json >/dev/null || fail_stage draft-persistence
-          grep -Eiq '^cache-control: .*no-store' /tmp/mail-draft-list.headers || fail_stage draft-private-cache-control
-
-          delete_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
-            -X DELETE -o /tmp/mail-draft-delete.json -w '%{http_code}' \
-            "$base/api/mail/drafts?id=$draft_id")" || fail_stage draft-delete-request
-          [ "$delete_code" = "200" ] || fail_stage draft-delete-status
-          jq -e --arg id "$draft_id" '.ok == true and .deletedId == $id' /tmp/mail-draft-delete.json >/dev/null || fail_stage draft-delete-payload
-          draft_id=""
-
-          verify_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/mail-draft-verify.json -w '%{http_code}' "$base/api/mail/drafts")" || fail_stage draft-verify-request
-          [ "$verify_code" = "200" ] || fail_stage draft-verify-status
-          jq -e --arg subject "$subject" 'all(.drafts[]; .subject != $subject)' /tmp/mail-draft-verify.json >/dev/null || fail_stage draft-delete-persistence
-
-          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
-          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
-          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage cleanup-payload
           account_registered=false
 
           {
-            echo "### Mail Draft E2E Smoke: PASS"
+            echo "### Mail Draft Access E2E Smoke: PASS"
             echo
-            echo "Verified anonymous denial, production release SHA, NEYVIX ID/session, inert draft create/list persistence/delete, private cache headers, and ephemeral-account cleanup."
-            echo "This smoke never calls /api/mail/send and performs no external mail delivery, billing mutation, payment, webhook, AI generation or destructive migration."
+            echo "Verified exact production release SHA, database health, anonymous 401, real trial identity/session, no Mail entitlement, Mail draft list/create 403, and cleanup."
+            echo "No draft is persisted and /api/mail/send is never called. No checkout, payment, webhook, external AI generation, or destructive database operation is invoked."
+            echo "Positive Mail draft CRUD remains intentionally unverified until a legitimate isolated Business test entitlement exists."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: inert Mail draft lifecycle verified in production."
+          echo "PASS: Mail Business boundary verified in production."
