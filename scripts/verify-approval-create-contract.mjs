@@ -5,8 +5,12 @@ const db = fs.readFileSync('lib/approval-db.ts', 'utf8');
 const decisionDb = fs.readFileSync('lib/automation-db.ts', 'utf8');
 
 const checks = [
-  ['creation requires active session', route.includes('readActiveSession') && route.includes('status: 401')],
-  ['creation requires approvals entitlement', route.includes('getProductAccess(session.email, "approvals")') && route.includes('upgradeRequiredPayload("approvals", "Business")')],
+  ['approval API requires active session', route.includes('readActiveSession') && route.includes('status: 401')],
+  ['approval API requires approvals entitlement', route.includes('getProductAccess(session.email, "approvals")') && route.includes('upgradeRequiredPayload("approvals", "Business")')],
+  ['GET exposes bounded self approval inbox', route.includes('export async function GET()') && route.includes('listSelfApprovals(auth.session.email)')],
+  ['inbox filters by requester or assignee', db.includes('r.requested_by = u.id OR r.assigned_to = u.id')],
+  ['inbox resolves active user by authenticated email', db.includes('lower(u.email) = ${normalizedEmail}') && db.includes('COALESCE(u.is_active, true) = true')],
+  ['inbox is bounded to 50 rows', db.includes('Math.min(Math.trunc(limit) || 50, 50)') && db.includes('LIMIT ${boundedLimit}')],
   ['creation validates bounded title', route.includes('MAX_TITLE') && route.includes('!title || title.length > MAX_TITLE')],
   ['creation validates JSON object payload', route.includes('Payload deve ser um objeto JSON')],
   ['creation bounds payload size', route.includes('MAX_PAYLOAD_BYTES') && route.includes('Buffer.byteLength')],
@@ -20,4 +24,4 @@ const checks = [
 const failed = checks.filter(([, ok]) => !ok);
 for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`);
 if (failed.length) process.exit(1);
-console.log(`Approval create/decision contract: ${checks.length}/${checks.length} PASS`);
+console.log(`Approval inbox/create/decision contract: ${checks.length}/${checks.length} PASS`);
