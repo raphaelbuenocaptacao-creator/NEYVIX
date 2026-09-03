@@ -1,0 +1,120 @@
+name: NEYVIX User 360 E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  user-360-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify self-scoped User 360 in production
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/neyvix-user360-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_USER360_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX User 360 E2E::${stage}"
+            {
+              echo "### User 360 E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/user360-anon.json -w '%{http_code}' "$base/api/user/360")" || fail_stage anonymous-request
+          [ "$anonymous_code" = "401" ] || fail_stage anonymous-isolation
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
+
+          handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+          echo "::add-mask::$email"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$cookies" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX User 360 E2E' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          user360_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -D /tmp/user360.headers -o /tmp/user360.json -w '%{http_code}' "$base/api/user/360")" || fail_stage user360-request
+          [ "$user360_code" = "200" ] || fail_stage user360-status
+          jq -e --arg email "$email" '.scope == "self" and .identity.email == $email and .identity.active == true and (.recentActivity | type == "array") and (.recentAi | type == "array")' /tmp/user360.json >/dev/null || fail_stage user360-self-payload
+          if jq -e 'paths | map(tostring) | join(".") | test("password|password_hash|is_superadmin"; "i")' /tmp/user360.json >/dev/null; then
+            fail_stage sensitive-field-exposure
+          fi
+          grep -Eiq '^cache-control: .*no-store' /tmp/user360.headers || fail_stage private-cache-control
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
+          account_registered=false
+
+          {
+            echo "### User 360 E2E Smoke: PASS"
+            echo
+            echo "Verified anonymous denial, production release SHA, NEYVIX ID/session, self-only User 360 identity/trial/activity payload, private caching headers, sensitive-field suppression, and ephemeral-account cleanup."
+            echo "No privileged account, billing mutation, payment, mail, webhook, AI generation or destructive database operation is invoked by this smoke."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: self-scoped User 360 verified in production."
