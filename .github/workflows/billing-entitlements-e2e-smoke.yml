@@ -57,9 +57,6 @@ jobs:
           }
           trap cleanup EXIT
 
-          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/billing-anon.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage anonymous-request
-          [ "$anonymous_code" = "401" ] || fail_stage anonymous-isolation
-
           release_ready=false
           for attempt in $(seq 1 24); do
             code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
@@ -72,6 +69,9 @@ jobs:
           done
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
           jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
+
+          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/billing-anon.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage anonymous-request
+          [ "$anonymous_code" = "401" ] || fail_stage anonymous-isolation
 
           handle="e2e-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           email="${handle}@neyvix.com"
@@ -107,7 +107,7 @@ jobs:
           {
             echo "### Billing Entitlements E2E Smoke: PASS"
             echo
-            echo "Verified anonymous denial, exact production release SHA, NEYVIX ID/session, database-backed trial state, future trial expiry, PRO trial entitlements, Business-only exclusion, private caching, and cleanup."
+            echo "Verified exact production release SHA, database health, anonymous denial, NEYVIX ID/session, database-backed trial state, future trial expiry, PRO trial entitlements, Business-only exclusion, private caching, and cleanup."
             echo "No checkout, webhook, provider mutation, payment, mail, external AI generation, or destructive database operation is invoked."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "PASS: safe billing trial/entitlements verified in production."
