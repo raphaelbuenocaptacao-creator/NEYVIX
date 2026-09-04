@@ -16,7 +16,7 @@ jobs:
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
     steps:
-      - name: Verify magic-login request privacy and session safety
+      - name: Verify exact release, magic-login readiness, privacy and session safety
         shell: bash
         run: |
           set -euo pipefail
@@ -28,6 +28,52 @@ jobs:
             local name="$1" file="$2"
             awk -v target="$name" 'BEGIN{IGNORECASE=1} $0 ~ "^" target ":" {gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); value=$0} END{print value}' "$file"
           }
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_MAGIC_LOGIN_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Magic Login stage::${stage}"
+            exit 1
+          }
+
+          expected_sha="$(jq -r '.deployment.sha // empty' "$GITHUB_EVENT_PATH")"
+          test -n "$expected_sha" || fail_stage deployment-sha
+
+          # The deployment event can arrive before the canonical production alias
+          # is fully converged. Do not test a stale release and call it green.
+          release_ok=false
+          for _ in $(seq 1 24); do
+            health_code="$(curl --silent --show-error --max-time 20 -D /tmp/health.headers -o /tmp/health.json -w '%{http_code}' "$base/api/health")" || true
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$health_code" = "200" ] && [ "$served_sha" = "$expected_sha" ]; then
+              release_ok=true
+              break
+            fi
+            sleep 5
+          done
+          [ "$release_ok" = true ] || fail_stage release-sha
+          case "$(header_value cache-control /tmp/health.headers | tr '[:upper:]' '[:lower:]')" in
+            *no-store*) ;;
+            *) fail_stage health-cache ;;
+          esac
+
+          identity_code="$(curl --silent --show-error --max-time 20 -D /tmp/identity.headers -o /tmp/identity.json -w '%{http_code}' "$base/api/health/identity")" || fail_stage identity-request
+          [ "$identity_code" = "200" ] || fail_stage identity-status
+          jq -e '
+            .database == "connected" and
+            .schema == "ready" and
+            .session.ready == true and
+            .magicLogin.tokenStore == true and
+            .magicLogin.request == true and
+            .magicLogin.consumer == true and
+            .magicLogin.pipelineReady == true and
+            (.magicLogin.status == "ready" or .magicLogin.status == "partial")
+          ' /tmp/identity.json >/dev/null || fail_stage identity-magic-contract
+          case "$(header_value cache-control /tmp/identity.headers | tr '[:upper:]' '[:lower:]')" in
+            *no-store*) ;;
+            *) fail_stage identity-cache ;;
+          esac
+          [ "$(header_value referrer-policy /tmp/identity.headers | tr '[:upper:]' '[:lower:]')" = "no-referrer" ] || fail_stage identity-referrer
 
           request_magic() {
             local email="$1" prefix="$2"
@@ -49,19 +95,19 @@ jobs:
           invalid_referrer="$(header_value referrer-policy /tmp/invalid.headers)"
 
           echo "Invalid magic request HTTP: ${invalid_status:-$invalid_code}"
-          test "${invalid_status:-$invalid_code}" = "303"
+          test "${invalid_status:-$invalid_code}" = "303" || fail_stage invalid-request-status
           case "$invalid_location" in
             */login?magic=invalid*) ;;
-            *) echo "Unexpected invalid-email redirect: $invalid_location" >&2; exit 1 ;;
+            *) echo "Unexpected invalid-email redirect: $invalid_location" >&2; fail_stage invalid-request-redirect ;;
           esac
           case "${invalid_cache,,}" in
             *no-store*) ;;
-            *) echo "Magic request must be non-cacheable: $invalid_cache" >&2; exit 1 ;;
+            *) echo "Magic request must be non-cacheable: $invalid_cache" >&2; fail_stage invalid-request-cache ;;
           esac
-          test "${invalid_referrer,,}" = "no-referrer"
+          test "${invalid_referrer,,}" = "no-referrer" || fail_stage invalid-request-referrer
           if grep -Eiq '^set-cookie: neyvix_session=' /tmp/invalid.headers; then
             echo "Security regression: invalid magic request issued a session cookie." >&2
-            exit 1
+            fail_stage invalid-request-session
           fi
 
           unknown_email="neyvix-magic-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@invalid.example"
@@ -72,22 +118,19 @@ jobs:
           unknown_referrer="$(header_value referrer-policy /tmp/unknown.headers)"
 
           echo "Unknown-account magic request HTTP: ${unknown_status:-$unknown_code}"
-          test "${unknown_status:-$unknown_code}" = "303"
-          # An unknown account may report sent when delivery is configured, or
-          # unavailable when the transport itself is unavailable. It must never
-          # expose an account-not-found/invalid-account distinction.
+          test "${unknown_status:-$unknown_code}" = "303" || fail_stage unknown-status
           case "$unknown_location" in
             */login?magic=sent*|*/login?magic=unavailable*) ;;
-            *) echo "Magic request leaked an unexpected account state: $unknown_location" >&2; exit 1 ;;
+            *) echo "Magic request leaked an unexpected account state: $unknown_location" >&2; fail_stage unknown-privacy ;;
           esac
           case "${unknown_cache,,}" in
             *no-store*) ;;
-            *) echo "Unknown-account magic response must be non-cacheable: $unknown_cache" >&2; exit 1 ;;
+            *) echo "Unknown-account magic response must be non-cacheable: $unknown_cache" >&2; fail_stage unknown-cache ;;
           esac
-          test "${unknown_referrer,,}" = "no-referrer"
+          test "${unknown_referrer,,}" = "no-referrer" || fail_stage unknown-referrer
           if grep -Eiq '^set-cookie: neyvix_session=' /tmp/unknown.headers; then
             echo "Security regression: magic-link request itself issued a session cookie." >&2
-            exit 1
+            fail_stage unknown-session
           fi
 
           me_code="$(curl --silent --show-error \
@@ -98,11 +141,11 @@ jobs:
             -w '%{http_code}' \
             "$base/api/auth/me")"
           echo "Session after magic request HTTP: $me_code"
-          test "$me_code" = "401"
-          jq -e '.authenticated == false' /tmp/me.json >/dev/null
+          test "$me_code" = "401" || fail_stage request-created-session
+          jq -e '.authenticated == false' /tmp/me.json >/dev/null || fail_stage unauthenticated-payload
           if grep -Eiq '^set-cookie: neyvix_session=' /tmp/me.headers; then
             echo "Security regression: identity check after magic request issued a session cookie." >&2
-            exit 1
+            fail_stage identity-created-session
           fi
 
           malformed_code="$(curl --silent --show-error \
@@ -115,14 +158,22 @@ jobs:
           malformed_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/malformed.headers)"
           malformed_location="$(header_value location /tmp/malformed.headers)"
           echo "Malformed magic token HTTP: ${malformed_status:-$malformed_code}"
-          test "${malformed_status:-$malformed_code}" = "303"
+          test "${malformed_status:-$malformed_code}" = "303" || fail_stage malformed-status
           case "$malformed_location" in
             */login?error=invalid*) ;;
-            *) echo "Unexpected malformed-token redirect: $malformed_location" >&2; exit 1 ;;
+            *) echo "Unexpected malformed-token redirect: $malformed_location" >&2; fail_stage malformed-redirect ;;
           esac
           if grep -Eiq '^set-cookie: neyvix_session=' /tmp/malformed.headers; then
             echo "Security regression: malformed magic token issued a session cookie." >&2
-            exit 1
+            fail_stage malformed-session
           fi
 
-          echo "PASS: magic-login request preserves privacy, never creates a session, and malformed tokens fail closed."
+          echo "PASS: exact release + identity magic pipeline + privacy + fail-closed token/session behavior."
+          {
+            echo "### Magic Login Safety Smoke: PASS"
+            echo
+            echo "- Exact production SHA verified"
+            echo "- Identity DB/schema/session/token pipeline verified"
+            echo "- Unknown account privacy preserved"
+            echo "- Invalid requests/tokens never create a session"
+          } >> "$GITHUB_STEP_SUMMARY"
