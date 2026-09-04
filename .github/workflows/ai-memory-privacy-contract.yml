@@ -21,16 +21,26 @@ jobs:
           set -euo pipefail
 
           ai_route="app/api/ai/route.ts"
+          context_route="app/api/ai/context/route.ts"
+          context_assembler="lib/ai-memory-context.ts"
           memory_db="lib/memory-db.ts"
 
           test -f "$ai_route"
+          test -f "$context_route"
+          test -f "$context_assembler"
           test -f "$memory_db"
 
-          # AI context must be derived from the authenticated session identity.
-          grep -F 'getMemoryContext(session.email, 8)' "$ai_route" >/dev/null
+          # The production AI route and provider-free readiness probe must use the same assembler.
+          grep -F 'loadAiMemoryContext(session.email, useMemory, 8)' "$ai_route" >/dev/null
+          grep -F 'loadAiMemoryContext(session.email, true, 8)' "$context_route" >/dev/null
 
-          # Memory is opt-in at request level and feature-gated server-side.
-          grep -F 'useMemory && process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"' "$ai_route" >/dev/null
+          # The shared assembler must be opt-in and feature-gated before it reaches the database.
+          grep -F 'if (!useMemory || !isAiMemoryContextEnabled()) return [];' "$context_assembler" >/dev/null
+          grep -F 'process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"' "$context_assembler" >/dev/null
+          grep -F 'getMemoryContext(email, limit)' "$context_assembler" >/dev/null
+
+          # Memory values supplied to AI remain bounded even if a stored memory is larger.
+          grep -F 'value: item.value.slice(0, MAX_MEMORY_VALUE_LENGTH)' "$context_assembler" >/dev/null
 
           # The memory query must scope records to the current account and active user.
           grep -F 'WHERE lower(u.email) = ${email.trim().toLowerCase()}' "$memory_db" >/dev/null
@@ -51,4 +61,11 @@ jobs:
             exit 1
           fi
 
-          echo 'PASS: authenticated ownership, privacy, expiration and pseudonymous AI context contract verified.'
+          # Readiness must expose only aggregate state, never memory records or values.
+          grep -F 'memoryUsed: memory.length' "$context_route" >/dev/null
+          if grep -Eq 'NextResponse\.json\([^)]*(memory|value)[[:space:]]*:' "$context_route"; then
+            echo 'AI Memory readiness must not return raw memory content.' >&2
+            exit 1
+          fi
+
+          echo 'PASS: shared assembler ownership, privacy, expiration, bounded context and pseudonymous AI contract verified.'
