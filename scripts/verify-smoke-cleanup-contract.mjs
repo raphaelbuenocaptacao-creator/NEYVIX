@@ -4,16 +4,18 @@ const db = fs.readFileSync("lib/smoke-user-db.ts", "utf8");
 const route = fs.readFileSync("app/api/auth/smoke-cleanup/route.ts", "utf8");
 const driveWorkflow = fs.readFileSync(".github/workflows/drive-docs-e2e-smoke.yml", "utf8");
 const businessWorkflow = fs.readFileSync(".github/workflows/business-entitlement-negative-e2e-smoke.yml", "utf8");
+const mailWorkflow = fs.readFileSync(".github/workflows/mail-draft-e2e-smoke.yml", "utf8");
 
 const checks = [
   [
     "smoke identity namespaces are strict and explicit",
-    db.includes("^(?:e2e-smoke|business-negative)-[a-z0-9-]+@neyvix\\.com$") &&
+    db.includes("^(?:e2e-smoke|business-negative|mail-access)-[a-z0-9-]+@neyvix\\.com$") &&
       !db.includes("@gmail.com") &&
       !db.includes(".*@neyvix\\.com"),
   ],
-  ["cleanup allows the standard e2e namespace", db.includes("e2e-smoke|business-negative")],
+  ["cleanup allows the standard e2e namespace", db.includes("e2e-smoke|business-negative|mail-access")],
   ["cleanup allows the Business-negative namespace", db.includes("business-negative")],
+  ["cleanup allows the Mail-access namespace", db.includes("mail-access")],
   ["cleanup refuses non-smoke identities", db.includes("if (!isSmokeAccountEmail(normalizedEmail)) return false")],
   ["cleanup detects optional loans relation without querying it", db.includes("to_regclass('public.loans')")],
   ["cleanup fails closed if loans relation appears", db.includes("if (relations[0]?.loans_table) return false")],
@@ -26,6 +28,9 @@ const checks = [
   ["drive workflow requires explicit successful cleanup on PASS", driveWorkflow.includes("smoke-account-cleanup-status") && driveWorkflow.includes("smoke-account-cleanup-payload")],
   ["Business-negative workflow always attempts cleanup on shell exit", businessWorkflow.includes("trap cleanup EXIT")],
   ["Business-negative workflow uses only its dedicated technical namespace", businessWorkflow.includes("business-negative-")],
+  ["Mail-access workflow always attempts cleanup on shell exit", mailWorkflow.includes("trap cleanup EXIT")],
+  ["Mail-access workflow uses only its dedicated technical namespace", mailWorkflow.includes("mail-access-")],
+  ["Mail-access workflow requires explicit successful cleanup on PASS", mailWorkflow.includes("fail_stage cleanup-status") && mailWorkflow.includes("fail_stage cleanup-payload")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
