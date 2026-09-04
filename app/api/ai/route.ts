@@ -6,7 +6,7 @@ import { readActiveSession } from "@/lib/session";
 import { saveAiMessage } from "@/lib/db";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
-import { getMemoryContext } from "@/lib/memory-db";
+import { loadAiMemoryContext } from "@/lib/ai-memory-context";
 import { listAiHistory } from "@/lib/ai-history";
 
 const MAX_PROMPT_LENGTH = 4000;
@@ -121,13 +121,10 @@ export async function POST(request: Request) {
     catch (dbError) { console.warn("Unable to persist NEYVIX AI user message", dbError); }
 
     let memory: Array<{ key: string; category: string; value: string }> = [];
-    if (useMemory && process.env.NEYVIX_MEMORY_AI_CONTEXT === "true") {
-      try {
-        const recalled = await getMemoryContext(session.email, 8);
-        memory = recalled.map((item) => ({ ...item, value: item.value.slice(0, 800) }));
-      } catch (memoryError) {
-        console.warn("Unable to load NEYVIX Memory context", memoryError);
-      }
+    try {
+      memory = await loadAiMemoryContext(session.email, useMemory, 8);
+    } catch (memoryError) {
+      console.warn("Unable to load NEYVIX Memory context", memoryError);
     }
 
     const upstream = await fetch(gateway.url, {
