@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-const SMOKE_EMAIL_RE = /^(?:e2e-smoke|business-negative)-[a-z0-9-]+@neyvix\.com$/i;
+const SMOKE_EMAIL_RE = /^(?:e2e-smoke|business-negative|mail-access)-[a-z0-9-]+@neyvix\.com$/i;
 
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
