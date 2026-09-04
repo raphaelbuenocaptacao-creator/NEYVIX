@@ -19,11 +19,22 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies
-        run: npm install
+      - name: Generate dependency lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Dependency security audit
-        run: npm audit --audit-level=high
+        run: npm audit --package-lock-only --audit-level=high
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Upload dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Typecheck
         run: npm run typecheck
