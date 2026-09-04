@@ -27,6 +27,7 @@ export async function GET() {
       database: "not_configured",
       plan: { business: false },
       authorization: { business: false, approvals: false, mail: false },
+      entitlement: { activeBusinessSubscriptions: 0, positivePathAvailable: false },
       approvals: { store: false },
       mail: { store: false, transport: mailTransport.ready, provider: mailTransport.provider },
     }, 503);
@@ -56,6 +57,17 @@ export async function GET() {
             AND pl.is_active = true
           LIMIT 1
         ) AS business_plan_features,
+        (
+          SELECT count(*)::int
+          FROM public.subscriptions s
+          JOIN public.projects p ON p.id = s.project_id AND p.slug = 'neyvix' AND p.is_active = true
+          JOIN public.plans pl ON pl.id = s.plan_id AND pl.project_id = p.id
+          JOIN public.users u ON u.id = s.user_id
+          WHERE s.status = 'active'
+            AND pl.code LIKE 'business%'
+            AND pl.is_active = true
+            AND coalesce(u.is_active, true) = true
+        ) AS active_business_subscriptions,
         to_regclass('public.neyvix_approval_requests') IS NOT NULL AS approvals_store,
         to_regclass('public.mailboxes') IS NOT NULL AS mailboxes_store,
         to_regclass('public.messages') IS NOT NULL AS messages_store
@@ -63,6 +75,9 @@ export async function GET() {
 
     const row = rows[0] ?? {};
     const businessPlanCode = typeof row.business_plan_code === "string" ? row.business_plan_code : null;
+    const activeBusinessSubscriptions = Number.isFinite(Number(row.active_business_subscriptions))
+      ? Math.max(0, Number(row.active_business_subscriptions))
+      : 0;
     const businessEntitlements = businessPlanCode
       ? resolveEntitlementRecord(
           { status: "active", plan_code: businessPlanCode, features: row.business_plan_features },
@@ -75,6 +90,7 @@ export async function GET() {
     const approvalsStore = Boolean(row.approvals_store);
     const mailStore = Boolean(row.mailboxes_store) && Boolean(row.messages_store);
     const authorizationReady = businessPlan && approvalsAuthorized && mailAuthorized;
+    const positivePathAvailable = authorizationReady && activeBusinessSubscriptions > 0;
     const coreReady = authorizationReady && approvalsStore && mailStore;
     const status = coreReady && mailTransport.ready ? "ready" : coreReady ? "partial" : "unavailable";
 
@@ -88,6 +104,10 @@ export async function GET() {
         business: authorizationReady,
         approvals: approvalsAuthorized,
         mail: mailAuthorized,
+      },
+      entitlement: {
+        activeBusinessSubscriptions,
+        positivePathAvailable,
       },
       approvals: { store: approvalsStore },
       mail: {
@@ -106,6 +126,7 @@ export async function GET() {
       database: "error",
       plan: { business: false },
       authorization: { business: false, approvals: false, mail: false },
+      entitlement: { activeBusinessSubscriptions: 0, positivePathAvailable: false },
       approvals: { store: false },
       mail: { store: false, transport: mailTransport.ready, provider: mailTransport.provider },
     }, 503);
