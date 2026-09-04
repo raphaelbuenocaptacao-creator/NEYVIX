@@ -1,0 +1,147 @@
+name: NEYVIX AI Memory Context E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ai-memory-context-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify AI Memory context pipeline without generation provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies_file=/tmp/neyvix-ai-memory.cookies
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_AI_MEMORY_CONTEXT_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX AI Memory Context E2E::${stage}"
+            {
+              echo "### AI Memory Context E2E Smoke: FAIL"
+              echo
+              echo "- Stage: \`$stage\`"
+              echo "- Production: \`$base\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ "$account_registered" = true ] && [ -s "$cookies_file" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies_file" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/context-anonymous.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-anonymous-request
+          [ "$anonymous_code" = "401" ] || fail_stage context-anonymous-not-blocked
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle="e2e-smoke-ai-memory-${suffix}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$email"
+          echo "::add-mask::$password"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies_file" -D /tmp/register.headers -o /tmp/register.body --data-urlencode 'name=NEYVIX AI Memory E2E' --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies_file" || fail_stage register-session-cookie
+          account_registered=true
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-request
+          [ "$me_code" = "200" ] || fail_stage session-status
+          jq -e --arg email "$email" '.authenticated == true and .user.email == $email' /tmp/me.json >/dev/null || fail_stage session-identity
+
+          private_key="ai-memory-private-${suffix}"
+          shared_key="ai-memory-shared-${suffix}"
+          private_value="Private context sentinel ${suffix}"
+          shared_value="Shared context sentinel ${suffix}"
+
+          private_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/private-create.headers -o /tmp/private-create.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "key=$private_key" --data-urlencode 'category=e2e-ai-memory' --data-urlencode "value=$private_value" "$base/api/memory")" || fail_stage private-memory-create-request
+          [ "$private_status" = "303" ] || fail_stage private-memory-create-status
+          grep -Eiq '^location: .*/memory\?saved=1&shared=0' /tmp/private-create.headers || fail_stage private-memory-not-private
+
+          shared_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/shared-create.headers -o /tmp/shared-create.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "key=$shared_key" --data-urlencode 'category=e2e-ai-memory' --data-urlencode "value=$shared_value" --data-urlencode 'shareWithAi=on' "$base/api/memory")" || fail_stage shared-memory-create-request
+          [ "$shared_status" = "303" ] || fail_stage shared-memory-create-status
+          grep -Eiq '^location: .*/memory\?saved=1&shared=1' /tmp/shared-create.headers || fail_stage shared-memory-not-shared
+
+          list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/memory-list.json -w '%{http_code}' "$base/api/memory")" || fail_stage memory-list-request
+          [ "$list_code" = "200" ] || fail_stage memory-list-status
+          jq -e --arg private_key "$private_key" --arg shared_key "$shared_key" '.memories | (any(.key == $private_key and .isPrivate == true) and any(.key == $shared_key and .isPrivate == false))' /tmp/memory-list.json >/dev/null || fail_stage memory-privacy-persistence
+          shared_id="$(jq -r --arg key "$shared_key" '.memories[] | select(.key == $key) | .id' /tmp/memory-list.json | head -n1)"
+          [[ "$shared_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage shared-memory-id
+
+          context_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/context.headers -o /tmp/context.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-request
+          [ "$context_code" = "200" ] || fail_stage context-status
+          grep -Eiq '^cache-control: .*no-store' /tmp/context.headers || fail_stage context-cache-policy
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/context.headers || fail_stage context-referrer-policy
+          jq -e '.ok == true and .memoryContextEnabled == true and .memoryUsed == 1 and .contextAvailable == true' /tmp/context.json >/dev/null || fail_stage context-shared-only
+          jq -e 'has("memory") | not' /tmp/context.json >/dev/null || fail_stage context-content-exposed
+          if grep -Fq "$private_value" /tmp/context.json || grep -Fq "$shared_value" /tmp/context.json; then
+            fail_stage context-value-exposed
+          fi
+
+          privacy_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/privacy.headers -o /tmp/privacy.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "id=$shared_id" --data-urlencode 'mode=private' "$base/api/memory/privacy")" || fail_stage privacy-change-request
+          [ "$privacy_status" = "303" ] || fail_stage privacy-change-status
+          grep -Eiq '^location: .*/memory\?privacy=private' /tmp/privacy.headers || fail_stage privacy-change-result
+
+          context_private_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/context-private.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-private-request
+          [ "$context_private_code" = "200" ] || fail_stage context-private-status
+          jq -e '.ok == true and .memoryContextEnabled == true and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-private.json >/dev/null || fail_stage context-private-not-excluded
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -X DELETE -o /tmp/cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
+          jq -e '.ok == true' /tmp/cleanup.json >/dev/null || fail_stage cleanup-payload
+          account_registered=false
+
+          {
+            echo "### AI Memory Context E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, authenticated Start entitlement, shared-memory recall, private-memory exclusion, runtime privacy change, no context-content disclosure and ephemeral-account cleanup."
+            echo "The smoke exercises the same AI Memory assembler used by /api/ai but never calls the external generation gateway or performs billing."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: AI Memory context pipeline verified without generation provider."
