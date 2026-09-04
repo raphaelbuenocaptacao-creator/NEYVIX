@@ -1,10 +1,10 @@
 const CACHE_PREFIX = "neyvix-shell-";
-const CACHE = `${CACHE_PREFIX}v7-safe-shell`;
+const CACHE = `${CACHE_PREFIX}v8-raster-safe-shell`;
 const SHELL = [
   "/manifest.webmanifest",
-  "/neyvix-icon-192.svg",
-  "/neyvix-icon-512.svg",
-  "/neyvix-maskable-512.svg",
+  "/neyvix-icon-192.png",
+  "/neyvix-icon-512.png",
+  "/neyvix-maskable-512.png",
 ];
 const PRIVATE_PATH = /\/(api|auth|login|logout|admin|billing|session|sessions|token|tokens|password|account|profile|me)(\/|$)/i;
 const SENSITIVE_QUERY = /^(token|access_token|refresh_token|password|passwd|secret|session|auth|authorization|api_key|apikey|key|code|credential|credentials)$/i;
