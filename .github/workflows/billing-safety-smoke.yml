@@ -93,6 +93,42 @@ jobs:
           jq -e '.service == "NEYVIX" and .checks.database == "connected" and .checks.accountIntegrity == "verified"' /tmp/accounts.json >/dev/null
           jq '{service,status,checks}' /tmp/accounts.json
 
+      - name: Verify billing readiness truthfully
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ steps.access.outputs.base }}"
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          code="$(curl --silent --show-error --location \
+            --retry 2 --retry-delay 1 --max-time 20 \
+            "${headers[@]}" \
+            -D /tmp/billing-health.headers \
+            -o /tmp/billing-health.json -w '%{http_code}' \
+            "$base/api/health/billing")"
+          echo "Billing readiness HTTP: $code"
+          test "$code" = "200"
+          grep -Eiq '^cache-control: .*no-store' /tmp/billing-health.headers
+          jq -e '
+            .service == "neyvix-billing" and
+            .ok == true and
+            .database == "connected" and
+            .schema.subscriptions == true and
+            .schema.events == true and
+            .plans.start == true and
+            .plans.pro == true and
+            .plans.business == true and
+            (.status == "ready" or .status == "partial") and
+            (.provider.webhook | type == "boolean") and
+            (.provider.checkout.start | type == "boolean") and
+            (.provider.checkout.pro | type == "boolean") and
+            (.provider.checkout.business | type == "boolean") and
+            (.provider.checkoutReady | type == "boolean")
+          ' /tmp/billing-health.json >/dev/null
+          jq '{service,status,database,schema,plans,provider}' /tmp/billing-health.json
+
       - name: Reject billing webhook without credential
         shell: bash
         run: |
