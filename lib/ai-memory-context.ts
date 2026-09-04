@@ -10,7 +10,9 @@ const DEFAULT_MEMORY_LIMIT = 8;
 const MAX_MEMORY_VALUE_LENGTH = 800;
 
 export function isAiMemoryContextEnabled() {
-  return process.env.NEYVIX_MEMORY_AI_CONTEXT === "true";
+  const explicitlyEnabled = process.env.NEYVIX_MEMORY_AI_CONTEXT === "true";
+  const explicitlyDisabled = process.env.NEYVIX_MEMORY_AI_CONTEXT === "false";
+  return explicitlyEnabled || !explicitlyDisabled;
 }
 
 export async function loadAiMemoryContext(
