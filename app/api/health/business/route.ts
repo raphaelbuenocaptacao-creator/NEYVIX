@@ -62,11 +62,9 @@ export async function GET() {
           FROM public.subscriptions s
           JOIN public.projects p ON p.id = s.project_id AND p.slug = 'neyvix' AND p.is_active = true
           JOIN public.plans pl ON pl.id = s.plan_id AND pl.project_id = p.id
-          JOIN public.users u ON u.id = s.user_id
           WHERE s.status = 'active'
             AND pl.code LIKE 'business%'
             AND pl.is_active = true
-            AND coalesce(u.is_active, true) = true
         ) AS active_business_subscriptions,
         to_regclass('public.neyvix_approval_requests') IS NOT NULL AS approvals_store,
         to_regclass('public.mailboxes') IS NOT NULL AS mailboxes_store,
