@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "neyvix-shell-";
-const CACHE = `${CACHE_PREFIX}v6-static-only`;
+const CACHE = `${CACHE_PREFIX}v7-safe-shell`;
 const SHELL = [
   "/manifest.webmanifest",
   "/neyvix-icon-192.svg",
@@ -11,7 +11,24 @@ const SENSITIVE_QUERY = /^(token|access_token|refresh_token|password|passwd|secr
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).catch(() => undefined),
+    caches.open(CACHE).then(async (cache) => {
+      await Promise.all(
+        SHELL.map(async (path) => {
+          try {
+            const response = await fetch(path, {
+              cache: "no-store",
+              credentials: "omit",
+              redirect: "error",
+            });
+            if (isCacheableResponse(response)) {
+              await cache.put(path, response);
+            }
+          } catch {
+            // Install must not fail just because one public shell asset is unavailable.
+          }
+        }),
+      );
+    }),
   );
   self.skipWaiting();
 });
@@ -44,11 +61,19 @@ function isPrivate(request, url) {
   if (
     request.headers.has("authorization") ||
     request.headers.has("cookie") ||
-    request.headers.has("range")
+    request.headers.has("range") ||
+    request.headers.has("if-range")
   ) return true;
   if (url.origin !== self.location.origin) return true;
   if (PRIVATE_PATH.test(url.pathname) || hasSensitiveQuery(url)) return true;
   return false;
+}
+
+function isCacheableResponse(response) {
+  if (!response || !response.ok || response.redirected || response.status === 206) return false;
+  if (response.headers.has("content-range") || response.headers.has("set-cookie")) return false;
+  const cacheControl = response.headers.get("cache-control") || "";
+  return !/(private|no-store)/i.test(cacheControl);
 }
 
 function isShellRequest(request, url) {
@@ -60,15 +85,18 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (isPrivate(request, url)) return;
 
-  // Documents are always network-only. This prevents a page rendered for one
-  // authenticated session from being replayed later from a shared PWA cache.
+  // Documents stay network-only so authenticated HTML is never replayed from cache.
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
         try {
           const preload = await event.preloadResponse;
-          if (preload) return preload;
-          return await fetch(request, { cache: "no-store" });
+          if (preload && !preload.redirected && preload.status !== 206) return preload;
+          return await fetch(request, {
+            cache: "no-store",
+            credentials: "include",
+            redirect: "follow",
+          });
         } catch {
           return Response.error();
         }
@@ -80,6 +108,23 @@ self.addEventListener("fetch", (event) => {
   if (!isShellRequest(request, url)) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request, { cache: "no-store" })),
+    (async () => {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request, {
+          cache: "no-store",
+          credentials: "omit",
+          redirect: "error",
+        });
+        if (isCacheableResponse(response)) {
+          const cache = await caches.open(CACHE);
+          await cache.put(request, response.clone());
+        }
+        return response;
+      } catch {
+        return Response.error();
+      }
+    })(),
   );
 });
