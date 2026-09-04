@@ -1,8 +1,6 @@
 name: NEYVIX AI Memory Context E2E Smoke
 
 on:
-  push:
-    branches: [main]
   deployment_status:
 
 permissions:
@@ -12,8 +10,8 @@ permissions:
 jobs:
   ai-memory-context-e2e:
     if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -86,10 +84,27 @@ jobs:
           echo "::add-mask::$email"
           echo "::add-mask::$password"
 
-          curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies_file" -D /tmp/register.headers -o /tmp/register.body --data-urlencode 'name=NEYVIX AI Memory E2E' --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage register-request
-          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
-          [ "$register_status" = "303" ] || fail_stage register-status
-          grep -Eq 'neyvix_session' "$cookies_file" || fail_stage register-session-cookie
+          registered=false
+          for register_attempt in $(seq 1 5); do
+            rm -f "$cookies_file" /tmp/register.headers /tmp/register.body
+            curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies_file" -D /tmp/register.headers -o /tmp/register.body --data-urlencode 'name=NEYVIX AI Memory E2E' --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage register-request
+            register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+            register_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/register.headers | tail -1)"
+            [ "$register_status" = "303" ] || fail_stage register-status
+
+            if grep -Eq 'neyvix_session' "$cookies_file" 2>/dev/null; then
+              case "$register_location" in
+                */dashboard*) registered=true; break ;;
+                *) fail_stage register-redirect ;;
+              esac
+            fi
+
+            case "$register_location" in
+              */register?error=rate_limit*) sleep $((register_attempt * 7)) ;;
+              *) fail_stage register-session-cookie ;;
+            esac
+          done
+          [ "$registered" = true ] || fail_stage register-rate-limit-exhausted
           account_registered=true
 
           me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-request
