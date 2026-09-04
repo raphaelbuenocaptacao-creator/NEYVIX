@@ -1,0 +1,54 @@
+name: NEYVIX AI Memory Privacy Contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ai-memory-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify AI only recalls eligible memory from the authenticated user
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ai_route="app/api/ai/route.ts"
+          memory_db="lib/memory-db.ts"
+
+          test -f "$ai_route"
+          test -f "$memory_db"
+
+          # AI context must be derived from the authenticated session identity.
+          grep -F 'getMemoryContext(session.email, 8)' "$ai_route" >/dev/null
+
+          # Memory is opt-in at request level and feature-gated server-side.
+          grep -F 'useMemory && process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"' "$ai_route" >/dev/null
+
+          # The memory query must scope records to the current account and active user.
+          grep -F 'WHERE lower(u.email) = ${email.trim().toLowerCase()}' "$memory_db" >/dev/null
+          grep -F 'AND u.is_active = true' "$memory_db" >/dev/null
+
+          # Private and expired memories must never be supplied to NEYVIX AI.
+          grep -F 'AND m.is_private = false' "$memory_db" >/dev/null
+          grep -F 'AND (m.expires_at IS NULL OR m.expires_at > now())' "$memory_db" >/dev/null
+
+          # Recall must be auditable without leaking raw memory values into event metadata.
+          grep -F "'recall', 'neyvix-ai'" "$memory_db" >/dev/null
+          grep -F "jsonb_build_object('key', memory_key::text, 'category', category::text)" "$memory_db" >/dev/null
+
+          # Payload sent upstream must use the pseudonymous gateway identity, not raw email.
+          grep -F 'user: gatewayUserId(session.email)' "$ai_route" >/dev/null
+          if grep -Eq 'context:[[:space:]]*\{[^}]*email[[:space:]]*:' "$ai_route"; then
+            echo 'Raw email must not be included in the AI gateway context.' >&2
+            exit 1
+          fi
+
+          echo 'PASS: authenticated ownership, privacy, expiration and pseudonymous AI context contract verified.'
