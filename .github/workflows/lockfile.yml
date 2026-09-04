@@ -29,8 +29,11 @@ jobs:
       - name: Generate lockfile
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
-      - name: Verify lockfile
-        run: npm audit --package-lock-only --audit-level=high
+      - name: Verify reproducible install
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify dependency audit
+        run: npm audit --audit-level=high
 
       - name: Commit verified lockfile when changed
         shell: bash
