@@ -52,9 +52,17 @@ jobs:
           [ "$code" = "200" ] || fail_stage readiness-http-status
           grep -Eqi '^cache-control:.*no-store' /tmp/business.headers || fail_stage readiness-cache-policy
           grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' /tmp/business.headers || fail_stage readiness-referrer-policy
-          jq -e '.service == "neyvix-business" and .database == "connected" and .ok == true and (.status == "ready" or .status == "partial") and .plan.business == true and .authorization.business == true and .authorization.approvals == true and .authorization.mail == true and .approvals.store == true and .mail.store == true and (.mail.transport | type == "boolean")' /tmp/business.json >/dev/null || fail_stage readiness-contract
+          jq -e '.service == "neyvix-business" and .database == "connected" and .ok == true and (.status == "ready" or .status == "partial") and .plan.business == true and .authorization.business == true and .authorization.approvals == true and .authorization.mail == true and .approvals.store == true and .mail.store == true and (.mail.transport | type == "boolean") and (.entitlement.activeBusinessSubscriptions | type == "number") and (.entitlement.activeBusinessSubscriptions >= 0) and (.entitlement.activeBusinessSubscriptions == (.entitlement.activeBusinessSubscriptions | floor)) and (.entitlement.positivePathAvailable | type == "boolean")' /tmp/business.json >/dev/null || fail_stage readiness-contract
+
+          active_business="$(jq -r '.entitlement.activeBusinessSubscriptions' /tmp/business.json)"
+          positive_path="$(jq -r '.entitlement.positivePathAvailable' /tmp/business.json)"
+          if [ "$active_business" -eq 0 ]; then
+            [ "$positive_path" = "false" ] || fail_stage positive-path-without-active-business
+          else
+            [ "$positive_path" = "true" ] || fail_stage active-business-without-positive-path
+          fi
 
           status="$(jq -r '.status' /tmp/business.json)"
           transport="$(jq -r '.mail.transport' /tmp/business.json)"
           if [ "$status" = "ready" ]; then [ "$transport" = "true" ] || fail_stage ready-without-mail-transport; else [ "$transport" = "false" ] || fail_stage partial-with-ready-mail-transport; fi
-          echo "PASS: Business plan, positive authorization resolver, stores, and transport readiness verified for $GITHUB_SHA ($status). No subscription, checkout, payment, mail delivery, or destructive migration was performed."
+          echo "PASS: Business plan, authorization resolver, stores, transport, and aggregate positive-entitlement availability verified for $GITHUB_SHA ($status; activeBusinessSubscriptions=$active_business; positivePathAvailable=$positive_path). No subscription, checkout, payment, mail delivery, identity disclosure, or destructive migration was performed."
