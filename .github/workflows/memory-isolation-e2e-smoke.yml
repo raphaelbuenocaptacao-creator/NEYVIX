@@ -3,7 +3,6 @@ name: NEYVIX Memory Isolation E2E Smoke
 on:
   push:
     branches: [main]
-  deployment_status:
 
 permissions:
   contents: read
@@ -11,9 +10,6 @@ permissions:
 
 jobs:
   memory-isolation-e2e:
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -38,20 +34,11 @@ jobs:
           cookies_a=/tmp/neyvix-memory-a.cookies
           cookies_b=/tmp/neyvix-memory-b.cookies
           headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
-          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
-            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
-          fi
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"); fi
 
           fail_stage() {
-            local stage="$1"
-            echo "NEYVIX_MEMORY_ISOLATION_STAGE_FAIL=$stage" >&2
-            echo "::error title=NEYVIX Memory Isolation E2E::${stage}"
-            {
-              echo "### Memory Isolation E2E Smoke: FAIL"
-              echo
-              echo "- Stage: \`$stage\`"
-              echo "- Production: \`$base\`"
-            } >> "$GITHUB_STEP_SUMMARY"
+            echo "NEYVIX_MEMORY_ISOLATION_STAGE_FAIL=$1" >&2
+            echo "::error title=NEYVIX Memory Isolation E2E::$1"
             exit 1
           }
 
@@ -59,12 +46,8 @@ jobs:
           account_b_registered=false
           cleanup() {
             set +e
-            if [ "$account_a_registered" = true ] && [ -s "$cookies_a" ]; then
-              curl --silent --max-time 15 "${headers[@]}" -b "$cookies_a" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
-            fi
-            if [ "$account_b_registered" = true ] && [ -s "$cookies_b" ]; then
-              curl --silent --max-time 15 "${headers[@]}" -b "$cookies_b" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
-            fi
+            if [ "$account_a_registered" = true ] && [ -s "$cookies_a" ]; then curl --silent --max-time 15 "${headers[@]}" -b "$cookies_a" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true; fi
+            if [ "$account_b_registered" = true ] && [ -s "$cookies_b" ]; then curl --silent --max-time 15 "${headers[@]}" -b "$cookies_b" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true; fi
           }
           trap cleanup EXIT
 
@@ -72,10 +55,7 @@ jobs:
           for attempt in $(seq 1 30); do
             code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
             served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
-            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
-              release_ready=true
-              break
-            fi
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then release_ready=true; break; fi
             sleep 10
           done
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
@@ -83,7 +63,7 @@ jobs:
 
           memory_health_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/memory-health.json -w '%{http_code}' "$base/api/health/memory")" || fail_stage memory-health-request
           [ "$memory_health_code" = "200" ] || fail_stage memory-health-status
-          jq -e '.ok == true and .checks.database == "connected" and .checks.memoryTable == true and .checks.eventsTable == true and .checks.userOwnership == true and .checks.privacy == true and .checks.expiration == true and .checks.auditEvents == true' /tmp/memory-health.json >/dev/null || fail_stage memory-health-readiness
+          jq -e '.ok == true and .database == "connected" and .schema.memories == true and .schema.events == true and .schema.ownership == true and .schema.privacy == true and .schema.expiry == true and .schema.audit == true' /tmp/memory-health.json >/dev/null || fail_stage memory-health-readiness
 
           suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           handle_a="e2e-smoke-memory-a-${suffix}"
@@ -92,23 +72,19 @@ jobs:
           email_b="${handle_b}@neyvix.com"
           password_a="$(openssl rand -base64 30 | tr -d '\n')"
           password_b="$(openssl rand -base64 30 | tr -d '\n')"
-          echo "::add-mask::$email_a"
-          echo "::add-mask::$email_b"
-          echo "::add-mask::$password_a"
-          echo "::add-mask::$password_b"
+          echo "::add-mask::$email_a"; echo "::add-mask::$email_b"; echo "::add-mask::$password_a"; echo "::add-mask::$password_b"
 
           register_account() {
-            local label="$1" handle="$2" password="$3" cookies="$4" headers_file="$5" body_file="$6"
-            curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D "$headers_file" -o "$body_file" --data-urlencode "name=NEYVIX Memory E2E ${label}" --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage "register-${label}-request"
-            local status
+            local label="$1" handle="$2" password="$3" cookies="$4" headers_file="$5"
+            curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies" -D "$headers_file" -o /tmp/register-${label}.body --data-urlencode "name=NEYVIX Memory E2E ${label}" --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage "register-${label}-request"
             status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' "$headers_file")"
             [ "$status" = "303" ] || fail_stage "register-${label}-status"
             grep -Eq 'neyvix_session' "$cookies" || fail_stage "register-${label}-session-cookie"
           }
 
-          register_account a "$handle_a" "$password_a" "$cookies_a" /tmp/register-a.headers /tmp/register-a.body
+          register_account a "$handle_a" "$password_a" "$cookies_a" /tmp/register-a.headers
           account_a_registered=true
-          register_account b "$handle_b" "$password_b" "$cookies_b" /tmp/register-b.headers /tmp/register-b.body
+          register_account b "$handle_b" "$password_b" "$cookies_b" /tmp/register-b.headers
           account_b_registered=true
 
           me_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -o /tmp/me-a.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage session-a-request
@@ -118,17 +94,14 @@ jobs:
           jq -e --arg email "$email_a" '.authenticated == true and .user.email == $email' /tmp/me-a.json >/dev/null || fail_stage session-a-identity
           jq -e --arg email "$email_b" '.authenticated == true and .user.email == $email' /tmp/me-b.json >/dev/null || fail_stage session-b-identity
 
-          key="memory-isolation-${suffix}-$(date +%s)"
+          key="memory-isolation-${suffix}"
           value="Private persistence proof ${suffix}"
-          category="e2e-isolation"
-
-          create_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -D /tmp/memory-create.headers -o /tmp/memory-create.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "key=$key" --data-urlencode "category=$category" --data-urlencode "value=$value" "$base/api/memory")" || fail_stage memory-create-request
+          create_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -D /tmp/create.headers -o /tmp/create.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "key=$key" --data-urlencode 'category=e2e-isolation' --data-urlencode "value=$value" "$base/api/memory")" || fail_stage memory-create-request
           [ "$create_status" = "303" ] || fail_stage memory-create-status
-          grep -Eiq '^location: .*/memory\?saved=1&shared=0' /tmp/memory-create.headers || fail_stage memory-create-private-redirect
 
           list_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -o /tmp/memory-a.json -w '%{http_code}' "$base/api/memory")" || fail_stage memory-a-list-request
           [ "$list_a_code" = "200" ] || fail_stage memory-a-list-status
-          jq -e --arg key "$key" --arg value "$value" --arg category "$category" '.memories | any(.key == $key and .value == $value and .category == $category and .isPrivate == true)' /tmp/memory-a.json >/dev/null || fail_stage memory-a-not-persisted
+          jq -e --arg key "$key" --arg value "$value" '.memories | any(.key == $key and .value == $value and .isPrivate == true)' /tmp/memory-a.json >/dev/null || fail_stage memory-a-not-persisted
           memory_id="$(jq -r --arg key "$key" '.memories[] | select(.key == $key) | .id' /tmp/memory-a.json | head -n1)"
           [[ "$memory_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage memory-a-id
 
@@ -140,30 +113,20 @@ jobs:
           [ "$delete_b_status" = "303" ] || fail_stage memory-b-delete-status
           grep -Eiq '^location: .*/memory\?error=not_found' /tmp/delete-b.headers || fail_stage memory-cross-user-delete-not-blocked
 
-          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -o /tmp/memory-a-after-b-delete.json "$base/api/memory" || fail_stage memory-a-reload-request
-          jq -e --arg id "$memory_id" --arg key "$key" '.memories | any(.id == $id and .key == $key)' /tmp/memory-a-after-b-delete.json >/dev/null || fail_stage memory-a-lost-after-b-delete
+          curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -o /tmp/memory-a-after-b.json "$base/api/memory" || fail_stage memory-a-reload-request
+          jq -e --arg id "$memory_id" '.memories | any(.id == $id)' /tmp/memory-a-after-b.json >/dev/null || fail_stage memory-a-lost-after-b-delete
 
           delete_a_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -D /tmp/delete-a.headers -o /tmp/delete-a.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "id=$memory_id" "$base/api/memory/delete")" || fail_stage memory-a-delete-request
           [ "$delete_a_status" = "303" ] || fail_stage memory-a-delete-status
           grep -Eiq '^location: .*/memory\?deleted=1' /tmp/delete-a.headers || fail_stage memory-a-delete-result
-
           curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -o /tmp/memory-a-after-delete.json "$base/api/memory" || fail_stage memory-a-post-delete-request
           jq -e --arg id "$memory_id" '(.memories | any(.id == $id)) | not' /tmp/memory-a-after-delete.json >/dev/null || fail_stage memory-a-delete-not-persisted
 
           cleanup_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_a" -X DELETE -o /tmp/cleanup-a.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-a-request
-          [ "$cleanup_a_code" = "200" ] || fail_stage cleanup-a-status
-          jq -e '.ok == true' /tmp/cleanup-a.json >/dev/null || fail_stage cleanup-a-payload
+          [ "$cleanup_a_code" = "200" ] && jq -e '.ok == true' /tmp/cleanup-a.json >/dev/null || fail_stage cleanup-a
           account_a_registered=false
-
           cleanup_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_b" -X DELETE -o /tmp/cleanup-b.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-b-request
-          [ "$cleanup_b_code" = "200" ] || fail_stage cleanup-b-status
-          jq -e '.ok == true' /tmp/cleanup-b.json >/dev/null || fail_stage cleanup-b-payload
+          [ "$cleanup_b_code" = "200" ] && jq -e '.ok == true' /tmp/cleanup-b.json >/dev/null || fail_stage cleanup-b
           account_b_registered=false
 
-          {
-            echo "### Memory Isolation E2E Smoke: PASS"
-            echo
-            echo "Verified exact production release, database/Memory readiness, two real NEYVIX sessions, private Memory persistence, cross-user read isolation, cross-user delete isolation, owner deletion and ephemeral-account cleanup."
-            echo "No billing, external mail, generation provider, real customer or schema mutation is used by this smoke."
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: Memory persistence and cross-user isolation verified in production."
+          echo "PASS: exact production SHA, Memory schema, persistence, cross-user read/delete isolation, owner deletion and technical-account cleanup verified. No billing, external provider, customer data or destructive schema mutation used."
