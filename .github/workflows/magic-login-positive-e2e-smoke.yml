@@ -1,0 +1,141 @@
+name: NEYVIX Magic Login Positive E2E
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  magic-login-positive-e2e:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify magic token to session to replay rejection and cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          initial=/tmp/magic-initial.txt
+          magic=/tmp/magic-session.txt
+          replay=/tmp/magic-replay.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_MAGIC_POSITIVE_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Magic Login positive E2E::${stage}"
+            exit 1
+          }
+
+          header_value() {
+            local name="$1" file="$2"
+            awk -v target="$name" 'BEGIN{IGNORECASE=1} $0 ~ "^" target ":" {gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); value=$0} END{print value}' "$file"
+          }
+
+          expected_sha="$(jq -r '.deployment.sha // empty' "$GITHUB_EVENT_PATH")"
+          test -n "$expected_sha" || fail_stage deployment-sha
+
+          release_ok=false
+          for _ in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health")" || true
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && [ "$served_sha" = "$expected_sha" ]; then
+              release_ok=true
+              break
+            fi
+            sleep 5
+          done
+          [ "$release_ok" = true ] || fail_stage release-sha
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle="e2e-smoke-magic-${suffix}"
+          password="Neyvix-Magic-${suffix}!"
+          echo "::add-mask::$password"
+
+          register_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$initial" -D /tmp/register.headers -o /tmp/register.body -w '%{http_code}' \
+            --data-urlencode 'name=NEYVIX Magic E2E' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            "$base/api/auth/register")" || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "${register_status:-$register_code}" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$initial" || fail_stage register-session
+
+          issue_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -X POST -b "$initial" -D /tmp/issue.headers -o /tmp/issue.json -w '%{http_code}' \
+            "$base/api/auth/magic-login/smoke-token")" || fail_stage token-issue-request
+          [ "$issue_code" = "200" ] || fail_stage token-issue-status
+          case "$(header_value cache-control /tmp/issue.headers | tr '[:upper:]' '[:lower:]')" in *no-store*) ;; *) fail_stage token-cache ;; esac
+          [ "$(header_value referrer-policy /tmp/issue.headers | tr '[:upper:]' '[:lower:]')" = "no-referrer" ] || fail_stage token-referrer
+          token="$(jq -r '.token // empty' /tmp/issue.json)"
+          [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail_stage token-shape
+          echo "::add-mask::$token"
+
+          rm -f "$magic"
+          consume_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -c "$magic" -D /tmp/consume.headers -o /tmp/consume.body -w '%{http_code}' \
+            --get --data-urlencode "token=$token" "$base/api/auth/magic-login")" || fail_stage consume-request
+          consume_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/consume.headers)"
+          consume_location="$(header_value location /tmp/consume.headers)"
+          [ "${consume_status:-$consume_code}" = "303" ] || fail_stage consume-status
+          case "$consume_location" in */dashboard*) ;; *) fail_stage consume-redirect ;; esac
+          grep -Eq 'neyvix_session' "$magic" || fail_stage magic-session-cookie
+
+          me_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$magic" -o /tmp/me.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage me-request
+          [ "$me_code" = "200" ] || fail_stage me-status
+          jq -e --arg email "${handle}@neyvix.com" '.authenticated == true and (.user.email | ascii_downcase) == $email' /tmp/me.json >/dev/null || fail_stage me-identity
+
+          rm -f "$replay"
+          replay_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -c "$replay" -D /tmp/replay.headers -o /tmp/replay.body -w '%{http_code}' \
+            --get --data-urlencode "token=$token" "$base/api/auth/magic-login")" || fail_stage replay-request
+          replay_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/replay.headers)"
+          replay_location="$(header_value location /tmp/replay.headers)"
+          [ "${replay_status:-$replay_code}" = "303" ] || fail_stage replay-status
+          case "$replay_location" in */login?error=invalid*) ;; *) fail_stage replay-redirect ;; esac
+          if grep -Eq 'neyvix_session' "$replay" 2>/dev/null; then fail_stage replay-created-session; fi
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -X DELETE -b "$magic" -c "$magic" -o /tmp/cleanup.json -w '%{http_code}' \
+            "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
+          jq -e '.ok == true' /tmp/cleanup.json >/dev/null || fail_stage cleanup-payload
+
+          post_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$magic" -o /tmp/post.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage post-cleanup-request
+          [ "$post_code" = "401" ] || fail_stage post-cleanup-revocation
+
+          echo "PASS: exact release -> isolated smoke account -> one-time magic token -> authenticated session -> replay rejection -> cleanup/revocation."
+          {
+            echo "### Magic Login Positive E2E: PASS"
+            echo
+            echo "- Exact production SHA verified"
+            echo "- Positive one-time token exchange verified without external mail"
+            echo "- Authenticated /api/auth/me identity verified"
+            echo "- Replay rejected without issuing a second session"
+            echo "- Disposable smoke account cleaned and session revoked"
+          } >> "$GITHUB_STEP_SUMMARY"
