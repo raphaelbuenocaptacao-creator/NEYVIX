@@ -86,17 +86,15 @@ self.addEventListener("fetch", (event) => {
   if (isPrivate(request, url)) return;
 
   // Documents stay network-only so authenticated HTML is never replayed from cache.
+  // A navigation Request already carries its credential/redirect semantics; only force
+  // the browser HTTP cache off so the active production response is always revalidated.
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
         try {
           const preload = await event.preloadResponse;
           if (preload && !preload.redirected && preload.status !== 206) return preload;
-          return await fetch(request, {
-            cache: "no-store",
-            credentials: "include",
-            redirect: "follow",
-          });
+          return await fetch(request, { cache: "no-store" });
         } catch {
           return Response.error();
         }
