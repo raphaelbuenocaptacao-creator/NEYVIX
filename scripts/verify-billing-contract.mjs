@@ -17,6 +17,7 @@ const checks = [
   ["only active users can be healed", billingDb.includes("u.is_active = true")],
   ["plan must resolve inside NEYVIX project", billingDb.includes("pl.project_id = p.id") && billingDb.includes("pl.is_active = true")],
   ["trial grants PRO feature set only", entitlements.includes('plan: "trial"') && entitlements.includes("features: PRO")],
+  ["trial requires a finite future expiry", entitlements.includes("Number.isFinite(trialEndMs)") && entitlements.includes("trialEndMs > nowMs") && !entitlements.includes("!trialEndsAt ||")],
   ["legacy fallback remains compatibility-scoped", entitlements.includes('plan: "legacy"') && entitlements.includes("features: BUSINESS")],
   ["authorization always respects resolved feature list", entitlements.includes("return entitlements.features.includes(feature);") && !entitlements.includes("return !entitlements.enforcementEnabled || entitlements.features.includes(feature);")],
 ];
