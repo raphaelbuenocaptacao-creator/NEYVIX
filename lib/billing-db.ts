@@ -96,6 +96,16 @@ export async function processBillingEvent(input: BillingEventInput) {
 
   const code = `${input.plan}-monthly`;
   const payload = JSON.stringify(input.payload ?? input);
+  const billingMetadata = JSON.stringify({
+    last_billing_event: eventId,
+    provider,
+    provider_customer_id: input.customerId ?? null,
+    provider_subscription_id: input.subscriptionId ?? null,
+    current_period_start: input.periodStart ?? null,
+    current_period_ends_at: input.periodEnd ?? null,
+    cancel_at_period_end: Boolean(input.cancelAtPeriodEnd),
+    ...(status === "cancelled" ? { canceled_at: new Date().toISOString() } : {}),
+  });
 
   let rows;
   try {
@@ -119,22 +129,8 @@ export async function processBillingEvent(input: BillingEventInput) {
         SET
           plan_id = target.plan_id,
           status = ${status},
-          provider = ${provider},
-          provider_customer_id = COALESCE(${input.customerId ?? null}, s.provider_customer_id),
-          provider_subscription_id = COALESCE(${input.subscriptionId ?? null}, s.provider_subscription_id),
-          current_period_ends_at = COALESCE(${input.periodEnd ?? null}::timestamptz, s.current_period_ends_at),
-          cancel_at_period_end = ${Boolean(input.cancelAtPeriodEnd)},
           updated_at = now(),
-          metadata = COALESCE(s.metadata, '{}'::jsonb)
-            || jsonb_build_object('last_billing_event', ${eventId})
-            || CASE
-              WHEN ${input.periodStart ?? null}::timestamptz IS NULL THEN '{}'::jsonb
-              ELSE jsonb_build_object('current_period_start', ${input.periodStart ?? null}::timestamptz)
-            END
-            || CASE
-              WHEN ${status} = 'cancelled' THEN jsonb_build_object('canceled_at', now())
-              ELSE '{}'::jsonb
-            END
+          metadata = COALESCE(s.metadata, '{}'::jsonb) || ${billingMetadata}::jsonb
         FROM target, event_insert
         WHERE s.id = target.subscription_id AND event_insert.subscription_id = s.id
         RETURNING s.id, s.status, s.plan_id
