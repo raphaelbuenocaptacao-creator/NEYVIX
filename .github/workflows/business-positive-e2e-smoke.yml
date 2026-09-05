@@ -98,7 +98,14 @@ jobs:
             -o /tmp/grant.json -w '%{http_code}' \
             --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
             "$base/api/billing/smoke-business")" || fail_stage grant-request
-          [ "$grant_code" = "200" ] || fail_stage grant-status
+          if [ "$grant_code" != "200" ]; then
+            grant_error="$(jq -r '(.error // .code // "unknown") | tostring | ascii_downcase | gsub("[^a-z0-9._-]"; "-") | .[0:80]' /tmp/grant.json 2>/dev/null || printf 'unparseable')"
+            grant_reason="$(jq -r '(.reason // "") | tostring | ascii_downcase | gsub("[^a-z0-9._-]"; "-") | .[0:80]' /tmp/grant.json 2>/dev/null || true)"
+            echo "NEYVIX_BUSINESS_GRANT_HTTP=$grant_code" >&2
+            echo "NEYVIX_BUSINESS_GRANT_ERROR=${grant_error:-unknown}" >&2
+            [ -z "$grant_reason" ] || echo "NEYVIX_BUSINESS_GRANT_REASON=$grant_reason" >&2
+            fail_stage grant-status
+          fi
           jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and (.billing.entitlements | index("mail")) != null and (.billing.entitlements | index("approvals")) != null' /tmp/grant.json >/dev/null || fail_stage grant-payload
 
           billing_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/billing.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage billing-request
