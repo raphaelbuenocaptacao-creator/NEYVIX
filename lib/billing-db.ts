@@ -85,13 +85,16 @@ export async function processBillingEvent(input: BillingEventInput) {
         provider_subscription_id = COALESCE(${input.subscriptionId ?? null}, s.provider_subscription_id),
         current_period_ends_at = COALESCE(${input.periodEnd ?? null}::timestamptz, s.current_period_ends_at),
         cancel_at_period_end = ${Boolean(input.cancelAtPeriodEnd)},
-        canceled_at = CASE WHEN ${status} = 'cancelled' THEN now() ELSE s.canceled_at END,
         updated_at = now(),
         metadata = COALESCE(s.metadata, '{}'::jsonb)
           || jsonb_build_object('last_billing_event', ${eventId})
           || CASE
             WHEN ${input.periodStart ?? null}::timestamptz IS NULL THEN '{}'::jsonb
             ELSE jsonb_build_object('current_period_start', ${input.periodStart ?? null}::timestamptz)
+          END
+          || CASE
+            WHEN ${status} = 'cancelled' THEN jsonb_build_object('canceled_at', now())
+            ELSE '{}'::jsonb
           END
       FROM target, event_insert
       WHERE s.id = target.subscription_id AND event_insert.subscription_id = s.id
