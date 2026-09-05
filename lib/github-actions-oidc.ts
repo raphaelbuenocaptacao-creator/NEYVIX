@@ -84,21 +84,52 @@ function claimsAreAllowed(claims: GitHubOidcClaims) {
   return true;
 }
 
+function findSigningKey(keys: Jwk[], kid: string) {
+  return keys.find((key) => key.kid === kid && (!key.alg || key.alg === "RS256")) ?? null;
+}
+
+async function refreshSigningKeys(now = Date.now()) {
+  const response = await fetch(GITHUB_OIDC_JWKS, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) return null;
+
+  const document = (await response.json()) as JwksDocument;
+  const keys = Array.isArray(document.keys) ? document.keys : [];
+  if (!keys.length) return null;
+
+  jwksCache = { keys, expiresAt: now + 5 * 60_000 };
+  return keys;
+}
+
 async function getSigningKey(kid: string) {
   const now = Date.now();
-  if (!jwksCache || jwksCache.expiresAt <= now) {
-    const response = await fetch(GITHUB_OIDC_JWKS, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) return null;
-    const document = (await response.json()) as JwksDocument;
-    const keys = Array.isArray(document.keys) ? document.keys : [];
-    jwksCache = { keys, expiresAt: now + 5 * 60_000 };
+  let refreshed = false;
+  let keys: Jwk[] | null = null;
+
+  if (jwksCache && jwksCache.expiresAt > now) {
+    keys = jwksCache.keys;
+  } else {
+    keys = await refreshSigningKeys(now);
+    refreshed = true;
   }
 
-  return jwksCache.keys.find((key) => key.kid === kid && (!key.alg || key.alg === "RS256")) ?? null;
+  if (!keys) return null;
+  const cachedMatch = findSigningKey(keys, kid);
+  if (cachedMatch) return cachedMatch;
+
+  // A signer can rotate before our short cache expires. Refresh once on a kid
+  // miss, but still fail closed unless the key is present in GitHub's official
+  // JWKS and the JWT signature verifies below.
+  if (!refreshed) {
+    const freshKeys = await refreshSigningKeys();
+    if (!freshKeys) return null;
+    return findSigningKey(freshKeys, kid);
+  }
+
+  return null;
 }
 
 export async function hasValidGitHubActionsOidc(request: Request) {
