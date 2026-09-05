@@ -1,0 +1,143 @@
+name: NEYVIX Business Positive E2E Smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  business-positive-e2e:
+    if: github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify Business entitlement, Mail drafts, and Approvals in production
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          cookies=/tmp/neyvix-business-positive-cookies.txt
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_BUSINESS_POSITIVE_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX Business Positive E2E::${stage}"
+            exit 1
+          }
+
+          account_registered=false
+          cleanup() {
+            set +e
+            if [ "$account_registered" = true ] && [ -s "$cookies" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$cookies" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 24); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
+
+          handle="business-positive-${GITHUB_RUN_ID}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          nonce="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "::add-mask::$password"
+          echo "::add-mask::$email"
+
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$cookies" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX Business Positive E2E' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$register_status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
+          account_registered=true
+
+          before_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/before.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage before-entitlements-request
+          [ "$before_code" = "200" ] || fail_stage before-entitlements-status
+          jq -e '.billing.plan == "trial" and (.entitlements | index("mail")) == null and (.entitlements | index("approvals")) == null' /tmp/before.json >/dev/null || fail_stage initial-trial-boundary
+
+          grant_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' -o /tmp/grant.json -w '%{http_code}' \
+            --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
+            "$base/api/billing/smoke-business")" || fail_stage grant-request
+          [ "$grant_code" = "200" ] || fail_stage grant-status
+          jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and (.billing.entitlements | index("mail")) != null and (.billing.entitlements | index("approvals")) != null' /tmp/grant.json >/dev/null || fail_stage grant-payload
+
+          billing_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/billing.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage billing-request
+          [ "$billing_code" = "200" ] || fail_stage billing-status
+          jq -e '.billing.plan == "business" and .billing.status == "active" and (.entitlements | index("mail")) != null and (.entitlements | index("approvals")) != null' /tmp/billing.json >/dev/null || fail_stage business-entitlements
+
+          create_mail_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' -o /tmp/mail-create.json -w '%{http_code}' \
+            --data "$(jq -nc --arg to "$email" '{to:$to,subject:"Business E2E draft",text:"Disposable production smoke draft"}')" \
+            "$base/api/mail/drafts")" || fail_stage mail-create-request
+          [ "$create_mail_code" = "201" ] || fail_stage mail-create-status
+          draft_id="$(jq -r '.draft.id // empty' /tmp/mail-create.json)"
+          [[ "$draft_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage mail-create-id
+
+          list_mail_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/mail-list.json -w '%{http_code}' "$base/api/mail/drafts")" || fail_stage mail-list-request
+          [ "$list_mail_code" = "200" ] || fail_stage mail-list-status
+          jq -e --arg id "$draft_id" '.entitlement.plan == "business" and any(.drafts[]?; .id == $id)' /tmp/mail-list.json >/dev/null || fail_stage mail-persistence
+
+          delete_mail_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/mail-delete.json -w '%{http_code}' "$base/api/mail/drafts?id=$draft_id")" || fail_stage mail-delete-request
+          [ "$delete_mail_code" = "200" ] || fail_stage mail-delete-status
+          jq -e --arg id "$draft_id" '.ok == true and .deletedId == $id' /tmp/mail-delete.json >/dev/null || fail_stage mail-delete-payload
+
+          approval_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' -o /tmp/approval-create.json -w '%{http_code}' \
+            --data '{"title":"Business E2E approval","payload":{"source":"production-e2e","disposable":true}}' \
+            "$base/api/automation/approvals")" || fail_stage approval-create-request
+          [ "$approval_code" = "201" ] || fail_stage approval-create-status
+          approval_id="$(jq -r '.id // empty' /tmp/approval-create.json)"
+          [ -n "$approval_id" ] || fail_stage approval-create-id
+
+          approvals_list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/approvals-list.json -w '%{http_code}' "$base/api/automation/approvals")" || fail_stage approvals-list-request
+          [ "$approvals_list_code" = "200" ] || fail_stage approvals-list-status
+          jq -e --arg id "$approval_id" 'any(.approvals[]?; .id == $id)' /tmp/approvals-list.json >/dev/null || fail_stage approval-persistence
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
+          jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage cleanup-payload
+          account_registered=false
+
+          {
+            echo "### Business Positive E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release SHA, connected database, real disposable identity/session, initial trial boundary, isolated Business test entitlement, Mail draft create/list/delete persistence, Approval create/list persistence, and cleanup."
+            echo "No checkout, real payment, external billing provider, Mail send, external AI generation, or destructive schema migration is invoked. The Business elevation endpoint is restricted to the authenticated business-positive-* smoke namespace."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PASS: Business entitlement, Mail draft CRUD, and Approvals persistence verified in production."
