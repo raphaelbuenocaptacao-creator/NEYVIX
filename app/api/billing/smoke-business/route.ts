@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { processBillingEvent } from "@/lib/billing-db";
 import { getEntitlements } from "@/lib/entitlements";
+import { hasValidGitHubActionsOidc } from "@/lib/github-actions-oidc";
 import { readActiveSession } from "@/lib/session";
 import { isSmokeAccountEmail } from "@/lib/smoke-user-db";
 
@@ -21,15 +22,21 @@ function response(body: unknown, status = 200) {
 function hasValidE2ESecret(request: Request) {
   const configured = process.env.NEYVIX_BUSINESS_E2E_SECRET?.trim() ?? "";
   const supplied = request.headers.get("x-neyvix-e2e-secret")?.trim() ?? "";
-
-  // Fail closed. Without a dedicated high-entropy secret there is no path
-  // that can synthesize a Business entitlement in production.
   if (configured.length < 32 || supplied.length !== configured.length) return false;
   return timingSafeEqual(Buffer.from(supplied), Buffer.from(configured));
 }
 
+async function isAuthorizedE2ERequest(request: Request) {
+  // The legacy high-entropy secret remains supported, but GitHub Actions can
+  // authenticate without cross-platform secret synchronization by presenting
+  // a short-lived, cryptographically verified OIDC token whose repository,
+  // branch, workflow, audience and event claims are pinned by our verifier.
+  if (hasValidE2ESecret(request)) return true;
+  return hasValidGitHubActionsOidc(request);
+}
+
 export async function POST(request: Request) {
-  if (!hasValidE2ESecret(request)) {
+  if (!(await isAuthorizedE2ERequest(request))) {
     return response({ error: "Não encontrado" }, 404);
   }
 
