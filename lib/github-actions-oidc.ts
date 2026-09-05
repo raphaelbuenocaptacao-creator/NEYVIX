@@ -2,7 +2,8 @@ const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_OIDC_JWKS = `${GITHUB_OIDC_ISSUER}/.well-known/jwks`;
 const EXPECTED_REPOSITORY = "raphaelbuenocaptacao-creator/NEYVIX";
 const EXPECTED_REF = "refs/heads/main";
-const EXPECTED_WORKFLOW_REF = `${EXPECTED_REPOSITORY}/.github/workflows/business-positive-e2e-smoke.yml@${EXPECTED_REF}`;
+const EXPECTED_WORKFLOW_PATH = `${EXPECTED_REPOSITORY}/.github/workflows/business-positive-e2e-smoke.yml`;
+const EXPECTED_WORKFLOW_REF = `${EXPECTED_WORKFLOW_PATH}@${EXPECTED_REF}`;
 const EXPECTED_AUDIENCE = "vercel";
 const MAX_TOKEN_AGE_SECONDS = 10 * 60;
 const CLOCK_SKEW_SECONDS = 30;
@@ -26,7 +27,6 @@ type GitHubOidcClaims = {
 };
 
 type Jwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
-
 type JwksDocument = { keys?: Jwk[] };
 
 let jwksCache: { expiresAt: number; keys: Jwk[] } | null = null;
@@ -50,6 +50,25 @@ function audienceMatches(aud: unknown) {
   return Array.isArray(aud) && aud.some((value) => value === EXPECTED_AUDIENCE);
 }
 
+function repositoryMatches(repository: unknown) {
+  return typeof repository === "string" && repository.toLowerCase() === EXPECTED_REPOSITORY.toLowerCase();
+}
+
+function workflowRefMatches(workflowRef: unknown) {
+  if (typeof workflowRef !== "string") return false;
+  if (workflowRef.toLowerCase() === EXPECTED_WORKFLOW_REF.toLowerCase()) return true;
+
+  const separator = workflowRef.lastIndexOf("@");
+  if (separator <= 0) return false;
+  const path = workflowRef.slice(0, separator);
+  const revision = workflowRef.slice(separator + 1);
+
+  // GitHub can represent workflow_ref using the immutable workflow commit SHA
+  // instead of the branch ref. The signed token must still point to the exact
+  // NEYVIX workflow path, while the separate ref claim remains pinned to main.
+  return path.toLowerCase() === EXPECTED_WORKFLOW_PATH.toLowerCase() && /^[0-9a-f]{40}$/i.test(revision);
+}
+
 function claimsAreAllowed(claims: GitHubOidcClaims) {
   const now = Math.floor(Date.now() / 1000);
   const exp = typeof claims.exp === "number" ? claims.exp : 0;
@@ -57,8 +76,8 @@ function claimsAreAllowed(claims: GitHubOidcClaims) {
   const iat = typeof claims.iat === "number" ? claims.iat : 0;
 
   if (claims.iss !== GITHUB_OIDC_ISSUER || !audienceMatches(claims.aud)) return false;
-  if (claims.repository !== EXPECTED_REPOSITORY || claims.ref !== EXPECTED_REF) return false;
-  if (claims.workflow_ref !== EXPECTED_WORKFLOW_REF || claims.event_name !== "deployment_status") return false;
+  if (!repositoryMatches(claims.repository) || claims.ref !== EXPECTED_REF) return false;
+  if (!workflowRefMatches(claims.workflow_ref) || claims.event_name !== "deployment_status") return false;
   if (!exp || !iat || exp < now - CLOCK_SKEW_SECONDS) return false;
   if (nbf && nbf > now + CLOCK_SKEW_SECONDS) return false;
   if (iat > now + CLOCK_SKEW_SECONDS || now - iat > MAX_TOKEN_AGE_SECONDS) return false;
