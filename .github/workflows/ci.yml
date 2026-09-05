@@ -48,6 +48,9 @@ jobs:
       - name: Business positive entitlement contract
         run: node scripts/verify-business-entitlement-contract.mjs
 
+      - name: Business synthetic E2E bridge safety contract
+        run: node scripts/verify-business-smoke-bridge-contract.mjs
+
       - name: Mail transport safety contract
         run: node scripts/verify-mail-transport-contract.mjs
 
