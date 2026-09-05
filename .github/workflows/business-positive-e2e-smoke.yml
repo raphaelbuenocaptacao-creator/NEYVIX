@@ -15,7 +15,6 @@ jobs:
     env:
       NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      NEYVIX_BUSINESS_E2E_SECRET: ${{ secrets.NEYVIX_BUSINESS_E2E_SECRET }}
     steps:
       - name: Acquire GitHub OIDC token
         shell: bash
@@ -33,7 +32,10 @@ jobs:
           set -euo pipefail
           base="${NEYVIX_PRODUCTION_URL%/}"
           cookies=/tmp/neyvix-business-positive-cookies.txt
-          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          headers=(
+            -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}"
+            -H "x-neyvix-github-oidc: ${VERCEL_OIDC_TOKEN}"
+          )
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
           fi
@@ -44,9 +46,6 @@ jobs:
             echo "::error title=NEYVIX Business Positive E2E::${stage}"
             exit 1
           }
-
-          [ "${#NEYVIX_BUSINESS_E2E_SECRET}" -ge 32 ] || fail_stage dedicated-e2e-secret-missing
-          echo "::add-mask::$NEYVIX_BUSINESS_E2E_SECRET"
 
           account_registered=false
           cleanup() {
@@ -96,7 +95,6 @@ jobs:
 
           grant_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
             -H 'content-type: application/json' \
-            -H "x-neyvix-e2e-secret: ${NEYVIX_BUSINESS_E2E_SECRET}" \
             -o /tmp/grant.json -w '%{http_code}' \
             --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
             "$base/api/billing/smoke-business")" || fail_stage grant-request
@@ -143,7 +141,7 @@ jobs:
           {
             echo "### Business Positive E2E Smoke: PASS"
             echo
-            echo "Verified exact production release SHA, connected database, real disposable identity/session, initial trial boundary, isolated Business test entitlement, Mail draft create/list/delete persistence, Approval create/list persistence, and cleanup."
-            echo "No checkout, real payment, external billing provider, Mail send, external AI generation, or destructive schema migration is invoked. Business elevation fails closed unless a dedicated E2E secret is configured and is still restricted to the authenticated business-positive-* smoke namespace."
+            echo "Verified exact production release SHA, connected database, disposable identity/session, initial trial boundary, OIDC-authorized Business test entitlement, Mail draft CRUD persistence, Approval persistence, and cleanup."
+            echo "No checkout, real payment, external billing provider, Mail send, external AI generation, or destructive schema migration is invoked. The Business bridge accepts only a cryptographically verified short-lived GitHub OIDC token pinned to this repository, main branch, workflow, deployment_status event and audience, or the legacy dedicated high-entropy secret."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "PASS: Business entitlement, Mail draft CRUD, and Approvals persistence verified in production."
