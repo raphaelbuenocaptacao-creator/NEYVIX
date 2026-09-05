@@ -15,6 +15,12 @@ export type BillingEventInput = {
   payload?: unknown;
 };
 
+type DbFailureStage = "identity_lookup" | "subscription_heal" | "billing_write";
+
+type PostgresLikeError = {
+  code?: unknown;
+};
+
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
@@ -27,6 +33,26 @@ function normalizeStatus(type: string) {
   if (["subscription.cancelled", "subscription.canceled"].includes(value)) return "cancelled";
   if (["subscription.expired"].includes(value)) return "expired";
   return null;
+}
+
+function classifyDatabaseFailure(stage: DbFailureStage, error: unknown) {
+  const code =
+    typeof error === "object" && error !== null && typeof (error as PostgresLikeError).code === "string"
+      ? String((error as PostgresLikeError).code)
+      : "";
+
+  // Only stable SQLSTATE classes are surfaced. Never return the database
+  // message, query, connection string, values or stack to the caller.
+  if (code === "42P10") return `${stage}_idempotency_constraint_missing`;
+  if (code === "42703") return `${stage}_schema_column_missing`;
+  if (code === "42P01") return `${stage}_schema_table_missing`;
+  if (code === "23503") return `${stage}_foreign_key_violation`;
+  if (code === "23505") return `${stage}_unique_violation`;
+  if (code === "23514") return `${stage}_check_violation`;
+  if (code.startsWith("23")) return `${stage}_integrity_violation`;
+  if (code.startsWith("42")) return `${stage}_schema_mismatch`;
+  if (code.startsWith("08")) return `${stage}_connection_failure`;
+  return `${stage}_database_failure`;
 }
 
 export async function processBillingEvent(input: BillingEventInput) {
@@ -44,67 +70,83 @@ export async function processBillingEvent(input: BillingEventInput) {
   // billing event is not discarded merely because the user has not logged in
   // since subscription healing was introduced. This creates no charge and
   // remains idempotent via the subscription (project_id, user_id) constraint.
-  const identityRows = await sql`
-    SELECT u.id
-    FROM public.users u
-    JOIN public.projects p ON p.slug = 'neyvix' AND p.is_active = true
-    WHERE lower(u.email) = ${email} AND u.is_active = true
-    LIMIT 1
-  `;
+  let identityRows;
+  try {
+    identityRows = await sql`
+      SELECT u.id
+      FROM public.users u
+      JOIN public.projects p ON p.slug = 'neyvix' AND p.is_active = true
+      WHERE lower(u.email) = ${email} AND u.is_active = true
+      LIMIT 1
+    `;
+  } catch (error) {
+    return { ok: false as const, reason: classifyDatabaseFailure("identity_lookup", error) };
+  }
+
   const userId = String(identityRows[0]?.id ?? "");
   if (!userId) return { ok: false as const, reason: "account_or_plan_not_found" };
 
-  const subscriptionReady = await ensureNeyvixSubscription(userId);
+  let subscriptionReady = false;
+  try {
+    subscriptionReady = await ensureNeyvixSubscription(userId);
+  } catch (error) {
+    return { ok: false as const, reason: classifyDatabaseFailure("subscription_heal", error) };
+  }
   if (!subscriptionReady) return { ok: false as const, reason: "subscription_unavailable" };
 
   const code = `${input.plan}-monthly`;
   const payload = JSON.stringify(input.payload ?? input);
 
-  const rows = await sql`
-    WITH target AS (
-      SELECT s.id AS subscription_id, u.id AS user_id, p.id AS project_id, pl.id AS plan_id
-      FROM public.users u
-      JOIN public.projects p ON p.slug = 'neyvix' AND p.is_active = true
-      JOIN public.subscriptions s ON s.user_id = u.id AND s.project_id = p.id
-      JOIN public.plans pl ON pl.project_id = p.id AND pl.code = ${code} AND pl.is_active = true
-      WHERE lower(u.email) = ${email}
-      LIMIT 1
-    ), event_insert AS (
-      INSERT INTO public.neyvix_billing_events (provider, provider_event_id, event_type, subscription_id, payload, processed_at)
-      SELECT ${provider}, ${eventId}, ${input.type}, target.subscription_id, ${payload}::jsonb, now()
-      FROM target
-      ON CONFLICT (provider, provider_event_id) DO NOTHING
-      RETURNING subscription_id
-    ), updated AS (
-      UPDATE public.subscriptions s
-      SET
-        plan_id = target.plan_id,
-        status = ${status},
-        provider = ${provider},
-        provider_customer_id = COALESCE(${input.customerId ?? null}, s.provider_customer_id),
-        provider_subscription_id = COALESCE(${input.subscriptionId ?? null}, s.provider_subscription_id),
-        current_period_ends_at = COALESCE(${input.periodEnd ?? null}::timestamptz, s.current_period_ends_at),
-        cancel_at_period_end = ${Boolean(input.cancelAtPeriodEnd)},
-        updated_at = now(),
-        metadata = COALESCE(s.metadata, '{}'::jsonb)
-          || jsonb_build_object('last_billing_event', ${eventId})
-          || CASE
-            WHEN ${input.periodStart ?? null}::timestamptz IS NULL THEN '{}'::jsonb
-            ELSE jsonb_build_object('current_period_start', ${input.periodStart ?? null}::timestamptz)
-          END
-          || CASE
-            WHEN ${status} = 'cancelled' THEN jsonb_build_object('canceled_at', now())
-            ELSE '{}'::jsonb
-          END
-      FROM target, event_insert
-      WHERE s.id = target.subscription_id AND event_insert.subscription_id = s.id
-      RETURNING s.id, s.status, s.plan_id
-    )
-    SELECT
-      (SELECT count(*)::int FROM target) AS target_count,
-      (SELECT count(*)::int FROM event_insert) AS event_count,
-      (SELECT count(*)::int FROM updated) AS updated_count
-  `;
+  let rows;
+  try {
+    rows = await sql`
+      WITH target AS (
+        SELECT s.id AS subscription_id, u.id AS user_id, p.id AS project_id, pl.id AS plan_id
+        FROM public.users u
+        JOIN public.projects p ON p.slug = 'neyvix' AND p.is_active = true
+        JOIN public.subscriptions s ON s.user_id = u.id AND s.project_id = p.id
+        JOIN public.plans pl ON pl.project_id = p.id AND pl.code = ${code} AND pl.is_active = true
+        WHERE lower(u.email) = ${email}
+        LIMIT 1
+      ), event_insert AS (
+        INSERT INTO public.neyvix_billing_events (provider, provider_event_id, event_type, subscription_id, payload, processed_at)
+        SELECT ${provider}, ${eventId}, ${input.type}, target.subscription_id, ${payload}::jsonb, now()
+        FROM target
+        ON CONFLICT (provider, provider_event_id) DO NOTHING
+        RETURNING subscription_id
+      ), updated AS (
+        UPDATE public.subscriptions s
+        SET
+          plan_id = target.plan_id,
+          status = ${status},
+          provider = ${provider},
+          provider_customer_id = COALESCE(${input.customerId ?? null}, s.provider_customer_id),
+          provider_subscription_id = COALESCE(${input.subscriptionId ?? null}, s.provider_subscription_id),
+          current_period_ends_at = COALESCE(${input.periodEnd ?? null}::timestamptz, s.current_period_ends_at),
+          cancel_at_period_end = ${Boolean(input.cancelAtPeriodEnd)},
+          updated_at = now(),
+          metadata = COALESCE(s.metadata, '{}'::jsonb)
+            || jsonb_build_object('last_billing_event', ${eventId})
+            || CASE
+              WHEN ${input.periodStart ?? null}::timestamptz IS NULL THEN '{}'::jsonb
+              ELSE jsonb_build_object('current_period_start', ${input.periodStart ?? null}::timestamptz)
+            END
+            || CASE
+              WHEN ${status} = 'cancelled' THEN jsonb_build_object('canceled_at', now())
+              ELSE '{}'::jsonb
+            END
+        FROM target, event_insert
+        WHERE s.id = target.subscription_id AND event_insert.subscription_id = s.id
+        RETURNING s.id, s.status, s.plan_id
+      )
+      SELECT
+        (SELECT count(*)::int FROM target) AS target_count,
+        (SELECT count(*)::int FROM event_insert) AS event_count,
+        (SELECT count(*)::int FROM updated) AS updated_count
+    `;
+  } catch (error) {
+    return { ok: false as const, reason: classifyDatabaseFailure("billing_write", error) };
+  }
 
   const result = rows[0] as { target_count?: number; event_count?: number; updated_count?: number } | undefined;
   if (!result || Number(result.target_count ?? 0) === 0) return { ok: false as const, reason: "account_or_plan_not_found" };
