@@ -97,7 +97,8 @@ export function resolveEntitlementRecord(
 
   const status = row.status ?? null;
   const trialEndsAt = row.trial_ends_at ? String(row.trial_ends_at) : null;
-  const trialActive = status === "trialing" && (!trialEndsAt || new Date(trialEndsAt).getTime() > nowMs);
+  const trialEndMs = trialEndsAt ? new Date(trialEndsAt).getTime() : Number.NaN;
+  const trialActive = status === "trialing" && Number.isFinite(trialEndMs) && trialEndMs > nowMs;
   if (trialActive) {
     return { plan: "trial", status, features: PRO, trialEndsAt, enforcementEnabled, source: "database" };
   }
