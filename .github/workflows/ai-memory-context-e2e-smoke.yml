@@ -78,7 +78,7 @@ jobs:
           [ "$anonymous_code" = "401" ] || fail_stage context-anonymous-not-blocked
 
           suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          handle="e2e-smoke-ai-memory-${suffix}"
+          handle="e2e-ai-mem-${suffix}"
           email="${handle}@neyvix.com"
           password="$(openssl rand -base64 30 | tr -d '\n')"
           echo "::add-mask::$email"
