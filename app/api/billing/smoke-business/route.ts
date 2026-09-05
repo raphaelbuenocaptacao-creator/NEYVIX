@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
@@ -17,7 +18,23 @@ function response(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: PRIVATE_HEADERS });
 }
 
+function hasValidE2ESecret(request: Request) {
+  const configured = process.env.NEYVIX_BUSINESS_E2E_SECRET?.trim() ?? "";
+  const supplied = request.headers.get("x-neyvix-e2e-secret")?.trim() ?? "";
+
+  // Fail closed. A production deployment without a dedicated, high-entropy
+  // smoke secret must not expose any path that can synthesize an entitlement.
+  if (configured.length < 32 || supplied.length !== configured.length) return false;
+
+  return timingSafeEqual(Buffer.from(supplied), Buffer.from(configured));
+}
+
 export async function POST(request: Request) {
+  if (!hasValidE2ESecret(request)) {
+    // Deliberately look unavailable instead of advertising the test bridge.
+    return response({ error: "Não encontrado" }, 404);
+  }
+
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) return response({ error: "Autenticação necessária" }, 401);
