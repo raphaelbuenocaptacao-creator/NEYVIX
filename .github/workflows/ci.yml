@@ -45,6 +45,9 @@ jobs:
       - name: Billing safety contract
         run: node scripts/verify-billing-contract.mjs
 
+      - name: Business positive entitlement contract
+        run: node scripts/verify-business-entitlement-contract.mjs
+
       - name: Mail transport safety contract
         run: node scripts/verify-mail-transport-contract.mjs
 
