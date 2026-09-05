@@ -1,9 +1,9 @@
+import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { processBillingEvent } from "@/lib/billing-db";
 import { getEntitlements } from "@/lib/entitlements";
-import { verifyBusinessE2EOidc } from "@/lib/github-oidc";
 import { readActiveSession } from "@/lib/session";
 import { isSmokeAccountEmail } from "@/lib/smoke-user-db";
 
@@ -18,10 +18,18 @@ function response(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: PRIVATE_HEADERS });
 }
 
+function hasValidE2ESecret(request: Request) {
+  const configured = process.env.NEYVIX_BUSINESS_E2E_SECRET?.trim() ?? "";
+  const supplied = request.headers.get("x-neyvix-e2e-secret")?.trim() ?? "";
+
+  // Fail closed. Without a dedicated high-entropy secret there is no path
+  // that can synthesize a Business entitlement in production.
+  if (configured.length < 32 || supplied.length !== configured.length) return false;
+  return timingSafeEqual(Buffer.from(supplied), Buffer.from(configured));
+}
+
 export async function POST(request: Request) {
-  const trustedWorkflow = await verifyBusinessE2EOidc(request.headers.get("x-neyvix-github-oidc"));
-  if (!trustedWorkflow) {
-    // Deliberately look unavailable instead of advertising the test bridge.
+  if (!hasValidE2ESecret(request)) {
     return response({ error: "Não encontrado" }, 404);
   }
 
