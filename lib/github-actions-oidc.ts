@@ -28,6 +28,7 @@ type GitHubOidcClaims = {
 
 type Jwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
 type JwksDocument = { keys?: Jwk[] };
+type WorkflowRefMatch = "main-ref" | "immutable-sha" | null;
 
 let jwksCache: { expiresAt: number; keys: Jwk[] } | null = null;
 
@@ -54,19 +55,24 @@ function repositoryMatches(repository: unknown) {
   return typeof repository === "string" && repository.toLowerCase() === EXPECTED_REPOSITORY.toLowerCase();
 }
 
-function workflowRefMatches(workflowRef: unknown) {
-  if (typeof workflowRef !== "string") return false;
-  if (workflowRef.toLowerCase() === EXPECTED_WORKFLOW_REF.toLowerCase()) return true;
+function workflowRefMatch(workflowRef: unknown): WorkflowRefMatch {
+  if (typeof workflowRef !== "string") return null;
+  if (workflowRef.toLowerCase() === EXPECTED_WORKFLOW_REF.toLowerCase()) return "main-ref";
 
   const separator = workflowRef.lastIndexOf("@");
-  if (separator <= 0) return false;
+  if (separator <= 0) return null;
   const path = workflowRef.slice(0, separator);
   const revision = workflowRef.slice(separator + 1);
 
-  // GitHub can represent workflow_ref using the immutable workflow commit SHA
-  // instead of the branch ref. The signed token must still point to the exact
-  // NEYVIX workflow path, while the separate ref claim remains pinned to main.
-  return path.toLowerCase() === EXPECTED_WORKFLOW_PATH.toLowerCase() && /^[0-9a-f]{40}$/i.test(revision);
+  // GitHub can represent workflow_ref using the immutable workflow commit SHA.
+  // In that form we additionally require the separate signed ref claim to pin
+  // the run to main. This prevents a SHA-only workflow identity from widening
+  // authorization to another branch.
+  if (path.toLowerCase() === EXPECTED_WORKFLOW_PATH.toLowerCase() && /^[0-9a-f]{40}$/i.test(revision)) {
+    return "immutable-sha";
+  }
+
+  return null;
 }
 
 function claimsAreAllowed(claims: GitHubOidcClaims) {
@@ -74,10 +80,23 @@ function claimsAreAllowed(claims: GitHubOidcClaims) {
   const exp = typeof claims.exp === "number" ? claims.exp : 0;
   const nbf = typeof claims.nbf === "number" ? claims.nbf : 0;
   const iat = typeof claims.iat === "number" ? claims.iat : 0;
+  const workflowMatch = workflowRefMatch(claims.workflow_ref);
 
   if (claims.iss !== GITHUB_OIDC_ISSUER || !audienceMatches(claims.aud)) return false;
-  if (!repositoryMatches(claims.repository) || claims.ref !== EXPECTED_REF) return false;
-  if (!workflowRefMatches(claims.workflow_ref) || claims.event_name !== "deployment_status") return false;
+  if (!repositoryMatches(claims.repository) || !workflowMatch) return false;
+  if (claims.event_name !== "deployment_status") return false;
+
+  // For deployment_status runs GitHub may omit the standalone ref claim. The
+  // signed workflow_ref still pins the workflow itself to refs/heads/main. If
+  // ref is present it must agree with main. If workflow_ref is SHA-based, ref
+  // is mandatory so an immutable workflow revision cannot authorize another
+  // branch by itself.
+  if (workflowMatch === "main-ref") {
+    if (claims.ref != null && claims.ref !== EXPECTED_REF) return false;
+  } else if (claims.ref !== EXPECTED_REF) {
+    return false;
+  }
+
   if (!exp || !iat || exp < now - CLOCK_SKEW_SECONDS) return false;
   if (nbf && nbf > now + CLOCK_SKEW_SECONDS) return false;
   if (iat > now + CLOCK_SKEW_SECONDS || now - iat > MAX_TOKEN_AGE_SECONDS) return false;
