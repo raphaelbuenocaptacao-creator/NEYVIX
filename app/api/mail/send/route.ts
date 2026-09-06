@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     return NextResponse.redirect(new URL(`/mail?error=${reason}`, request.url), 303);
   }
 
-  await saveSentMessage({
+  const persisted = await saveSentMessage({
     email: session.email,
     displayName: session.name,
     to,
@@ -42,6 +42,10 @@ export async function POST(request: Request) {
     text,
     providerMessageId: result.providerMessageId,
   });
+
+  if (!persisted) {
+    return NextResponse.redirect(new URL("/mail?error=sent_persist_failed", request.url), 303);
+  }
 
   return NextResponse.redirect(new URL("/mail?folder=sent&sent=1", request.url), 303);
 }
