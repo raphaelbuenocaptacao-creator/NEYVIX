@@ -26,7 +26,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify Business entitlement, billing idempotency, Mail drafts, and Approvals in production
+      - name: Verify Business lifecycle, billing idempotency, Mail drafts, and Approvals in production
         shell: bash
         run: |
           set -euo pipefail
@@ -106,7 +106,7 @@ jobs:
             [ -z "$grant_reason" ] || echo "NEYVIX_BUSINESS_GRANT_REASON=$grant_reason" >&2
             fail_stage grant-status
           fi
-          jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and (.billing.entitlements | index("mail")) != null and (.billing.entitlements | index("approvals")) != null and .billingEvent.duplicate == false and .billingEvent.updated == true' /tmp/grant.json >/dev/null || fail_stage grant-payload
+          jq -e '.ok == true and .action == "activate" and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and (.billing.entitlements | index("mail")) != null and (.billing.entitlements | index("approvals")) != null and .billingEvent.duplicate == false and .billingEvent.updated == true' /tmp/grant.json >/dev/null || fail_stage grant-payload
 
           replay_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
             -H 'content-type: application/json' \
@@ -114,7 +114,7 @@ jobs:
             --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
             "$base/api/billing/smoke-business")" || fail_stage replay-request
           [ "$replay_code" = "200" ] || fail_stage replay-status
-          jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and .billingEvent.duplicate == true and .billingEvent.updated == false' /tmp/replay.json >/dev/null || fail_stage replay-idempotency
+          jq -e '.ok == true and .action == "activate" and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and .billingEvent.duplicate == true and .billingEvent.updated == false' /tmp/replay.json >/dev/null || fail_stage replay-idempotency
 
           billing_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/billing.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage billing-request
           [ "$billing_code" = "200" ] || fail_stage billing-status
@@ -148,15 +148,42 @@ jobs:
           [ "$approvals_list_code" = "200" ] || fail_stage approvals-list-status
           jq -e --arg id "$approval_id" 'any(.approvals[]?; .id == $id)' /tmp/approvals-list.json >/dev/null || fail_stage approval-persistence
 
+          cancel_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' \
+            -o /tmp/cancel.json -w '%{http_code}' \
+            --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce,action:"cancel"}')" \
+            "$base/api/billing/smoke-business")" || fail_stage cancel-request
+          [ "$cancel_code" = "200" ] || fail_stage cancel-status
+          jq -e '.ok == true and .action == "cancel" and .testOnly == true and .externalPayment == false and .billing.plan == "expired" and (.billing.status == "cancelled" or .billing.status == "canceled") and (.billing.entitlements | index("mail")) == null and (.billing.entitlements | index("approvals")) == null and .billingEvent.duplicate == false and .billingEvent.updated == true' /tmp/cancel.json >/dev/null || fail_stage cancel-payload
+
+          cancel_replay_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' \
+            -o /tmp/cancel-replay.json -w '%{http_code}' \
+            --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce,action:"cancel"}')" \
+            "$base/api/billing/smoke-business")" || fail_stage cancel-replay-request
+          [ "$cancel_replay_code" = "200" ] || fail_stage cancel-replay-status
+          jq -e '.ok == true and .action == "cancel" and .billing.plan == "expired" and (.billing.status == "cancelled" or .billing.status == "canceled") and .billingEvent.duplicate == true and .billingEvent.updated == false' /tmp/cancel-replay.json >/dev/null || fail_stage cancel-replay-idempotency
+
+          revoked_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/revoked.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage revoked-entitlements-request
+          [ "$revoked_code" = "200" ] || fail_stage revoked-entitlements-status
+          jq -e '.billing.plan == "expired" and (.billing.status == "cancelled" or .billing.status == "canceled") and (.entitlements | index("mail")) == null and (.entitlements | index("approvals")) == null' /tmp/revoked.json >/dev/null || fail_stage revoked-entitlements
+
+          revoked_mail_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/revoked-mail.json -w '%{http_code}' "$base/api/mail/drafts")" || fail_stage revoked-mail-request
+          [ "$revoked_mail_code" = "403" ] || fail_stage revoked-mail-access
+          jq -e '.reason == "upgrade_required" and .plan == "expired"' /tmp/revoked-mail.json >/dev/null || fail_stage revoked-mail-payload
+
+          revoked_approvals_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/revoked-approvals.json -w '%{http_code}' "$base/api/automation/approvals")" || fail_stage revoked-approvals-request
+          [ "$revoked_approvals_code" = "403" ] || fail_stage revoked-approvals-access
+
           cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
           [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
           jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage cleanup-payload
           account_registered=false
 
           {
-            echo "### Business Positive E2E Smoke: PASS"
+            echo "### Business Lifecycle E2E Smoke: PASS"
             echo
-            echo "Verified exact production release SHA, connected database, disposable identity/session, initial trial boundary, OIDC-authorized Business test entitlement, billing event replay/idempotency, Mail draft CRUD persistence, Approval persistence, and cleanup."
+            echo "Verified exact production release SHA, connected database, disposable identity/session, initial trial boundary, OIDC-authorized Business activation, activation replay/idempotency, Mail draft CRUD persistence, Approval persistence, synthetic cancellation, cancellation replay/idempotency, entitlement revocation, post-revocation Mail/Approvals denial, and cleanup."
             echo "No checkout, real payment, external billing provider, Mail send, external AI generation, or destructive schema migration is invoked. The Business bridge accepts only a cryptographically verified short-lived GitHub OIDC token pinned to this repository, main branch, workflow, deployment_status event and audience, or the legacy dedicated high-entropy secret."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: Business entitlement, billing replay/idempotency, Mail draft CRUD, and Approvals persistence verified in production."
+          echo "PASS: Business activation/revocation lifecycle, billing replay/idempotency, Mail draft CRUD, and Approvals persistence/access boundaries verified in production."
