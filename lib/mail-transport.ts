@@ -30,10 +30,6 @@ function webhookTransport() {
 }
 
 function validFromAddress(value: string) {
-  // Accept either address@example.com or a common display-name form such as
-  // "NEYVIX <no-reply@neyvix.com>". Requiring an explicit sender prevents
-  // readiness from claiming Resend is usable while silently relying on an
-  // unverified hard-coded domain.
   return /^(?:[^<>\r\n]+\s*)?<[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>$/.test(value)
     || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(value);
 }
@@ -98,13 +94,17 @@ async function postMail(url: string, headers: Record<string, string>, body: unkn
       signal: controller.signal,
     });
     if (!response.ok) {
-      return { ok: false as const, reason: "transport_failed", status: response.status };
+      return { ok: false as const, reason: "transport_rejected" as const, status: response.status, retrySafe: true as const };
     }
     const data = await response.json().catch(() => ({}));
     return { ok: true as const, providerMessageId: providerMessageId(data) };
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
-    return { ok: false as const, reason: timedOut ? "transport_timeout" : "transport_failed" };
+    return {
+      ok: false as const,
+      reason: timedOut ? "transport_timeout" as const : "transport_unknown" as const,
+      retrySafe: false as const,
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -142,5 +142,9 @@ export async function deliverMail(message: MailTransportMessage) {
     );
   }
 
-  return { ok: false as const, reason: webhook || resend ? "transport_invalid" : "transport_not_configured" };
+  return {
+    ok: false as const,
+    reason: webhook || resend ? "transport_invalid" as const : "transport_not_configured" as const,
+    retrySafe: true as const,
+  };
 }
