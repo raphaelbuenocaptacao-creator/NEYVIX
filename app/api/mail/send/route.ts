@@ -5,6 +5,7 @@ import { readActiveSession } from "@/lib/session";
 import { getEntitlements, canUse } from "@/lib/entitlements";
 import { deliverMail } from "@/lib/mail-transport";
 import { beginOutgoingMessage, finalizeOutgoingMessage, markOutgoingMessageFailed } from "@/lib/mail-db";
+import { getOwnedMailOutboxPayload } from "@/lib/mail-outbox-db";
 
 function validEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -52,7 +53,12 @@ export async function POST(request: Request) {
     return NextResponse.redirect(new URL("/mail?folder=sent&error=delivery_unknown", request.url), 303);
   }
 
-  const result = await deliverMail({ from: session.email, to, subject, text });
+  const payload = await getOwnedMailOutboxPayload(session.email, reservation.messageId).catch(() => null);
+  if (!payload || !validEmail(payload.to) || payload.subject.length < 1 || payload.text.length < 1) {
+    return NextResponse.redirect(new URL("/mail?folder=sent&error=delivery_unknown", request.url), 303);
+  }
+
+  const result = await deliverMail({ from: session.email, to: payload.to, subject: payload.subject, text: payload.text });
   if (!result.ok) {
     if (result.retrySafe) {
       await markOutgoingMessageFailed(session.email, reservation.messageId).catch(() => false);
