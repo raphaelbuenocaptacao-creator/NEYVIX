@@ -70,7 +70,8 @@ jobs:
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
           jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
 
-          handle="business-positive-mail-retry-${GITHUB_RUN_ID}"
+          # Keep the disposable NEYVIX ID safely inside the product's 32-character handle contract.
+          handle="mailretry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           email="${handle}@neyvix.com"
           password="$(openssl rand -base64 30 | tr -d '\n')"
           nonce="mail-retry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -87,6 +88,8 @@ jobs:
             "$base/api/auth/register" >/dev/null || fail_stage register-request
           register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
           [ "$register_status" = "303" ] || fail_stage register-status
+          register_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]+:[[:space:]]*/, ""); gsub(/\r/, ""); print; exit}' /tmp/register.headers)"
+          [[ "$register_location" == "$base/dashboard"* ]] || fail_stage register-success-redirect
           grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
           account_registered=true
 
