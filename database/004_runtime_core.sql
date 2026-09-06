@@ -55,7 +55,7 @@ create table if not exists public.subscriptions (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
   user_id uuid not null references public.users(id) on delete cascade,
-  status text not null default 'trialing' check (status in ('trialing', 'active', 'past_due', 'cancelled', 'expired')),
+  status text not null default 'trialing' check (status in ('trialing', 'active', 'past_due', 'canceled', 'cancelled', 'expired')),
   trial_started_at timestamptz,
   trial_ends_at timestamptz,
   current_period_ends_at timestamptz,
