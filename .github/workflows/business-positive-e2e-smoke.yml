@@ -26,7 +26,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify Business entitlement, Mail drafts, and Approvals in production
+      - name: Verify Business entitlement, billing idempotency, Mail drafts, and Approvals in production
         shell: bash
         run: |
           set -euo pipefail
@@ -106,7 +106,15 @@ jobs:
             [ -z "$grant_reason" ] || echo "NEYVIX_BUSINESS_GRANT_REASON=$grant_reason" >&2
             fail_stage grant-status
           fi
-          jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and (.billing.entitlements | index("mail")) != null and (.billing.entitlements | index("approvals")) != null' /tmp/grant.json >/dev/null || fail_stage grant-payload
+          jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and (.billing.entitlements | index("mail")) != null and (.billing.entitlements | index("approvals")) != null and .billingEvent.duplicate == false and .billingEvent.updated == true' /tmp/grant.json >/dev/null || fail_stage grant-payload
+
+          replay_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' \
+            -o /tmp/replay.json -w '%{http_code}' \
+            --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
+            "$base/api/billing/smoke-business")" || fail_stage replay-request
+          [ "$replay_code" = "200" ] || fail_stage replay-status
+          jq -e '.ok == true and .testOnly == true and .externalPayment == false and .billing.plan == "business" and .billing.status == "active" and .billingEvent.duplicate == true and .billingEvent.updated == false' /tmp/replay.json >/dev/null || fail_stage replay-idempotency
 
           billing_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/billing.json -w '%{http_code}' "$base/api/billing/entitlements")" || fail_stage billing-request
           [ "$billing_code" = "200" ] || fail_stage billing-status
@@ -148,7 +156,7 @@ jobs:
           {
             echo "### Business Positive E2E Smoke: PASS"
             echo
-            echo "Verified exact production release SHA, connected database, disposable identity/session, initial trial boundary, OIDC-authorized Business test entitlement, Mail draft CRUD persistence, Approval persistence, and cleanup."
+            echo "Verified exact production release SHA, connected database, disposable identity/session, initial trial boundary, OIDC-authorized Business test entitlement, billing event replay/idempotency, Mail draft CRUD persistence, Approval persistence, and cleanup."
             echo "No checkout, real payment, external billing provider, Mail send, external AI generation, or destructive schema migration is invoked. The Business bridge accepts only a cryptographically verified short-lived GitHub OIDC token pinned to this repository, main branch, workflow, deployment_status event and audience, or the legacy dedicated high-entropy secret."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: Business entitlement, Mail draft CRUD, and Approvals persistence verified in production."
+          echo "PASS: Business entitlement, billing replay/idempotency, Mail draft CRUD, and Approvals persistence verified in production."
