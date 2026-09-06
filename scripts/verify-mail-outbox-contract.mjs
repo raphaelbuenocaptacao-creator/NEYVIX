@@ -13,6 +13,8 @@ function expect(source, fragment, label) {
 
 expect(route, "beginOutgoingMessage", "outbox reservation before transport");
 expect(route, "reservation.action === \"delivery_unknown\"", "unknown-delivery fail closed branch");
+expect(route, "getOwnedMailOutboxPayload", "canonical persisted outbox payload lookup");
+expect(route, "to: payload.to, subject: payload.subject, text: payload.text", "transport uses canonical persisted payload");
 expect(route, "if (result.retrySafe)", "retry only after definitive non-delivery");
 expect(route, "markOutgoingMessageFailed", "definitive transport failure persistence");
 expect(route, "finalizeOutgoingMessage", "post-transport finalization");
@@ -32,9 +34,12 @@ expect(page, 'mail.status === "pending"', "reconciliation action limited to ambi
 expect(page, "getOwnedFailedMailRetryDraft", "manual retry loads owned failed delivery");
 expect(page, "retryDraft.idempotencyKey", "manual retry preserves original idempotency key");
 expect(page, 'mail.status === "failed"', "manual retry limited to confirmed failure");
+expect(page, "readOnly={Boolean(retryDraft)}", "retry payload locked in UI");
 expect(page, "Tentar novamente", "manual retry user action");
 expect(statusDb, "getOwnedFailedMailRetryDraft", "owned failed-delivery retry lookup");
+expect(statusDb, "getOwnedMailOutboxPayload", "owned canonical payload lookup");
 expect(statusDb, "m.status = 'failed'", "retry lookup confirmed-failure boundary");
+expect(statusDb, "m.status = 'pending'", "canonical payload pending boundary");
 expect(statusDb, "m.provider_message_id LIKE 'neyvix-outbox:%'", "retry lookup only accepts NEYVIX outbox markers");
 
 expect(statusRoute, "getOwnedMailOutboxStatus", "direct owned-message reconciliation lookup");
@@ -48,10 +53,11 @@ if (statusRoute.includes("listMailMessages")) {
 }
 
 const reserveIndex = route.indexOf("beginOutgoingMessage");
+const payloadIndex = route.indexOf("getOwnedMailOutboxPayload");
 const transportIndex = route.indexOf("deliverMail({");
 const finalizeIndex = route.indexOf("finalizeOutgoingMessage");
-if (!(reserveIndex >= 0 && transportIndex > reserveIndex && finalizeIndex > transportIndex)) {
-  throw new Error("Mail send order must be reserve -> transport -> finalize");
+if (!(reserveIndex >= 0 && payloadIndex > reserveIndex && transportIndex > payloadIndex && finalizeIndex > transportIndex)) {
+  throw new Error("Mail send order must be reserve -> canonical payload -> transport -> finalize");
 }
 
-console.log("PASS mail outbox idempotency, reconciliation and manual retry contract");
+console.log("PASS mail outbox idempotency, reconciliation, canonical payload and manual retry contract");
