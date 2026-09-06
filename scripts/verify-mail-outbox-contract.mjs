@@ -25,6 +25,10 @@ expect(db, "row.status === \"failed\"", "safe retry after definitive failure");
 expect(db, "action: \"delivery_unknown\"", "pending replay duplication guard");
 expect(page, "name=\"idempotency_key\"", "per-compose idempotency key");
 expect(page, "delivery_unknown", "user-visible uncertain delivery state");
+expect(page, "getOwnedMailOutboxStatus", "server-side reconciliation from Mail UI");
+expect(page, "Verificar entrega", "pending-delivery reconciliation action");
+expect(page, "Nenhum reenvio foi realizado", "reconciliation failure remains non-destructive");
+expect(page, 'mail.status === "pending"', "reconciliation action limited to ambiguous delivery");
 
 expect(statusRoute, "getOwnedMailOutboxStatus", "direct owned-message reconciliation lookup");
 expect(statusRoute, "readActiveSession", "reconciliation authentication gate");
@@ -43,4 +47,4 @@ if (!(reserveIndex >= 0 && transportIndex > reserveIndex && finalizeIndex > tran
   throw new Error("Mail send order must be reserve -> transport -> finalize");
 }
 
-console.log("PASS mail outbox idempotency and reconciliation contract");
+console.log("PASS mail outbox idempotency, reconciliation API and UI contract");
