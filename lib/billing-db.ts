@@ -30,7 +30,7 @@ function normalizeStatus(type: string) {
   const value = type.toLowerCase();
   if (["subscription.active", "checkout.completed", "payment.succeeded", "invoice.paid"].includes(value)) return "active";
   if (["subscription.past_due", "payment.failed", "invoice.payment_failed"].includes(value)) return "past_due";
-  if (["subscription.cancelled", "subscription.canceled"].includes(value)) return "cancelled";
+  if (["subscription.cancelled", "subscription.canceled"].includes(value)) return "canceled";
   if (["subscription.expired"].includes(value)) return "expired";
   return null;
 }
@@ -104,7 +104,7 @@ export async function processBillingEvent(input: BillingEventInput) {
     current_period_start: input.periodStart ?? null,
     current_period_ends_at: input.periodEnd ?? null,
     cancel_at_period_end: Boolean(input.cancelAtPeriodEnd),
-    ...(status === "cancelled" ? { canceled_at: new Date().toISOString() } : {}),
+    ...(status === "canceled" ? { canceled_at: new Date().toISOString() } : {}),
   });
 
   let rows;
