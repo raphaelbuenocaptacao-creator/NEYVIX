@@ -1,5 +1,3 @@
-import { neon } from "@neondatabase/serverless";
-
 export type EntitlementFeature =
   | "ai"
   | "content"
@@ -35,9 +33,11 @@ export type EntitlementRecord = {
   features?: unknown;
 };
 
-function getSql() {
+async function getSql() {
   const url = process.env.DATABASE_URL?.trim();
-  return url ? neon(url) : null;
+  if (!url) return null;
+  const { neon } = await import("@neondatabase/serverless");
+  return neon(url);
 }
 
 export function isPlanEnforcementEnabled() {
@@ -123,7 +123,7 @@ export function resolveEntitlementRecord(
 
 export async function getEntitlements(email: string): Promise<Entitlements> {
   const enforcementEnabled = isPlanEnforcementEnabled();
-  const sql = getSql();
+  const sql = await getSql();
   if (!sql) return compatibilityFallback(enforcementEnabled);
 
   try {
