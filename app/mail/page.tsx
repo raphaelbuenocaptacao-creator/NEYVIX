@@ -86,7 +86,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
   const unread = folder === "inbox" ? messages.filter((message) => !message.isRead).length : 0;
   const retryNotice = params.retry
     ? retryDraft
-      ? "Tentativa manual preparada com a mesma chave de idempotência. Revise e envie somente se desejar tentar novamente."
+      ? "Tentativa manual preparada com a mesma chave de idempotência e conteúdo original bloqueado. Envie somente se desejar tentar novamente."
       : "Não foi possível preparar essa tentativa. Apenas mensagens com falha confirmada podem ser reenviadas."
     : null;
   const notice = reconciliationNotice ?? retryNotice ?? (params.sent === "1" ? "Mensagem enviada e registrada no NEYVIX Mail." : params.error ? mailErrors[params.error] : null);
@@ -117,9 +117,9 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
           <p className="eyebrow">{retryDraft ? "REPETIR ENVIO COM SEGURANÇA" : "NOVA MENSAGEM"}</p>
           <form className="auth-form" action="/api/mail/send" method="post">
             <input type="hidden" name="idempotency_key" value={sendToken} />
-            <label>Para<input type="email" name="to" defaultValue={retryDraft?.to ?? ""} placeholder="cliente@empresa.com" required /></label>
-            <label>Assunto<input type="text" name="subject" maxLength={240} defaultValue={retryDraft?.subject ?? ""} placeholder="Assunto" required /></label>
-            <label>Mensagem<textarea name="text" rows={6} maxLength={20000} defaultValue={retryDraft?.text ?? ""} placeholder="Escreva sua mensagem..." required /></label>
+            <label>Para<input type="email" name="to" defaultValue={retryDraft?.to ?? ""} readOnly={Boolean(retryDraft)} placeholder="cliente@empresa.com" required /></label>
+            <label>Assunto<input type="text" name="subject" maxLength={240} defaultValue={retryDraft?.subject ?? ""} readOnly={Boolean(retryDraft)} placeholder="Assunto" required /></label>
+            <label>Mensagem<textarea name="text" rows={6} maxLength={20000} defaultValue={retryDraft?.text ?? ""} readOnly={Boolean(retryDraft)} placeholder="Escreva sua mensagem..." required /></label>
             <button className="primary-button" type="submit">{retryDraft ? "Tentar novamente" : "Enviar com NEYVIX Mail"}</button>
           </form>
         </section>
