@@ -5,7 +5,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getProductAccess } from "@/lib/product-access";
 import { listMailMessages, type MailFolder, type MailListItem } from "@/lib/mail-db";
-import { getOwnedMailOutboxStatus } from "@/lib/mail-outbox-db";
+import { getOwnedFailedMailRetryDraft, getOwnedMailOutboxStatus } from "@/lib/mail-outbox-db";
 
 function formatWhen(value: string) {
   const date = new Date(value);
@@ -35,12 +35,12 @@ function statusLabel(message: MailListItem) {
 
 function reconciliationLabel(status?: string | null) {
   if (status === "sent") return "Entrega confirmada. A mensagem está registrada como enviada.";
-  if (status === "failed") return "A entrega falhou de forma confirmada. Uma nova tentativa é permitida.";
+  if (status === "failed") return "A entrega falhou de forma confirmada. Uma nova tentativa manual é permitida.";
   if (status === "pending") return "Entrega ainda sem confirmação. O NEYVIX não reenviará automaticamente para evitar duplicidade.";
   return null;
 }
 
-export default async function MailPage({ searchParams }: { searchParams: Promise<{ error?: string; sent?: string; folder?: string; reconcile?: string }> }) {
+export default async function MailPage({ searchParams }: { searchParams: Promise<{ error?: string; sent?: string; folder?: string; reconcile?: string; retry?: string }> }) {
   const params = await searchParams;
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
@@ -50,7 +50,17 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
   if (!access.allowed) redirect("/plans?required=business&feature=mail");
 
   const folder: MailFolder = params.folder === "sent" ? "sent" : "inbox";
-  const sendToken = randomUUID();
+  let sendToken = randomUUID();
+  let retryDraft: Awaited<ReturnType<typeof getOwnedFailedMailRetryDraft>> = null;
+  if (params.retry && UUID_RE.test(params.retry)) {
+    try {
+      retryDraft = await getOwnedFailedMailRetryDraft(session.email, params.retry);
+      if (retryDraft) sendToken = retryDraft.idempotencyKey;
+    } catch (error) {
+      console.error("Falha ao carregar tentativa manual do NEYVIX Mail", error);
+    }
+  }
+
   let messages: MailListItem[] = [];
   let databaseReady = true;
   try { messages = await listMailMessages(session.email, 30, folder); } catch (error) {
@@ -74,7 +84,12 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
   }
 
   const unread = folder === "inbox" ? messages.filter((message) => !message.isRead).length : 0;
-  const notice = reconciliationNotice ?? (params.sent === "1" ? "Mensagem enviada e registrada no NEYVIX Mail." : params.error ? mailErrors[params.error] : null);
+  const retryNotice = params.retry
+    ? retryDraft
+      ? "Tentativa manual preparada com a mesma chave de idempotência. Revise e envie somente se desejar tentar novamente."
+      : "Não foi possível preparar essa tentativa. Apenas mensagens com falha confirmada podem ser reenviadas."
+    : null;
+  const notice = reconciliationNotice ?? retryNotice ?? (params.sent === "1" ? "Mensagem enviada e registrada no NEYVIX Mail." : params.error ? mailErrors[params.error] : null);
   const folderTitle = folder === "sent" ? "Enviados" : "Caixa de entrada";
 
   return (
@@ -99,13 +114,13 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
         {notice ? <div className="mail-toolbar"><strong>{notice}</strong></div> : null}
 
         <section id="compose" className="hero" style={{ margin: "1rem 0" }}>
-          <p className="eyebrow">NOVA MENSAGEM</p>
+          <p className="eyebrow">{retryDraft ? "REPETIR ENVIO COM SEGURANÇA" : "NOVA MENSAGEM"}</p>
           <form className="auth-form" action="/api/mail/send" method="post">
             <input type="hidden" name="idempotency_key" value={sendToken} />
-            <label>Para<input type="email" name="to" placeholder="cliente@empresa.com" required /></label>
-            <label>Assunto<input type="text" name="subject" maxLength={240} placeholder="Assunto" required /></label>
-            <label>Mensagem<textarea name="text" rows={6} maxLength={20000} placeholder="Escreva sua mensagem..." required /></label>
-            <button className="primary-button" type="submit">Enviar com NEYVIX Mail</button>
+            <label>Para<input type="email" name="to" defaultValue={retryDraft?.to ?? ""} placeholder="cliente@empresa.com" required /></label>
+            <label>Assunto<input type="text" name="subject" maxLength={240} defaultValue={retryDraft?.subject ?? ""} placeholder="Assunto" required /></label>
+            <label>Mensagem<textarea name="text" rows={6} maxLength={20000} defaultValue={retryDraft?.text ?? ""} placeholder="Escreva sua mensagem..." required /></label>
+            <button className="primary-button" type="submit">{retryDraft ? "Tentar novamente" : "Enviar com NEYVIX Mail"}</button>
           </form>
         </section>
 
@@ -123,6 +138,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
                   <strong>{deliveryStatus ? `[${deliveryStatus}] ${mail.subject}` : mail.subject}</strong>
                   <span> — {mail.preview}</span>
                   {folder === "sent" && mail.status === "pending" ? <span> · <a href={`/mail?folder=sent&reconcile=${encodeURIComponent(mail.id)}`}>Verificar entrega</a></span> : null}
+                  {folder === "sent" && mail.status === "failed" ? <span> · <a href={`/mail?folder=sent&retry=${encodeURIComponent(mail.id)}#compose`}>Tentar novamente</a></span> : null}
                 </div>
                 <time dateTime={mail.occurredAt}>{formatWhen(mail.occurredAt)}</time>
               </article>
