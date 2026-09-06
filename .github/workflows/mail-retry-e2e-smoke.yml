@@ -1,6 +1,7 @@
 name: NEYVIX Mail Retry E2E Smoke
 
 on:
+  workflow_dispatch:
   deployment_status:
 
 permissions:
@@ -9,7 +10,7 @@ permissions:
 
 jobs:
   mail-retry-e2e:
-    if: github.event.deployment_status.state == 'success'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
