@@ -50,7 +50,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
   if (!access.allowed) redirect("/plans?required=business&feature=mail");
 
   const folder: MailFolder = params.folder === "sent" ? "sent" : "inbox";
-  let sendToken = randomUUID();
+  let sendToken: string = randomUUID();
   let retryDraft: Awaited<ReturnType<typeof getOwnedFailedMailRetryDraft>> = null;
   if (params.retry && UUID_RE.test(params.retry)) {
     try {
