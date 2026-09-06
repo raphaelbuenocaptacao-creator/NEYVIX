@@ -10,6 +10,88 @@ permissions:
   id-token: write
 
 jobs:
+  billing-entitlements-contract:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact release
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile entitlement resolver in isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/neyvix-entitlements-contract
+          npx tsc lib/entitlements.ts \
+            --target ES2022 \
+            --module commonjs \
+            --moduleResolution node \
+            --esModuleInterop \
+            --skipLibCheck \
+            --outDir /tmp/neyvix-entitlements-contract
+
+      - name: Verify lifetime and fail-closed entitlement semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const { resolveEntitlementRecord, canUse } = require('/tmp/neyvix-entitlements-contract/entitlements.js');
+
+          const lifetimeBusiness = resolveEntitlementRecord(
+            { status: 'lifetime', plan_code: 'business', features: null },
+            true,
+            Date.UTC(2035, 0, 1),
+          );
+          assert.equal(lifetimeBusiness.plan, 'business');
+          assert.equal(lifetimeBusiness.status, 'lifetime');
+          assert.equal(lifetimeBusiness.source, 'database');
+          assert.equal(lifetimeBusiness.enforcementEnabled, true);
+          assert.equal(canUse(lifetimeBusiness, 'mail'), true);
+          assert.equal(canUse(lifetimeBusiness, 'admin'), true);
+          assert.equal(canUse(lifetimeBusiness, 'team'), true);
+
+          const lifetimeStart = resolveEntitlementRecord(
+            { status: 'lifetime', plan_code: 'start', features: null },
+            true,
+            Date.UTC(2035, 0, 1),
+          );
+          assert.equal(lifetimeStart.plan, 'start');
+          assert.equal(canUse(lifetimeStart, 'ai'), true);
+          assert.equal(canUse(lifetimeStart, 'mail'), false);
+
+          const customLifetime = resolveEntitlementRecord(
+            { status: 'lifetime', plan_code: 'business', features: { ai: true, mail: true, made_up: true } },
+            true,
+          );
+          assert.deepEqual(customLifetime.features.sort(), ['ai', 'mail']);
+
+          const expired = resolveEntitlementRecord(
+            { status: 'expired', plan_code: 'business', features: null },
+            true,
+          );
+          assert.equal(expired.plan, 'expired');
+          assert.deepEqual(expired.features, ['pwa']);
+          assert.equal(canUse(expired, 'mail'), false);
+
+          const missing = resolveEntitlementRecord(undefined, true);
+          assert.equal(missing.plan, 'expired');
+          assert.deepEqual(missing.features, ['pwa']);
+          assert.equal(missing.source, 'fallback');
+
+          console.log('PASS: lifetime subscriptions retain their persisted plan entitlements while expired/missing subscriptions fail closed.');
+          NODE
+
   billing-entitlements-e2e:
     if: >-
       github.event_name == 'push' ||
