@@ -103,7 +103,11 @@ export function resolveEntitlementRecord(
     return { plan: "trial", status, features: PRO, trialEndsAt, enforcementEnabled, source: "database" };
   }
 
-  if (status === "active") {
+  // `lifetime` is a valid persisted subscription status in the NEYVIX schema.
+  // It carries the configured plan entitlements indefinitely and must never
+  // fall through to compatibility fallback (which fails closed when plan
+  // enforcement is enabled).
+  if (status === "active" || status === "lifetime") {
     const slug = planFromCode(row.plan_code);
     const fallbackFeatures = slug === "business" ? BUSINESS : slug === "pro" ? PRO : START;
     const features = normalizeFeatures(row.features, fallbackFeatures);
