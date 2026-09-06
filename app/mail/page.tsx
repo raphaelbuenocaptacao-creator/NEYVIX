@@ -5,6 +5,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getProductAccess } from "@/lib/product-access";
 import { listMailMessages, type MailFolder, type MailListItem } from "@/lib/mail-db";
+import { getOwnedMailOutboxStatus } from "@/lib/mail-outbox-db";
 
 function formatWhen(value: string) {
   const date = new Date(value);
@@ -14,6 +15,8 @@ function formatWhen(value: string) {
   if (sameDay) return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(date);
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(date);
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const mailErrors: Record<string, string> = {
   invalid_message: "Revise destinatário, assunto e mensagem.",
@@ -30,7 +33,14 @@ function statusLabel(message: MailListItem) {
   return null;
 }
 
-export default async function MailPage({ searchParams }: { searchParams: Promise<{ error?: string; sent?: string; folder?: string }> }) {
+function reconciliationLabel(status?: string | null) {
+  if (status === "sent") return "Entrega confirmada. A mensagem está registrada como enviada.";
+  if (status === "failed") return "A entrega falhou de forma confirmada. Uma nova tentativa é permitida.";
+  if (status === "pending") return "Entrega ainda sem confirmação. O NEYVIX não reenviará automaticamente para evitar duplicidade.";
+  return null;
+}
+
+export default async function MailPage({ searchParams }: { searchParams: Promise<{ error?: string; sent?: string; folder?: string; reconcile?: string }> }) {
   const params = await searchParams;
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
@@ -48,8 +58,23 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
     console.error("Falha ao carregar pasta do NEYVIX Mail", error);
   }
 
+  let reconciliationNotice: string | null = null;
+  if (folder === "sent" && params.reconcile && UUID_RE.test(params.reconcile)) {
+    try {
+      const reconciled = await getOwnedMailOutboxStatus(session.email, params.reconcile);
+      reconciliationNotice = reconciled
+        ? reconciliationLabel(reconciled.status)
+        : "Não foi possível localizar essa mensagem na sua caixa de enviados.";
+    } catch (error) {
+      console.error("Falha ao reconciliar mensagem no NEYVIX Mail", error);
+      reconciliationNotice = "Não foi possível verificar a entrega agora. Nenhum reenvio foi realizado.";
+    }
+  } else if (params.reconcile) {
+    reconciliationNotice = "Não foi possível verificar essa referência de mensagem.";
+  }
+
   const unread = folder === "inbox" ? messages.filter((message) => !message.isRead).length : 0;
-  const notice = params.sent === "1" ? "Mensagem enviada e registrada no NEYVIX Mail." : params.error ? mailErrors[params.error] : null;
+  const notice = reconciliationNotice ?? (params.sent === "1" ? "Mensagem enviada e registrada no NEYVIX Mail." : params.error ? mailErrors[params.error] : null);
   const folderTitle = folder === "sent" ? "Enviados" : "Caixa de entrada";
 
   return (
@@ -94,7 +119,11 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
                 <input aria-label={`Selecionar ${mail.subject}`} type="checkbox" disabled />
                 <span className="star">{mail.isStarred ? "★" : "☆"}</span>
                 <div className="message-sender">{mail.sender}</div>
-                <div className="message-content"><strong>{deliveryStatus ? `[${deliveryStatus}] ${mail.subject}` : mail.subject}</strong><span> — {mail.preview}</span></div>
+                <div className="message-content">
+                  <strong>{deliveryStatus ? `[${deliveryStatus}] ${mail.subject}` : mail.subject}</strong>
+                  <span> — {mail.preview}</span>
+                  {folder === "sent" && mail.status === "pending" ? <span> · <a href={`/mail?folder=sent&reconcile=${encodeURIComponent(mail.id)}`}>Verificar entrega</a></span> : null}
+                </div>
                 <time dateTime={mail.occurredAt}>{formatWhen(mail.occurredAt)}</time>
               </article>
             );
