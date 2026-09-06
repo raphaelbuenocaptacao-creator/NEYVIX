@@ -1,6 +1,7 @@
 name: NEYVIX Billing Entitlements E2E Smoke
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   deployment_status:
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   billing-entitlements-contract:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -95,6 +96,7 @@ jobs:
   billing-entitlements-e2e:
     if: >-
       github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 8
