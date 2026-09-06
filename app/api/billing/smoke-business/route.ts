@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     return response({ error: "Endpoint restrito a conta efêmera Business E2E" }, 403);
   }
 
-  let body: { nonce?: unknown } = {};
+  let body: { nonce?: unknown; action?: unknown } = {};
   try {
     body = await request.json();
   } catch {
@@ -61,16 +61,23 @@ export async function POST(request: Request) {
     return response({ error: "Nonce técnico inválido" }, 400);
   }
 
-  const eventId = `smoke-business-${nonce}`;
+  const action = body.action === undefined ? "activate" : body.action;
+  if (action !== "activate" && action !== "cancel") {
+    return response({ error: "Ação técnica inválida" }, 400);
+  }
+
+  const cancelling = action === "cancel";
+  const eventId = cancelling ? `smoke-business-cancel-${nonce}` : `smoke-business-${nonce}`;
   const result = await processBillingEvent({
     provider: "neyvix-smoke",
     eventId,
-    type: "subscription.active",
+    type: cancelling ? "subscription.canceled" : "subscription.active",
     email,
     plan: "business",
     payload: {
       source: "production-e2e",
       disposable: true,
+      action,
       externalPayment: false,
     },
   });
@@ -80,18 +87,23 @@ export async function POST(request: Request) {
   }
 
   const billing = await getEntitlements(email);
-  const businessReady =
-    billing.plan === "business" &&
-    billing.status === "active" &&
-    billing.features.includes("mail") &&
-    billing.features.includes("approvals");
+  const expectedState = cancelling
+    ? billing.plan === "expired" &&
+      (billing.status === "cancelled" || billing.status === "canceled") &&
+      !billing.features.includes("mail") &&
+      !billing.features.includes("approvals")
+    : billing.plan === "business" &&
+      billing.status === "active" &&
+      billing.features.includes("mail") &&
+      billing.features.includes("approvals");
 
-  if (!businessReady) {
-    return response({ error: "Entitlement Business não convergiu" }, 409);
+  if (!expectedState) {
+    return response({ error: cancelling ? "Revogação Business não convergiu" : "Entitlement Business não convergiu" }, 409);
   }
 
   return response({
     ok: true,
+    action,
     billing: {
       plan: billing.plan,
       status: billing.status,
