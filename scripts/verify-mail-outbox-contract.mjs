@@ -29,6 +29,13 @@ expect(page, "getOwnedMailOutboxStatus", "server-side reconciliation from Mail U
 expect(page, "Verificar entrega", "pending-delivery reconciliation action");
 expect(page, "Nenhum reenvio foi realizado", "reconciliation failure remains non-destructive");
 expect(page, 'mail.status === "pending"', "reconciliation action limited to ambiguous delivery");
+expect(page, "getOwnedFailedMailRetryDraft", "manual retry loads owned failed delivery");
+expect(page, "retryDraft.idempotencyKey", "manual retry preserves original idempotency key");
+expect(page, 'mail.status === "failed"', "manual retry limited to confirmed failure");
+expect(page, "Tentar novamente", "manual retry user action");
+expect(statusDb, "getOwnedFailedMailRetryDraft", "owned failed-delivery retry lookup");
+expect(statusDb, "m.status = 'failed'", "retry lookup confirmed-failure boundary");
+expect(statusDb, "m.provider_message_id LIKE 'neyvix-outbox:%'", "retry lookup only accepts NEYVIX outbox markers");
 
 expect(statusRoute, "getOwnedMailOutboxStatus", "direct owned-message reconciliation lookup");
 expect(statusRoute, "readActiveSession", "reconciliation authentication gate");
@@ -47,4 +54,4 @@ if (!(reserveIndex >= 0 && transportIndex > reserveIndex && finalizeIndex > tran
   throw new Error("Mail send order must be reserve -> transport -> finalize");
 }
 
-console.log("PASS mail outbox idempotency, reconciliation API and UI contract");
+console.log("PASS mail outbox idempotency, reconciliation and manual retry contract");
