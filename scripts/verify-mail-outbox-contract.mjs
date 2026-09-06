@@ -4,6 +4,8 @@ const route = fs.readFileSync("app/api/mail/send/route.ts", "utf8");
 const db = fs.readFileSync("lib/mail-db.ts", "utf8");
 const page = fs.readFileSync("app/mail/page.tsx", "utf8");
 const transport = fs.readFileSync("lib/mail-transport.ts", "utf8");
+const statusRoute = fs.readFileSync("app/api/mail/outbox/status/route.ts", "utf8");
+const statusDb = fs.readFileSync("lib/mail-outbox-db.ts", "utf8");
 
 function expect(source, fragment, label) {
   if (!source.includes(fragment)) throw new Error(`Missing ${label}`);
@@ -24,6 +26,16 @@ expect(db, "action: \"delivery_unknown\"", "pending replay duplication guard");
 expect(page, "name=\"idempotency_key\"", "per-compose idempotency key");
 expect(page, "delivery_unknown", "user-visible uncertain delivery state");
 
+expect(statusRoute, "getOwnedMailOutboxStatus", "direct owned-message reconciliation lookup");
+expect(statusRoute, "readActiveSession", "reconciliation authentication gate");
+expect(statusRoute, 'canUse(entitlements, "mail")', "reconciliation entitlement gate");
+expect(statusDb, "m.id = ${messageId}::uuid", "reconciliation direct message id predicate");
+expect(statusDb, "lower(u.email) = ${email.trim().toLowerCase()}", "reconciliation ownership predicate");
+expect(statusDb, "m.folder = 'sent'", "reconciliation outbox folder boundary");
+if (statusRoute.includes("listMailMessages")) {
+  throw new Error("Outbox reconciliation must not depend on a bounded message list");
+}
+
 const reserveIndex = route.indexOf("beginOutgoingMessage");
 const transportIndex = route.indexOf("deliverMail({");
 const finalizeIndex = route.indexOf("finalizeOutgoingMessage");
@@ -31,4 +43,4 @@ if (!(reserveIndex >= 0 && transportIndex > reserveIndex && finalizeIndex > tran
   throw new Error("Mail send order must be reserve -> transport -> finalize");
 }
 
-console.log("PASS mail outbox idempotency contract");
+console.log("PASS mail outbox idempotency and reconciliation contract");
