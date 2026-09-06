@@ -97,6 +97,10 @@ export async function POST(request: Request) {
       status: billing.status,
       entitlements: billing.features,
     },
+    billingEvent: {
+      duplicate: result.duplicate,
+      updated: result.updated,
+    },
     testOnly: true,
     externalPayment: false,
   });
