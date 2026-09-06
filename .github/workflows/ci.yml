@@ -54,6 +54,9 @@ jobs:
       - name: Mail transport safety contract
         run: node scripts/verify-mail-transport-contract.mjs
 
+      - name: Mail outbox idempotency contract
+        run: node scripts/verify-mail-outbox-contract.mjs
+
       - name: Intelligence security contract
         run: node scripts/verify-intelligence-contract.mjs
 

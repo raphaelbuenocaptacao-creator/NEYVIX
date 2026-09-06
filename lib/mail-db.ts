@@ -8,9 +8,15 @@ export type MailListItem = {
   subject: string;
   preview: string;
   folder: string;
+  status: string;
   isRead: boolean;
   isStarred: boolean;
   occurredAt: string;
+};
+
+export type OutgoingMessageReservation = {
+  messageId: string;
+  action: "deliver" | "already_sent" | "delivery_unknown";
 };
 
 function getSql() {
@@ -88,6 +94,109 @@ export async function saveInboundMessage(input: {
   return { ok: true as const, duplicate: Boolean(row.duplicate), messageId: String(row.id) };
 }
 
+export async function beginOutgoingMessage(input: {
+  email: string;
+  displayName?: string;
+  to: string;
+  subject: string;
+  text: string;
+  idempotencyKey: string;
+}): Promise<OutgoingMessageReservation | null> {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return null;
+  const mailbox = await ensureMailbox(input.email, input.displayName);
+  if (!mailbox) return null;
+
+  const sender = input.email.trim().toLowerCase();
+  const marker = `neyvix-outbox:${input.idempotencyKey.trim().toLowerCase()}`;
+  const inserted = await sql`
+    INSERT INTO public.messages (
+      mailbox_id, provider_message_id, sender_address, recipient_address,
+      subject, body_text, folder, status, is_read
+    ) VALUES (
+      ${String(mailbox.id)}, ${marker}, ${sender}, ${input.to.trim().toLowerCase()},
+      ${input.subject.trim().slice(0, 240)}, ${input.text.trim().slice(0, 20000)},
+      'sent', 'pending', true
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id
+  ` as Array<{ id: string }>;
+
+  if (inserted[0]?.id) {
+    return { messageId: String(inserted[0].id), action: "deliver" };
+  }
+
+  const existing = await sql`
+    SELECT m.id, m.status
+    FROM public.messages m
+    JOIN public.mailboxes mb ON mb.id = m.mailbox_id
+    JOIN public.users u ON u.id = mb.user_id
+    WHERE m.provider_message_id = ${marker}
+      AND lower(u.email) = ${sender}
+      AND u.is_active = true
+    LIMIT 1
+  ` as Array<{ id: string; status: string }>;
+
+  const row = existing[0];
+  if (!row?.id) return null;
+  if (row.status === "sent") return { messageId: String(row.id), action: "already_sent" };
+  if (row.status === "failed") {
+    const retried = await sql`
+      UPDATE public.messages m
+      SET status = 'pending', updated_at = now()
+      FROM public.mailboxes mb, public.users u
+      WHERE m.id = ${String(row.id)}::uuid
+        AND m.mailbox_id = mb.id
+        AND mb.user_id = u.id
+        AND lower(u.email) = ${sender}
+        AND u.is_active = true
+        AND m.status = 'failed'
+      RETURNING m.id
+    ` as Array<{ id: string }>;
+    if (retried[0]?.id) return { messageId: String(retried[0].id), action: "deliver" };
+  }
+
+  return { messageId: String(row.id), action: "delivery_unknown" };
+}
+
+export async function finalizeOutgoingMessage(email: string, messageId: string) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return false;
+  const rows = await sql`
+    UPDATE public.messages m
+    SET status = 'sent', sent_at = COALESCE(sent_at, now()), updated_at = now()
+    FROM public.mailboxes mb, public.users u
+    WHERE m.id = ${messageId}::uuid
+      AND m.mailbox_id = mb.id
+      AND mb.user_id = u.id
+      AND lower(u.email) = ${email.trim().toLowerCase()}
+      AND u.is_active = true
+      AND m.folder = 'sent'
+      AND m.status = 'pending'
+    RETURNING m.id
+  ` as Array<{ id: string }>;
+  return rows.length === 1;
+}
+
+export async function markOutgoingMessageFailed(email: string, messageId: string) {
+  const sql = getSql();
+  if (!sql || !(await mailSchemaReady(sql))) return false;
+  const rows = await sql`
+    UPDATE public.messages m
+    SET status = 'failed', updated_at = now()
+    FROM public.mailboxes mb, public.users u
+    WHERE m.id = ${messageId}::uuid
+      AND m.mailbox_id = mb.id
+      AND mb.user_id = u.id
+      AND lower(u.email) = ${email.trim().toLowerCase()}
+      AND u.is_active = true
+      AND m.folder = 'sent'
+      AND m.status = 'pending'
+    RETURNING m.id
+  ` as Array<{ id: string }>;
+  return rows.length === 1;
+}
+
 export async function saveSentMessage(input: { email: string; displayName?: string; to: string; subject: string; text: string; providerMessageId?: string | null }) {
   const sql = getSql();
   if (!sql || !(await mailSchemaReady(sql))) return null;
@@ -158,6 +267,7 @@ export async function listMailMessages(email: string, limit = 30, folder: MailFo
       m.subject,
       left(COALESCE(NULLIF(m.body_text, ''), '[Mensagem sem prévia]'), 180) AS preview,
       m.folder,
+      m.status,
       m.is_read,
       m.is_starred,
       COALESCE(m.received_at, m.sent_at, m.updated_at, m.created_at) AS occurred_at
@@ -175,6 +285,7 @@ export async function listMailMessages(email: string, limit = 30, folder: MailFo
     subject: string | null;
     preview: string | null;
     folder: string | null;
+    status: string | null;
     is_read: boolean;
     is_starred: boolean;
     occurred_at: string;
@@ -186,6 +297,7 @@ export async function listMailMessages(email: string, limit = 30, folder: MailFo
     subject: String(row.subject || "(Sem assunto)"),
     preview: String(row.preview || ""),
     folder: String(row.folder || safeFolder),
+    status: String(row.status || "stored"),
     isRead: Boolean(row.is_read),
     isStarred: Boolean(row.is_starred),
     occurredAt: String(row.occurred_at),

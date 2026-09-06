@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SESSION_COOKIE } from "@/lib/auth";
@@ -18,7 +19,16 @@ const mailErrors: Record<string, string> = {
   invalid_message: "Revise destinatário, assunto e mensagem.",
   transport_unavailable: "O transporte externo do NEYVIX Mail ainda não foi conectado.",
   send_failed: "Não foi possível entregar a mensagem agora. Tente novamente.",
+  send_persist_unavailable: "O NEYVIX Mail não conseguiu reservar a mensagem com segurança. Nada foi enviado.",
+  delivery_unknown: "A entrega foi iniciada, mas a confirmação final ficou pendente. O NEYVIX não reenviará automaticamente para evitar duplicidade.",
+  sent_persist_failed: "A entrega pode ter ocorrido, mas a confirmação no histórico falhou. Verifique Enviados antes de tentar novamente.",
 };
+
+function statusLabel(message: MailListItem) {
+  if (message.status === "pending") return "Pendente";
+  if (message.status === "failed") return "Falhou";
+  return null;
+}
 
 export default async function MailPage({ searchParams }: { searchParams: Promise<{ error?: string; sent?: string; folder?: string }> }) {
   const params = await searchParams;
@@ -30,6 +40,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
   if (!access.allowed) redirect("/plans?required=business&feature=mail");
 
   const folder: MailFolder = params.folder === "sent" ? "sent" : "inbox";
+  const sendToken = randomUUID();
   let messages: MailListItem[] = [];
   let databaseReady = true;
   try { messages = await listMailMessages(session.email, 30, folder); } catch (error) {
@@ -65,6 +76,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
         <section id="compose" className="hero" style={{ margin: "1rem 0" }}>
           <p className="eyebrow">NOVA MENSAGEM</p>
           <form className="auth-form" action="/api/mail/send" method="post">
+            <input type="hidden" name="idempotency_key" value={sendToken} />
             <label>Para<input type="email" name="to" placeholder="cliente@empresa.com" required /></label>
             <label>Assunto<input type="text" name="subject" maxLength={240} placeholder="Assunto" required /></label>
             <label>Mensagem<textarea name="text" rows={6} maxLength={20000} placeholder="Escreva sua mensagem..." required /></label>
@@ -75,15 +87,18 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
         <div className="mail-toolbar"><a href={`/mail?folder=${folder}`}>Atualizar</a><span>{databaseReady ? `${folderTitle} sincronizada` : "Persistência aguardando banco"}</span></div>
 
         <div id="inbox" className="message-list">
-          {messages.length > 0 ? messages.map((mail) => (
-            <article className="message-row" key={mail.id}>
-              <input aria-label={`Selecionar ${mail.subject}`} type="checkbox" disabled />
-              <span className="star">{mail.isStarred ? "★" : "☆"}</span>
-              <div className="message-sender">{mail.sender}</div>
-              <div className="message-content"><strong>{mail.subject}</strong><span> — {mail.preview}</span></div>
-              <time dateTime={mail.occurredAt}>{formatWhen(mail.occurredAt)}</time>
-            </article>
-          )) : (
+          {messages.length > 0 ? messages.map((mail) => {
+            const deliveryStatus = statusLabel(mail);
+            return (
+              <article className="message-row" key={mail.id}>
+                <input aria-label={`Selecionar ${mail.subject}`} type="checkbox" disabled />
+                <span className="star">{mail.isStarred ? "★" : "☆"}</span>
+                <div className="message-sender">{mail.sender}</div>
+                <div className="message-content"><strong>{deliveryStatus ? `[${deliveryStatus}] ${mail.subject}` : mail.subject}</strong><span> — {mail.preview}</span></div>
+                <time dateTime={mail.occurredAt}>{formatWhen(mail.occurredAt)}</time>
+              </article>
+            );
+          }) : (
             <article className="message-row">
               <span className="star">N</span><div className="message-sender">NEYVIX Mail</div>
               <div className="message-content"><strong>{databaseReady ? `${folderTitle} pronta` : "Mail aguardando a base de dados"}</strong><span> — {databaseReady ? (folder === "sent" ? "Suas mensagens enviadas aparecerão aqui." : "Mensagens recebidas aparecerão aqui quando o transporte de entrada estiver conectado.") : "A interface retomará automaticamente quando a persistência estiver disponível."}</span></div><time>Agora</time>
