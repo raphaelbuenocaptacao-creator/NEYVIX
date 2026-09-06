@@ -108,19 +108,31 @@ function findSigningKey(keys: Jwk[], kid: string) {
 }
 
 async function refreshSigningKeys(now = Date.now()) {
-  const response = await fetch(GITHUB_OIDC_JWKS, {
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) return null;
+  // GitHub's JWKS endpoint is an external dependency. A single transient
+  // network/5xx failure must not create a false authorization failure for an
+  // otherwise valid short-lived token. Retry the official endpoint once while
+  // keeping every cryptographic and claim check fail-closed.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(GITHUB_OIDC_JWKS, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) continue;
 
-  const document = (await response.json()) as JwksDocument;
-  const keys = Array.isArray(document.keys) ? document.keys : [];
-  if (!keys.length) return null;
+      const document = (await response.json()) as JwksDocument;
+      const keys = Array.isArray(document.keys) ? document.keys : [];
+      if (!keys.length) continue;
 
-  jwksCache = { keys, expiresAt: now + 5 * 60_000 };
-  return keys;
+      jwksCache = { keys, expiresAt: now + 5 * 60_000 };
+      return keys;
+    } catch {
+      // Retry once; caller still fails closed if GitHub JWKS remains unavailable.
+    }
+  }
+
+  return null;
 }
 
 async function getSigningKey(kid: string) {
