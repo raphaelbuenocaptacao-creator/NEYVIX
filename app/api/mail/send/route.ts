@@ -54,9 +54,13 @@ export async function POST(request: Request) {
 
   const result = await deliverMail({ from: session.email, to, subject, text });
   if (!result.ok) {
-    await markOutgoingMessageFailed(session.email, reservation.messageId).catch(() => false);
-    const reason = result.reason === "transport_not_configured" ? "transport_unavailable" : "send_failed";
-    return NextResponse.redirect(new URL(`/mail?error=${reason}`, request.url), 303);
+    if (result.retrySafe) {
+      await markOutgoingMessageFailed(session.email, reservation.messageId).catch(() => false);
+      const reason = result.reason === "transport_not_configured" ? "transport_unavailable" : "send_failed";
+      return NextResponse.redirect(new URL(`/mail?error=${reason}`, request.url), 303);
+    }
+
+    return NextResponse.redirect(new URL("/mail?folder=sent&error=delivery_unknown", request.url), 303);
   }
 
   const finalized = await finalizeOutgoingMessage(session.email, reservation.messageId).catch(() => false);
