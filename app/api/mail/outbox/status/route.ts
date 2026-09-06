@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getEntitlements, canUse } from "@/lib/entitlements";
-import { listMailMessages } from "@/lib/mail-db";
+import { getOwnedMailOutboxStatus } from "@/lib/mail-outbox-db";
 
 function noStore(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -32,8 +32,7 @@ export async function GET(request: Request) {
   if (!UUID_RE.test(id)) return noStore({ error: "ID de mensagem inválido" }, 400);
 
   try {
-    const sent = await listMailMessages(session.email, 100, "sent");
-    const message = sent.find((item) => item.id === id);
+    const message = await getOwnedMailOutboxStatus(session.email, id);
     if (!message) return noStore({ error: "Mensagem não encontrada" }, 404);
 
     const status = message.status;
