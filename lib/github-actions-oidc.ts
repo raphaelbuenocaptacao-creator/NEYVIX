@@ -39,6 +39,7 @@ type Jwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
 type JwksDocument = { keys?: Jwk[] };
 type WorkflowAuthorization = {
   match: "main-ref" | "immutable-sha";
+  revision: string;
   allowedEvents: ReadonlySet<string>;
 } | null;
 
@@ -78,18 +79,19 @@ function workflowAuthorization(workflowRef: unknown): WorkflowAuthorization {
   if (!workflow) return null;
 
   if (revision === EXPECTED_REF) {
-    return { match: "main-ref", allowedEvents: workflow.events };
+    return { match: "main-ref", revision, allowedEvents: workflow.events };
   }
 
-  // GitHub can represent workflow_ref using the immutable workflow commit SHA.
-  // In that form we additionally require the separate signed ref claim to pin
-  // the run to main. This prevents a SHA-only workflow identity from widening
-  // authorization to another branch.
   if (/^[0-9a-f]{40}$/i.test(revision)) {
-    return { match: "immutable-sha", allowedEvents: workflow.events };
+    return { match: "immutable-sha", revision: revision.toLowerCase(), allowedEvents: workflow.events };
   }
 
   return null;
+}
+
+function deployedReleaseSha() {
+  const value = process.env.VERCEL_GIT_COMMIT_SHA?.trim().toLowerCase() ?? "";
+  return /^[0-9a-f]{40}$/.test(value) ? value : null;
 }
 
 function claimsAreAllowed(claims: GitHubOidcClaims) {
@@ -103,17 +105,21 @@ function claimsAreAllowed(claims: GitHubOidcClaims) {
   if (!repositoryMatches(claims.repository) || !workflow) return false;
   if (typeof claims.event_name !== "string" || !workflow.allowedEvents.has(claims.event_name)) return false;
 
-  // For deployment_status runs GitHub may omit the standalone ref claim. The
-  // signed workflow_ref still pins the workflow itself to refs/heads/main. If
-  // ref is present it must agree with main. For workflow_dispatch, GitHub
-  // provides the selected branch ref and it must be main. If workflow_ref is
-  // SHA-based, ref is always mandatory so an immutable workflow revision
-  // cannot authorize another branch by itself.
   if (workflow.match === "main-ref") {
+    // workflow_ref itself cryptographically pins the workflow to main. GitHub
+    // deployment_status tokens may expose ref as an empty string; a non-empty
+    // ref must still agree with main. Manual dispatch always requires main.
     if (claims.event_name === "workflow_dispatch" && claims.ref !== EXPECTED_REF) return false;
-    if (claims.ref != null && claims.ref !== EXPECTED_REF) return false;
-  } else if (claims.ref !== EXPECTED_REF) {
-    return false;
+    if (typeof claims.ref === "string" && claims.ref.length > 0 && claims.ref !== EXPECTED_REF) return false;
+  } else {
+    // deployment_status currently signs workflow_ref with the immutable commit
+    // SHA while the standalone ref claim is empty. Bind that signed revision to
+    // the exact Vercel release currently executing this verifier, preserving a
+    // fail-closed main-production boundary without trusting an absent ref.
+    const releaseSha = deployedReleaseSha();
+    if (!releaseSha || workflow.revision !== releaseSha) return false;
+    if (claims.event_name === "workflow_dispatch" && claims.ref !== EXPECTED_REF) return false;
+    if (typeof claims.ref === "string" && claims.ref.length > 0 && claims.ref !== EXPECTED_REF) return false;
   }
 
   if (!exp || !iat || exp < now - CLOCK_SKEW_SECONDS) return false;
