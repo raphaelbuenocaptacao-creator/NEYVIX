@@ -1,0 +1,54 @@
+name: NEYVIX AI History Integrity Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ai-history-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify complete AI exchanges are persisted atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          route="app/api/ai/route.ts"
+          exchange="lib/ai-exchange.ts"
+
+          test -f "$route"
+          test -f "$exchange"
+
+          grep -F 'import { saveAiExchange } from "@/lib/ai-exchange";' "$route" >/dev/null
+          grep -F 'await saveAiExchange(session.email, prompt, text)' "$route" >/dev/null
+          if grep -F 'saveAiMessage(' "$route" >/dev/null; then
+            echo 'AI route must not persist individual turns independently.' >&2
+            exit 1
+          fi
+
+          upstream_line="$(grep -n 'if (!upstream.ok)' "$route" | head -n1 | cut -d: -f1)"
+          persistence_line="$(grep -n 'await saveAiExchange(session.email, prompt, text)' "$route" | head -n1 | cut -d: -f1)"
+          test -n "$upstream_line"
+          test -n "$persistence_line"
+          [ "$persistence_line" -gt "$upstream_line" ] || {
+            echo 'AI exchange must only be persisted after a successful upstream response.' >&2
+            exit 1
+          }
+
+          grep -F 'WITH target_user AS (' "$exchange" >/dev/null
+          grep -F 'AND is_active = true' "$exchange" >/dev/null
+          grep -F 'exchange(ordinal, role, content) AS (' "$exchange" >/dev/null
+          grep -F "(0, 'user'::text" "$exchange" >/dev/null
+          grep -F "(1, 'assistant'::text" "$exchange" >/dev/null
+          grep -F 'INSERT INTO public.neyvix_ai_messages (user_id, role, content, created_at)' "$exchange" >/dev/null
+          grep -F "statement_timestamp() + (exchange.ordinal * interval '1 microsecond')" "$exchange" >/dev/null
+          grep -F 'if (rows.length !== 2)' "$exchange" >/dev/null
+
+          echo 'PASS: AI history persists only complete, ordered user/assistant exchanges in one database statement.'

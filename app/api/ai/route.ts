@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
-import { saveAiMessage } from "@/lib/db";
+import { saveAiExchange } from "@/lib/ai-exchange";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 import { loadAiMemoryContext } from "@/lib/ai-memory-context";
@@ -117,9 +117,6 @@ export async function POST(request: Request) {
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    try { await saveAiMessage(session.email, "user", prompt); }
-    catch (dbError) { console.warn("Unable to persist NEYVIX AI user message", dbError); }
-
     let memory: Array<{ key: string; category: string; value: string }> = [];
     try {
       memory = await loadAiMemoryContext(session.email, useMemory, 8);
@@ -153,8 +150,13 @@ export async function POST(request: Request) {
       return privateJson({ error: "A resposta da NEYVIX AI excedeu o limite permitido" }, 502);
     }
 
-    try { await saveAiMessage(session.email, "assistant", text); }
-    catch (dbError) { console.warn("Unable to persist NEYVIX AI assistant message", dbError); }
+    try {
+      const persisted = await saveAiExchange(session.email, prompt, text);
+      if (!persisted) throw new Error("database unavailable");
+    } catch (dbError) {
+      console.error("Unable to persist complete NEYVIX AI exchange", dbError);
+      return privateJson({ error: "A resposta foi gerada, mas não pôde ser salva com segurança. Tente novamente." }, 503);
+    }
 
     return privateJson({ answer: text, memoryUsed: memory.length });
   } catch (error) {
