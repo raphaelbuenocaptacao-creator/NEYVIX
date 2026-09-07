@@ -13,7 +13,7 @@ function getSql() {
 
 export async function listAiHistory(email: string, limit = 40): Promise<AiHistoryMessage[]> {
   const sql = getSql();
-  if (!sql) return [];
+  if (!sql) throw new Error("NEYVIX AI history database is unavailable");
 
   const normalizedEmail = email.trim().toLowerCase();
   const safeLimit = Math.max(1, Math.min(limit, 80));
