@@ -35,8 +35,8 @@ export async function GET() {
       service: "neyvix-intelligence",
       status: "unavailable",
       database: "not_configured",
-      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false },
-      memory: { store: false, events: false, aiContextEnabled: memoryAiContext },
+      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false, schemaReady: false },
+      memory: { store: false, events: false, schemaReady: false, aiContextEnabled: memoryAiContext },
     }, 503);
   }
 
@@ -46,13 +46,36 @@ export async function GET() {
       SELECT
         to_regclass('public.neyvix_ai_messages') IS NOT NULL AS ai_messages,
         to_regclass('public.neyvix_memories') IS NOT NULL AS memories,
-        to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_events
+        to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_events,
+        (
+          SELECT count(*) = 4
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'neyvix_ai_messages'
+            AND column_name = ANY (ARRAY['user_id', 'role', 'content', 'created_at'])
+        ) AS ai_messages_columns,
+        (
+          SELECT count(*) = 7
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'neyvix_memories'
+            AND column_name = ANY (ARRAY['user_id', 'memory_key', 'category', 'value', 'is_private', 'expires_at', 'updated_at'])
+        ) AS memory_columns,
+        (
+          SELECT count(*) = 5
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'neyvix_memory_events'
+            AND column_name = ANY (ARRAY['user_id', 'memory_id', 'action', 'metadata', 'created_at'])
+        ) AS memory_event_columns
     `;
     const row = rows[0] ?? {};
     const aiMessages = Boolean(row.ai_messages);
     const memories = Boolean(row.memories);
     const memoryEvents = Boolean(row.memory_events);
-    const persistenceReady = aiMessages && memories && memoryEvents;
+    const aiSchemaReady = aiMessages && Boolean(row.ai_messages_columns);
+    const memorySchemaReady = memories && memoryEvents && Boolean(row.memory_columns) && Boolean(row.memory_event_columns);
+    const persistenceReady = aiSchemaReady && memorySchemaReady;
     const ready = persistenceReady && gatewayConfigured;
     const status = ready ? "ready" : persistenceReady ? "partial" : "unavailable";
 
@@ -66,10 +89,12 @@ export async function GET() {
         gatewayUrlConfigured,
         gatewaySecretConfigured,
         messageStore: aiMessages,
+        schemaReady: aiSchemaReady,
       },
       memory: {
         store: memories,
         events: memoryEvents,
+        schemaReady: memorySchemaReady,
         aiContextEnabled: memoryAiContext,
       },
     }, ready ? 200 : 503);
@@ -80,8 +105,8 @@ export async function GET() {
       service: "neyvix-intelligence",
       status: "unavailable",
       database: "error",
-      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false },
-      memory: { store: false, events: false, aiContextEnabled: memoryAiContext },
+      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false, schemaReady: false },
+      memory: { store: false, events: false, schemaReady: false, aiContextEnabled: memoryAiContext },
     }, 503);
   }
 }
