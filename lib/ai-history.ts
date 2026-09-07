@@ -22,6 +22,7 @@ export async function listAiHistory(email: string, limit = 40): Promise<AiHistor
     FROM public.neyvix_ai_messages m
     JOIN public.users u ON u.id = m.user_id
     WHERE u.email = ${normalizedEmail}
+      AND u.is_active = true
       AND m.role IN ('user', 'assistant', 'system')
     ORDER BY m.created_at DESC
     LIMIT ${safeLimit}
