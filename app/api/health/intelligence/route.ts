@@ -53,10 +53,11 @@ export async function GET() {
     const memories = Boolean(row.memories);
     const memoryEvents = Boolean(row.memory_events);
     const persistenceReady = aiMessages && memories && memoryEvents;
-    const status = persistenceReady && gatewayConfigured ? "ready" : persistenceReady ? "partial" : "unavailable";
+    const ready = persistenceReady && gatewayConfigured;
+    const status = ready ? "ready" : persistenceReady ? "partial" : "unavailable";
 
     return json({
-      ok: persistenceReady,
+      ok: ready,
       service: "neyvix-intelligence",
       status,
       database: "connected",
@@ -71,7 +72,7 @@ export async function GET() {
         events: memoryEvents,
         aiContextEnabled: memoryAiContext,
       },
-    }, persistenceReady ? 200 : 503);
+    }, ready ? 200 : 503);
   } catch (error) {
     console.error("NEYVIX intelligence readiness check failed", error);
     return json({
