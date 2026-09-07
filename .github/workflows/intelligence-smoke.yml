@@ -40,8 +40,21 @@ jobs:
           code="$(curl --silent --show-error --location --retry 3 --retry-delay 2 --max-time 20 "${headers[@]}" -o /tmp/intelligence.json -w '%{http_code}' "$base/api/health/intelligence")"
           echo "Intelligence HTTP: $code"
           jq '{ok,service,status,database,ai,memory}' /tmp/intelligence.json
-          test "$code" = "200"
-          jq -e '.ok == true and .database == "connected" and .ai.messageStore == true and .memory.store == true and .memory.events == true' /tmp/intelligence.json >/dev/null
+
+          jq -e '.database == "connected" and .ai.messageStore == true and .memory.store == true and .memory.events == true' /tmp/intelligence.json >/dev/null
+          gateway_ready="$(jq -r '.ai.gatewayConfigured' /tmp/intelligence.json)"
+          state="$(jq -r '.status' /tmp/intelligence.json)"
+
+          if [ "$gateway_ready" = "true" ]; then
+            test "$code" = "200"
+            test "$state" = "ready"
+            jq -e '.ok == true' /tmp/intelligence.json >/dev/null
+          else
+            test "$gateway_ready" = "false"
+            test "$code" = "503"
+            test "$state" = "partial"
+            jq -e '.ok == false' /tmp/intelligence.json >/dev/null
+          fi
 
       - name: Verify AI gateway readiness semantics
         shell: bash
