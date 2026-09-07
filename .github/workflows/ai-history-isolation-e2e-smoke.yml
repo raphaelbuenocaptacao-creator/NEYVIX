@@ -103,8 +103,12 @@ jobs:
 
           handle_a="e2e-ai-hist-a-${suffix}"
           handle_b="e2e-ai-hist-b-${suffix}"
+          email_a="${handle_a}@neyvix.com"
+          email_b="${handle_b}@neyvix.com"
           password_a="$(openssl rand -base64 30 | tr -d '\n')"
           password_b="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$email_a"
+          echo "::add-mask::$email_b"
           echo "::add-mask::$password_a"
           echo "::add-mask::$password_b"
 
@@ -112,6 +116,15 @@ jobs:
           registered_a=true
           register_account b "$jar_b" "$handle_b" "$password_b"
           registered_b=true
+
+          me_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/me-a.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage me-a-request
+          [ "$me_a_code" = "200" ] || fail_stage me-a-status
+          jq -e --arg email "$email_a" '.authenticated == true and .user.email == $email' /tmp/me-a.json >/dev/null || fail_stage me-a-identity
+
+          me_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/me-b.json -w '%{http_code}' "$base/api/auth/me")" || fail_stage me-b-request
+          [ "$me_b_code" = "200" ] || fail_stage me-b-status
+          jq -e --arg email "$email_b" '.authenticated == true and .user.email == $email' /tmp/me-b.json >/dev/null || fail_stage me-b-identity
+          [ "$email_a" != "$email_b" ] || fail_stage session-identities-collided
 
           history_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -D /tmp/history-a.headers -o /tmp/history-a.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-a-request
           [ "$history_a_code" = "200" ] || fail_stage history-a-status
@@ -153,7 +166,7 @@ PY
           {
             echo "### AI History Isolation E2E Smoke: PASS"
             echo
-            echo "Verified exact production release, database health, anonymous denial, two independent Start sessions, empty per-user histories, fail-fast rejection before persistence for oversized and malformed JSON input, no orphan turns after rejected requests, and smoke-account cleanup."
+            echo "Verified exact production release, database health, anonymous denial, two distinct authenticated Start sessions, empty per-user histories, fail-fast rejection before persistence for oversized and malformed JSON input, no orphan turns after rejected requests, and smoke-account cleanup."
             echo
             echo "This test is provider-free. It does not claim to simulate an upstream gateway failure."
           } >> "$GITHUB_STEP_SUMMARY"
