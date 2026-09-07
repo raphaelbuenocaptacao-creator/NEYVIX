@@ -9,6 +9,7 @@ import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate
 import { loadAiMemoryContext } from "@/lib/ai-memory-context";
 import { listAiHistory } from "@/lib/ai-history";
 import { isSmokeAccountEmail } from "@/lib/smoke-user-db";
+import { hasValidGitHubActionsOidcForAiSmoke } from "@/lib/github-actions-oidc";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
@@ -110,9 +111,21 @@ export async function POST(request: Request) {
     return privateJson({ error: `A solicitação deve ter no máximo ${MAX_PROMPT_LENGTH} caracteres` }, 413);
   }
 
-  const smokeAccount = isSmokeAccountEmail(session.email);
-  const smokeGatewayFailure = request.headers.get(SMOKE_GATEWAY_FAILURE_HEADER) === "1" && smokeAccount;
-  const smokeGatewaySuccess = request.headers.get(SMOKE_GATEWAY_SUCCESS_HEADER) === "1" && smokeAccount;
+  const smokeGatewayFailureRequested = request.headers.get(SMOKE_GATEWAY_FAILURE_HEADER) === "1";
+  const smokeGatewaySuccessRequested = request.headers.get(SMOKE_GATEWAY_SUCCESS_HEADER) === "1";
+  const smokeProbeRequested = smokeGatewayFailureRequested || smokeGatewaySuccessRequested;
+
+  let smokeProbeAuthorized = false;
+  if (smokeProbeRequested) {
+    const smokeAccount = isSmokeAccountEmail(session.email);
+    smokeProbeAuthorized = smokeAccount && await hasValidGitHubActionsOidcForAiSmoke(request);
+    if (!smokeProbeAuthorized) {
+      return privateJson({ error: "Probe técnico não autorizado" }, 403);
+    }
+  }
+
+  const smokeGatewayFailure = smokeGatewayFailureRequested && smokeProbeAuthorized;
+  const smokeGatewaySuccess = smokeGatewaySuccessRequested && smokeProbeAuthorized;
   const gateway = getGatewayConfig();
   if (!gateway && !smokeGatewayFailure && !smokeGatewaySuccess) {
     return privateJson({ error: "O gateway seguro da NEYVIX AI não está configurado" }, 503);
