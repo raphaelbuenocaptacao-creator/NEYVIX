@@ -1,6 +1,8 @@
 name: NEYVIX AI History Isolation E2E Smoke
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   deployment_status:
 
@@ -11,6 +13,7 @@ permissions:
 jobs:
   ai-history-isolation-e2e:
     if: >-
+      github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
     runs-on: ubuntu-latest
