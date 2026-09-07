@@ -1,0 +1,124 @@
+name: NEYVIX AI Gateway Failure E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ai-gateway-failure-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify simulated upstream failure creates zero AI history
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          jar=/tmp/neyvix-ai-gateway-failure.cookies
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_AI_GATEWAY_FAILURE_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX AI Gateway Failure E2E::${stage}"
+            exit 1
+          }
+
+          registered=false
+          cleanup() {
+            set +e
+            if [ "$registered" = true ] && [ -s "$jar" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle="e2e-ai-hist-gateway-${suffix}"
+          email="${handle}@neyvix.com"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$email"
+          echo "::add-mask::$password"
+
+          rm -f "$jar" /tmp/register.headers /tmp/register.body
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$jar" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX AI Gateway Failure Smoke' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$jar" || fail_stage register-session-cookie
+          registered=true
+
+          before_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/before.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-before-request
+          [ "$before_code" = "200" ] || fail_stage history-before-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/before.json >/dev/null || fail_stage history-before-not-empty
+
+          failure_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/failure.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -H 'x-neyvix-smoke-ai-gateway-failure: 1' \
+            --data '{"prompt":"provider-free upstream failure probe","useMemory":false}' \
+            "$base/api/ai")" || fail_stage simulated-failure-request
+          [ "$failure_code" = "502" ] || fail_stage simulated-failure-status
+          jq -e '.error == "A NEYVIX AI está temporariamente indisponível"' /tmp/failure.json >/dev/null || fail_stage simulated-failure-contract
+
+          after_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/after.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-after-request
+          [ "$after_code" = "200" ] || fail_stage history-after-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after.json >/dev/null || fail_stage upstream-failure-created-orphan
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -X DELETE -o /tmp/cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
+          registered=false
+
+          {
+            echo "### AI Gateway Failure E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, connected database, authenticated Start session, provider-free simulated non-OK gateway response, 502 public contract, zero AI history before and after failure, and cleanup."
+            echo
+            echo "The failure hook is accepted only for allowlisted ephemeral smoke-account identities and never calls the external AI provider."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "PASS: provider-free gateway failure leaves zero orphan AI history."
