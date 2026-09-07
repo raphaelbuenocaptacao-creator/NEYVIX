@@ -25,6 +25,7 @@ jobs:
           token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
           test -n "$token"
           echo "::add-mask::$token"
+          CLAIMS_TOKEN="$token" node -e 'const c=JSON.parse(Buffer.from(process.env.CLAIMS_TOKEN.split(".")[1],"base64url").toString()); console.log("NEYVIX_OIDC_CLAIMS="+JSON.stringify({iss:c.iss,aud:c.aud,repository:c.repository,ref:c.ref,workflow_ref:c.workflow_ref,event_name:c.event_name}))'
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Verify Mail retry state machine in production without external transport
