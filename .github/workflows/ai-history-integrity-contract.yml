@@ -16,15 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify complete AI exchanges are persisted atomically
+      - name: Verify complete AI exchanges and isolated history
         shell: bash
         run: |
           set -euo pipefail
           route="app/api/ai/route.ts"
           exchange="lib/ai-exchange.ts"
+          history="lib/ai-history.ts"
 
           test -f "$route"
           test -f "$exchange"
+          test -f "$history"
 
           grep -F 'import { saveAiExchange } from "@/lib/ai-exchange";' "$route" >/dev/null
           grep -F 'await saveAiExchange(session.email, prompt, text)' "$route" >/dev/null
@@ -50,5 +52,14 @@ jobs:
           grep -F 'INSERT INTO public.neyvix_ai_messages (user_id, role, content, created_at)' "$exchange" >/dev/null
           grep -F "statement_timestamp() + (exchange.ordinal * interval '1 microsecond')" "$exchange" >/dev/null
           grep -F 'if (rows.length !== 2)' "$exchange" >/dev/null
+          grep -F 'const persistedRoles = rows.map' "$exchange" >/dev/null
+          grep -F 'persistedRoles[0] !== "assistant" || persistedRoles[1] !== "user"' "$exchange" >/dev/null
 
-          echo 'PASS: AI history persists only complete, ordered user/assistant exchanges in one database statement.'
+          # History must remain scoped to the authenticated identity and active accounts.
+          grep -F 'JOIN public.users u ON u.id = m.user_id' "$history" >/dev/null
+          grep -F 'WHERE u.email = ${normalizedEmail}' "$history" >/dev/null
+          grep -F 'AND u.is_active = true' "$history" >/dev/null
+          grep -F "AND m.role IN ('user', 'assistant', 'system')" "$history" >/dev/null
+          grep -F 'LIMIT ${safeLimit}' "$history" >/dev/null
+
+          echo 'PASS: AI history persists only complete, ordered role-validated exchanges and reads remain scoped to the active owner.'
