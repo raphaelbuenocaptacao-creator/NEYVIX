@@ -135,10 +135,7 @@ jobs:
           [ "$history_b_code" = "200" ] || fail_stage history-b-status
           jq -e '.count == 0 and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-b.json >/dev/null || fail_stage history-b-not-empty
 
-          oversized_prompt="$(python - <<'PY'
-print('x' * 4001)
-PY
-)"
+          oversized_prompt="$(python -c "print('x' * 4001)")"
           rejected_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/rejected.json -w '%{http_code}' \
             -H 'content-type: application/json' --data "$(jq -nc --arg prompt "$oversized_prompt" '{prompt:$prompt}')" "$base/api/ai")" || fail_stage oversized-request
           [ "$rejected_code" = "413" ] || fail_stage oversized-not-rejected
