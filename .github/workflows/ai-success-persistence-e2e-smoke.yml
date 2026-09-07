@@ -1,0 +1,163 @@
+name: NEYVIX AI Success Persistence E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ai-success-persistence-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify provider-free successful exchange persistence and isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          jar_a=/tmp/neyvix-ai-success-a.cookies
+          jar_b=/tmp/neyvix-ai-success-b.cookies
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_AI_SUCCESS_PERSISTENCE_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX AI Success Persistence E2E::${stage}"
+            exit 1
+          }
+
+          registered_a=false
+          registered_b=false
+          cleanup() {
+            set +e
+            if [ "$registered_a" = true ] && [ -s "$jar_a" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar_a" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+            if [ "$registered_b" = true ] && [ -s "$jar_b" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar_b" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle_a="e2e-ai-hist-ok-a-${suffix}"
+          handle_b="e2e-ai-hist-ok-b-${suffix}"
+          email_a="${handle_a}@neyvix.com"
+          email_b="${handle_b}@neyvix.com"
+          password_a="$(openssl rand -base64 30 | tr -d '\n')"
+          password_b="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$email_a"
+          echo "::add-mask::$email_b"
+          echo "::add-mask::$password_a"
+          echo "::add-mask::$password_b"
+
+          register_account() {
+            local handle="$1" password="$2" jar="$3" body="$4" headers_file="$5"
+            rm -f "$jar" "$body" "$headers_file"
+            curl --silent --show-error --max-time 20 "${headers[@]}" \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$jar" -D "$headers_file" -o "$body" \
+              --data-urlencode 'name=NEYVIX AI Success Smoke' \
+              --data-urlencode "handle=$handle" \
+              --data-urlencode "password=$password" \
+              --data-urlencode 'plan=start' \
+              "$base/api/auth/register" >/dev/null
+            awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' "$headers_file"
+          }
+
+          status_a="$(register_account "$handle_a" "$password_a" "$jar_a" /tmp/register-a.body /tmp/register-a.headers)" || fail_stage register-a-request
+          [ "$status_a" = "303" ] || fail_stage register-a-status
+          grep -Eq 'neyvix_session' "$jar_a" || fail_stage register-a-session-cookie
+          registered_a=true
+
+          status_b="$(register_account "$handle_b" "$password_b" "$jar_b" /tmp/register-b.body /tmp/register-b.headers)" || fail_stage register-b-request
+          [ "$status_b" = "303" ] || fail_stage register-b-status
+          grep -Eq 'neyvix_session' "$jar_b" || fail_stage register-b-session-cookie
+          registered_b=true
+
+          for who in a b; do
+            jar_var="jar_${who}"
+            jar="${!jar_var}"
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o "/tmp/before-${who}.json" -w '%{http_code}' "$base/api/ai")" || fail_stage "history-${who}-before-request"
+            [ "$code" = "200" ] || fail_stage "history-${who}-before-status"
+            jq -e '.count == 0 and (.messages | length == 0)' "/tmp/before-${who}.json" >/dev/null || fail_stage "history-${who}-before-not-empty"
+          done
+
+          prompt="provider-free success persistence probe ${suffix}"
+          success_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/success.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -H 'x-neyvix-smoke-ai-gateway-success: 1' \
+            --data "$(jq -nc --arg prompt "$prompt" '{prompt:$prompt,useMemory:false}')" \
+            "$base/api/ai")" || fail_stage success-request
+          [ "$success_code" = "200" ] || fail_stage success-status
+          jq -e '.answer == "NEYVIX AI provider-free success probe" and .memoryUsed == 0' /tmp/success.json >/dev/null || fail_stage success-contract
+
+          after_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-a.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-a-after-request
+          [ "$after_a_code" = "200" ] || fail_stage history-a-after-status
+          jq -e --arg prompt "$prompt" '
+            .count == 2 and
+            (.messages | length == 2) and
+            ([.messages[].role] | sort == ["assistant","user"]) and
+            ([.messages[] | select(.role == "user") | .content] == [$prompt]) and
+            ([.messages[] | select(.role == "assistant") | .content] == ["NEYVIX AI provider-free success probe"])
+          ' /tmp/after-a.json >/dev/null || fail_stage persisted-exchange-contract
+
+          after_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/after-b.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-b-after-request
+          [ "$after_b_code" = "200" ] || fail_stage history-b-after-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-b.json >/dev/null || fail_stage cross-account-history-leak
+
+          cleanup_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -X DELETE -o /tmp/cleanup-a.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-a-request
+          [ "$cleanup_a_code" = "200" ] || fail_stage cleanup-a-status
+          registered_a=false
+
+          cleanup_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -X DELETE -o /tmp/cleanup-b.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-b-request
+          [ "$cleanup_b_code" = "200" ] || fail_stage cleanup-b-status
+          registered_b=false
+
+          {
+            echo "### AI Success Persistence E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, connected database, two authenticated Start sessions, provider-free successful AI response, atomic user+assistant persistence, exact history readback, cross-account isolation, and cleanup."
+            echo
+            echo "The success probe is accepted only for allowlisted ephemeral smoke-account identities and never calls the external AI provider."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "PASS: provider-free successful AI exchange persists atomically and remains isolated per account."
