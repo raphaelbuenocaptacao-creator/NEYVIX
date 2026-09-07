@@ -34,5 +34,10 @@ export async function saveAiExchange(email: string, userContent: string, assista
     throw new Error("NEYVIX AI exchange persistence did not write both turns");
   }
 
+  const persistedRoles = rows.map((row) => String(row.role)).sort();
+  if (persistedRoles[0] !== "assistant" || persistedRoles[1] !== "user") {
+    throw new Error("NEYVIX AI exchange persistence wrote an invalid role set");
+  }
+
   return true;
 }
