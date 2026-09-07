@@ -34,9 +34,13 @@ jobs:
           grep -F 'loadAiMemoryContext(session.email, useMemory, 8)' "$ai_route" >/dev/null
           grep -F 'loadAiMemoryContext(session.email, true, 8)' "$context_route" >/dev/null
 
-          # The shared assembler must be opt-in and feature-gated before it reaches the database.
+          # AI memory is fail-closed: both the request and the server feature flag must explicitly opt in.
           grep -F 'if (!useMemory || !isAiMemoryContextEnabled()) return [];' "$context_assembler" >/dev/null
-          grep -F 'process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"' "$context_assembler" >/dev/null
+          grep -F 'return process.env.NEYVIX_MEMORY_AI_CONTEXT === "true";' "$context_assembler" >/dev/null
+          if grep -F 'explicitlyDisabled' "$context_assembler" >/dev/null; then
+            echo 'AI memory context must not default to enabled when the feature flag is absent.' >&2
+            exit 1
+          fi
           grep -F 'getMemoryContext(email, limit)' "$context_assembler" >/dev/null
 
           # Memory values supplied to AI remain bounded even if a stored memory is larger.
@@ -68,4 +72,4 @@ jobs:
             exit 1
           fi
 
-          echo 'PASS: shared assembler ownership, privacy, expiration, bounded context and pseudonymous AI contract verified.'
+          echo 'PASS: explicit opt-in, ownership, privacy, expiration, bounded context and pseudonymous AI contract verified.'
