@@ -13,6 +13,7 @@ const checks = [
   ["AI responses suppress referrer leakage", route.includes('"Referrer-Policy": "no-referrer"')],
   ["gateway errors do not log upstream body", route.includes('console.error("NEYVIX AI gateway error", upstream.status);') && !route.includes("text.slice(0, 500)")],
   ["health readiness requires URL and secret", health.includes("gatewayConfigured = gatewayUrlConfigured && gatewaySecretConfigured")],
+  ["health fails closed until persistence and gateway are ready", health.includes("const ready = persistenceReady && gatewayConfigured;") && health.includes("ok: ready") && health.includes("}, ready ? 200 : 503);")],
   ["memory context is explicit opt-in", route.includes('useMemory && process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"')],
   ["AI memory excludes private records", memory.includes("AND m.is_private = false")],
   ["AI memory is scoped to the active user", memory.includes("WHERE lower(u.email) = ${email.trim().toLowerCase()}") && memory.includes("AND u.is_active = true")],
