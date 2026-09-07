@@ -70,8 +70,11 @@ jobs:
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
           jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
 
-          # Keep the disposable NEYVIX ID safely inside the product's 32-character handle contract.
-          handle="mailretry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Reuse the narrowly-scoped Business smoke entitlement helper without
+          # widening its protected account guard. Keep the disposable NEYVIX ID
+          # safely inside the product's 32-character handle contract.
+          run_suffix="${GITHUB_RUN_ID: -10}"
+          handle="business-positive-${run_suffix}-${GITHUB_RUN_ATTEMPT}"
           email="${handle}@neyvix.com"
           password="$(openssl rand -base64 30 | tr -d '\n')"
           nonce="mail-retry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -97,7 +100,12 @@ jobs:
             -H 'content-type: application/json' -o /tmp/grant.json -w '%{http_code}' \
             --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
             "$base/api/billing/smoke-business")" || fail_stage grant-request
-          [ "$grant_code" = "200" ] || fail_stage grant-status
+          if [ "$grant_code" != "200" ]; then
+            grant_error="$(jq -r '.error // .reason // "unknown"' /tmp/grant.json 2>/dev/null || true)"
+            echo "NEYVIX_MAIL_RETRY_GRANT_HTTP=$grant_code" >&2
+            echo "NEYVIX_MAIL_RETRY_GRANT_ERROR=$grant_error" >&2
+            fail_stage grant-status
+          fi
           jq -e '.ok == true and .externalPayment == false and .billing.plan == "business" and (.billing.entitlements | index("mail")) != null' /tmp/grant.json >/dev/null || fail_stage grant-payload
 
           smoke_code="$(curl --silent --show-error --max-time 30 "${headers[@]}" -b "$cookies" \
