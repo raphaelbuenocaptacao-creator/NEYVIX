@@ -32,7 +32,9 @@ jobs:
 
           # The production AI route and provider-free readiness probe must use the same assembler.
           grep -F 'loadAiMemoryContext(session.email, useMemory, 8)' "$ai_route" >/dev/null
-          grep -F 'loadAiMemoryContext(session.email, true, 8)' "$context_route" >/dev/null
+          grep -F 'loadAiMemoryContext(session.email, useMemory, 8)' "$context_route" >/dev/null
+          grep -F 'searchParams.get("useMemory") === "true"' "$context_route" >/dev/null
+          grep -F 'requestMemoryOptIn: useMemory' "$context_route" >/dev/null
 
           # AI memory is fail-closed: both the request and the server feature flag must explicitly opt in.
           grep -F 'if (!useMemory || !isAiMemoryContextEnabled()) return [];' "$context_assembler" >/dev/null
@@ -72,4 +74,4 @@ jobs:
             exit 1
           fi
 
-          echo 'PASS: explicit opt-in, ownership, privacy, expiration, bounded context and pseudonymous AI contract verified.'
+          echo 'PASS: dual explicit opt-in, ownership, privacy, expiration, bounded context and pseudonymous AI contract verified.'

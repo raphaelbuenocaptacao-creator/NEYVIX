@@ -28,7 +28,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify AI Memory context pipeline without generation provider
+      - name: Verify AI Memory dual opt-in without generation provider
         shell: bash
         run: |
           set -euo pipefail
@@ -130,23 +130,30 @@ jobs:
           shared_id="$(jq -r --arg key "$shared_key" '.memories[] | select(.key == $key) | .id' /tmp/memory-list.json | head -n1)"
           [[ "$shared_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage shared-memory-id
 
-          context_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/context.headers -o /tmp/context.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-request
-          [ "$context_code" = "200" ] || fail_stage context-status
-          grep -Eiq '^cache-control: .*no-store' /tmp/context.headers || fail_stage context-cache-policy
-          grep -Eiq '^referrer-policy: no-referrer' /tmp/context.headers || fail_stage context-referrer-policy
-          jq -e '.ok == true and .memoryContextEnabled == true and .memoryUsed == 1 and .contextAvailable == true' /tmp/context.json >/dev/null || fail_stage context-shared-only
-          jq -e 'has("memory") | not' /tmp/context.json >/dev/null || fail_stage context-content-exposed
-          if grep -Fq "$private_value" /tmp/context.json || grep -Fq "$shared_value" /tmp/context.json; then
-            fail_stage context-value-exposed
+          context_default_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/context-default.headers -o /tmp/context-default.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-default-request
+          [ "$context_default_code" = "200" ] || fail_stage context-default-status
+          grep -Eiq '^cache-control: .*no-store' /tmp/context-default.headers || fail_stage context-default-cache-policy
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/context-default.headers || fail_stage context-default-referrer-policy
+          jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == false and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-default.json >/dev/null || fail_stage context-default-not-opted-out
+          jq -e 'has("memory") | not' /tmp/context-default.json >/dev/null || fail_stage context-default-content-exposed
+
+          context_optin_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/context-optin.headers -o /tmp/context-optin.json -w '%{http_code}' "$base/api/ai/context?useMemory=true")" || fail_stage context-optin-request
+          [ "$context_optin_code" = "200" ] || fail_stage context-optin-status
+          grep -Eiq '^cache-control: .*no-store' /tmp/context-optin.headers || fail_stage context-optin-cache-policy
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/context-optin.headers || fail_stage context-optin-referrer-policy
+          jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == true and .memoryUsed == 1 and .contextAvailable == true' /tmp/context-optin.json >/dev/null || fail_stage context-optin-shared-only
+          jq -e 'has("memory") | not' /tmp/context-optin.json >/dev/null || fail_stage context-optin-content-exposed
+          if grep -Fq "$private_value" /tmp/context-optin.json || grep -Fq "$shared_value" /tmp/context-optin.json; then
+            fail_stage context-optin-value-exposed
           fi
 
           privacy_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/privacy.headers -o /tmp/privacy.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "id=$shared_id" --data-urlencode 'mode=private' "$base/api/memory/privacy")" || fail_stage privacy-change-request
           [ "$privacy_status" = "303" ] || fail_stage privacy-change-status
           grep -Eiq '^location: .*/memory\?privacy=private' /tmp/privacy.headers || fail_stage privacy-change-result
 
-          context_private_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/context-private.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-private-request
+          context_private_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/context-private.json -w '%{http_code}' "$base/api/ai/context?useMemory=true")" || fail_stage context-private-request
           [ "$context_private_code" = "200" ] || fail_stage context-private-status
-          jq -e '.ok == true and .memoryContextEnabled == true and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-private.json >/dev/null || fail_stage context-private-not-excluded
+          jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == true and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-private.json >/dev/null || fail_stage context-private-not-excluded
 
           cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -X DELETE -o /tmp/cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
           [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
@@ -156,7 +163,7 @@ jobs:
           {
             echo "### AI Memory Context E2E Smoke: PASS"
             echo
-            echo "Verified exact production release, authenticated Start entitlement, shared-memory recall, private-memory exclusion, runtime privacy change, no context-content disclosure and ephemeral-account cleanup."
+            echo "Verified exact production release, authenticated Start entitlement, request-level opt-out by default, explicit request opt-in, server feature gate, shared-memory recall, private-memory exclusion, runtime privacy change, no context-content disclosure and ephemeral-account cleanup."
             echo "The smoke exercises the same AI Memory assembler used by /api/ai but never calls the external generation gateway or performs billing."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: AI Memory context pipeline verified without generation provider."
+          echo "PASS: AI Memory dual opt-in pipeline verified without generation provider."

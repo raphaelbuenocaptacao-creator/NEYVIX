@@ -15,7 +15,7 @@ function privateJson(body: unknown, status = 200) {
   });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) return privateJson({ error: "Autenticação necessária ou conta inativa" }, 401);
@@ -23,11 +23,14 @@ export async function GET() {
   const access = await getProductAccess(session.email, "ai");
   if (!access.allowed) return privateJson(upgradeRequiredPayload("ai", "Start"), 403);
 
+  const useMemory = new URL(request.url).searchParams.get("useMemory") === "true";
+
   try {
-    const memory = await loadAiMemoryContext(session.email, true, 8);
+    const memory = await loadAiMemoryContext(session.email, useMemory, 8);
     return privateJson({
       ok: true,
       memoryContextEnabled: isAiMemoryContextEnabled(),
+      requestMemoryOptIn: useMemory,
       memoryUsed: memory.length,
       contextAvailable: memory.length > 0,
     });
