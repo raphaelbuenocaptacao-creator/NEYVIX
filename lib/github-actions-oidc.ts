@@ -17,6 +17,17 @@ const ALLOWED_WORKFLOWS = [
   },
 ] as const;
 
+const AI_SMOKE_WORKFLOWS = [
+  {
+    path: `${EXPECTED_REPOSITORY}/.github/workflows/ai-gateway-failure-e2e-smoke.yml`,
+    events: new Set(["push", "deployment_status", "workflow_dispatch"]),
+  },
+  {
+    path: `${EXPECTED_REPOSITORY}/.github/workflows/ai-success-persistence-e2e-smoke.yml`,
+    events: new Set(["push", "deployment_status", "workflow_dispatch"]),
+  },
+] as const;
+
 type JwtHeader = {
   alg?: unknown;
   kid?: unknown;
@@ -37,6 +48,7 @@ type GitHubOidcClaims = {
 
 type Jwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
 type JwksDocument = { keys?: Jwk[] };
+type AllowedWorkflow = { path: string; events: ReadonlySet<string> };
 type WorkflowAuthorization = {
   match: "main-ref" | "immutable-sha";
   revision: string;
@@ -68,14 +80,14 @@ function repositoryMatches(repository: unknown) {
   return typeof repository === "string" && repository.toLowerCase() === EXPECTED_REPOSITORY.toLowerCase();
 }
 
-function workflowAuthorization(workflowRef: unknown): WorkflowAuthorization {
+function workflowAuthorization(workflowRef: unknown, allowedWorkflows: readonly AllowedWorkflow[]): WorkflowAuthorization {
   if (typeof workflowRef !== "string") return null;
 
   const separator = workflowRef.lastIndexOf("@");
   if (separator <= 0) return null;
   const path = workflowRef.slice(0, separator);
   const revision = workflowRef.slice(separator + 1);
-  const workflow = ALLOWED_WORKFLOWS.find((candidate) => candidate.path.toLowerCase() === path.toLowerCase());
+  const workflow = allowedWorkflows.find((candidate) => candidate.path.toLowerCase() === path.toLowerCase());
   if (!workflow) return null;
 
   if (revision === EXPECTED_REF) {
@@ -94,12 +106,12 @@ function deployedReleaseSha() {
   return /^[0-9a-f]{40}$/.test(value) ? value : null;
 }
 
-function claimsAreAllowed(claims: GitHubOidcClaims) {
+function claimsAreAllowed(claims: GitHubOidcClaims, allowedWorkflows: readonly AllowedWorkflow[]) {
   const now = Math.floor(Date.now() / 1000);
   const exp = typeof claims.exp === "number" ? claims.exp : 0;
   const nbf = typeof claims.nbf === "number" ? claims.nbf : 0;
   const iat = typeof claims.iat === "number" ? claims.iat : 0;
-  const workflow = workflowAuthorization(claims.workflow_ref);
+  const workflow = workflowAuthorization(claims.workflow_ref, allowedWorkflows);
 
   if (claims.iss !== GITHUB_OIDC_ISSUER || !audienceMatches(claims.aud)) return false;
   if (!repositoryMatches(claims.repository) || !workflow) return false;
@@ -188,14 +200,13 @@ async function getSigningKey(kid: string) {
   return null;
 }
 
-export async function hasValidGitHubActionsOidc(request: Request) {
-  const token = request.headers.get("x-neyvix-github-oidc")?.trim() ?? "";
+async function verifyGitHubActionsOidc(token: string, allowedWorkflows: readonly AllowedWorkflow[]) {
   const parts = token.split(".");
   if (parts.length !== 3 || parts.some((part) => !part)) return false;
 
   const header = parseJsonSegment<JwtHeader>(parts[0]);
   const claims = parseJsonSegment<GitHubOidcClaims>(parts[1]);
-  if (!header || !claims || header.alg !== "RS256" || typeof header.kid !== "string" || !claimsAreAllowed(claims)) {
+  if (!header || !claims || header.alg !== "RS256" || typeof header.kid !== "string" || !claimsAreAllowed(claims, allowedWorkflows)) {
     return false;
   }
 
@@ -218,4 +229,20 @@ export async function hasValidGitHubActionsOidc(request: Request) {
   } catch {
     return false;
   }
+}
+
+export async function hasValidGitHubActionsOidc(request: Request) {
+  const token = request.headers.get("x-neyvix-github-oidc")?.trim() ?? "";
+  return verifyGitHubActionsOidc(token, ALLOWED_WORKFLOWS);
+}
+
+export async function hasValidGitHubActionsOidcForAiSmoke(request: Request) {
+  // Vercel consumes the same GitHub-issued token for deployment protection but
+  // still forwards it to the application. Accept that forwarded header only in
+  // this AI-smoke verifier, and cryptographically re-verify every GitHub claim
+  // ourselves before a provider-free probe can be activated.
+  const token = request.headers.get("x-neyvix-github-oidc")?.trim()
+    || request.headers.get("x-vercel-trusted-oidc-idp-token")?.trim()
+    || "";
+  return verifyGitHubActionsOidc(token, AI_SMOKE_WORKFLOWS);
 }
