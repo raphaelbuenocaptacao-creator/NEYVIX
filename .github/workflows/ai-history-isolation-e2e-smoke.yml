@@ -1,0 +1,158 @@
+name: NEYVIX AI History Isolation E2E Smoke
+
+on:
+  workflow_dispatch:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ai-history-isolation-e2e:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify provider-free history isolation and no orphan turns on rejected input
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          jar_a=/tmp/neyvix-ai-history-a.cookies
+          jar_b=/tmp/neyvix-ai-history-b.cookies
+          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_AI_HISTORY_ISOLATION_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX AI History Isolation E2E::${stage}"
+            exit 1
+          }
+
+          registered_a=false
+          registered_b=false
+          cleanup() {
+            set +e
+            if [ "$registered_a" = true ] && [ -s "$jar_a" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar_a" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+            if [ "$registered_b" = true ] && [ -s "$jar_b" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar_b" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/anonymous.json -w '%{http_code}' "$base/api/ai")" || fail_stage anonymous-request
+          [ "$anonymous_code" = "401" ] || fail_stage anonymous-history-not-blocked
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          register_account() {
+            local label="$1" jar="$2" handle="$3" password="$4"
+            rm -f "$jar" "/tmp/${label}.headers" "/tmp/${label}.body"
+            curl --silent --show-error --max-time 20 "${headers[@]}" \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$jar" -D "/tmp/${label}.headers" -o "/tmp/${label}.body" \
+              --data-urlencode "name=NEYVIX AI History ${label}" \
+              --data-urlencode "handle=$handle" \
+              --data-urlencode "password=$password" \
+              --data-urlencode 'plan=start' \
+              "$base/api/auth/register" >/dev/null || fail_stage "${label}-register-request"
+            local status location
+            status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' "/tmp/${label}.headers")"
+            location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' "/tmp/${label}.headers" | tail -1)"
+            [ "$status" = "303" ] || fail_stage "${label}-register-status"
+            grep -Eq 'neyvix_session' "$jar" || fail_stage "${label}-register-session-cookie"
+            case "$location" in */dashboard*) ;; *) fail_stage "${label}-register-redirect" ;; esac
+          }
+
+          handle_a="e2e-ai-hist-a-${suffix}"
+          handle_b="e2e-ai-hist-b-${suffix}"
+          password_a="$(openssl rand -base64 30 | tr -d '\n')"
+          password_b="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password_a"
+          echo "::add-mask::$password_b"
+
+          register_account a "$jar_a" "$handle_a" "$password_a"
+          registered_a=true
+          register_account b "$jar_b" "$handle_b" "$password_b"
+          registered_b=true
+
+          history_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -D /tmp/history-a.headers -o /tmp/history-a.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-a-request
+          [ "$history_a_code" = "200" ] || fail_stage history-a-status
+          grep -Eiq '^cache-control: .*no-store' /tmp/history-a.headers || fail_stage history-a-cache-policy
+          jq -e '.count == 0 and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-a.json >/dev/null || fail_stage history-a-not-empty
+
+          history_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/history-b.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-b-request
+          [ "$history_b_code" = "200" ] || fail_stage history-b-status
+          jq -e '.count == 0 and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-b.json >/dev/null || fail_stage history-b-not-empty
+
+          oversized_prompt="$(python - <<'PY'
+print('x' * 4001)
+PY
+)"
+          rejected_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/rejected.json -w '%{http_code}' \
+            -H 'content-type: application/json' --data "$(jq -nc --arg prompt "$oversized_prompt" '{prompt:$prompt}')" "$base/api/ai")" || fail_stage oversized-request
+          [ "$rejected_code" = "413" ] || fail_stage oversized-not-rejected
+
+          invalid_json_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/invalid-json.json -w '%{http_code}' \
+            -H 'content-type: application/json' --data '{' "$base/api/ai")" || fail_stage invalid-json-request
+          [ "$invalid_json_code" = "400" ] || fail_stage invalid-json-not-rejected
+
+          after_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-a.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-a-after-request
+          [ "$after_a_code" = "200" ] || fail_stage history-a-after-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-a.json >/dev/null || fail_stage rejected-input-created-orphan-a
+
+          after_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/after-b.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-b-after-request
+          [ "$after_b_code" = "200" ] || fail_stage history-b-after-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-b.json >/dev/null || fail_stage rejected-input-created-orphan-b
+
+          cleanup_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -X DELETE -o /tmp/cleanup-a.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-a-request
+          [ "$cleanup_a_code" = "200" ] || fail_stage cleanup-a-status
+          registered_a=false
+
+          cleanup_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -X DELETE -o /tmp/cleanup-b.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-b-request
+          [ "$cleanup_b_code" = "200" ] || fail_stage cleanup-b-status
+          registered_b=false
+
+          {
+            echo "### AI History Isolation E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, database health, anonymous denial, two independent Start sessions, empty per-user histories, fail-fast rejection before persistence for oversized and malformed JSON input, no orphan turns after rejected requests, and smoke-account cleanup."
+            echo
+            echo "This test is provider-free. It does not claim to simulate an upstream gateway failure."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "PASS: provider-free AI history isolation and rejected-input persistence safety verified."
