@@ -39,7 +39,10 @@ jobs:
           base="${NEYVIX_PRODUCTION_URL%/}"
           jar_a=/tmp/neyvix-ai-success-a.cookies
           jar_b=/tmp/neyvix-ai-success-b.cookies
-          headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}")
+          headers=(
+            -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}"
+            -H "x-neyvix-github-oidc: ${VERCEL_OIDC_TOKEN}"
+          )
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
             headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
           fi
