@@ -25,7 +25,6 @@ jobs:
           token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
           test -n "$token"
           echo "::add-mask::$token"
-          CLAIMS_TOKEN="$token" node -e 'const c=JSON.parse(Buffer.from(process.env.CLAIMS_TOKEN.split(".")[1],"base64url").toString()); console.log("NEYVIX_OIDC_CLAIMS="+JSON.stringify({iss:c.iss,aud:c.aud,repository:c.repository,ref:c.ref,workflow_ref:c.workflow_ref,event_name:c.event_name}))'
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Verify Mail retry state machine in production without external transport
@@ -71,11 +70,11 @@ jobs:
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
           jq -e '.checks.database == "connected" and .readiness.access == true' /tmp/health.json >/dev/null || fail_stage database-health
 
-          # Reuse the narrowly-scoped Business smoke entitlement helper without
-          # widening its protected account guard. Keep the disposable NEYVIX ID
-          # safely inside the product's 32-character handle contract.
-          run_suffix="${GITHUB_RUN_ID: -10}"
-          handle="business-positive-${run_suffix}-${GITHUB_RUN_ATTEMPT}"
+          # Both technical smoke endpoints require the dedicated Mail-retry
+          # account namespace. The prefix consumes 29 chars, so a 3-char run
+          # suffix keeps the disposable NEYVIX ID inside the 32-char contract.
+          run_suffix="${GITHUB_RUN_ID: -3}"
+          handle="business-positive-mail-retry-${run_suffix}"
           email="${handle}@neyvix.com"
           password="$(openssl rand -base64 30 | tr -d '\n')"
           nonce="mail-retry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -102,9 +101,9 @@ jobs:
             --data "$(jq -nc --arg nonce "$nonce" '{nonce:$nonce}')" \
             "$base/api/billing/smoke-business")" || fail_stage grant-request
           if [ "$grant_code" != "200" ]; then
-            grant_error="$(jq -r '.error // .reason // "unknown"' /tmp/grant.json 2>/dev/null || true)"
+            grant_error="$(jq -r '(.error // .reason // "unknown") | tostring | ascii_downcase | gsub("[^a-z0-9._-]"; "-") | .[0:80]' /tmp/grant.json 2>/dev/null || printf 'unparseable')"
             echo "NEYVIX_MAIL_RETRY_GRANT_HTTP=$grant_code" >&2
-            echo "NEYVIX_MAIL_RETRY_GRANT_ERROR=$grant_error" >&2
+            echo "NEYVIX_MAIL_RETRY_GRANT_ERROR=${grant_error:-unknown}" >&2
             fail_stage grant-status
           fi
           jq -e '.ok == true and .externalPayment == false and .billing.plan == "business" and (.billing.entitlements | index("mail")) != null' /tmp/grant.json >/dev/null || fail_stage grant-payload
@@ -112,7 +111,14 @@ jobs:
           smoke_code="$(curl --silent --show-error --max-time 30 "${headers[@]}" -b "$cookies" \
             -H 'content-type: application/json' -o /tmp/mail-retry.json -w '%{http_code}' \
             --data '{}' "$base/api/mail/smoke-retry")" || fail_stage retry-smoke-request
-          [ "$smoke_code" = "200" ] || fail_stage retry-smoke-status
+          if [ "$smoke_code" != "200" ]; then
+            smoke_error="$(jq -r '(.error // .stage // "unknown") | tostring | ascii_downcase | gsub("[^a-z0-9._-]"; "-") | .[0:80]' /tmp/mail-retry.json 2>/dev/null || printf 'unparseable')"
+            smoke_stage="$(jq -r '(.stage // "") | tostring | ascii_downcase | gsub("[^a-z0-9._-]"; "-") | .[0:80]' /tmp/mail-retry.json 2>/dev/null || true)"
+            echo "NEYVIX_MAIL_RETRY_SMOKE_HTTP=$smoke_code" >&2
+            echo "NEYVIX_MAIL_RETRY_SMOKE_ERROR=${smoke_error:-unknown}" >&2
+            [ -z "$smoke_stage" ] || echo "NEYVIX_MAIL_RETRY_SMOKE_STAGE=$smoke_stage" >&2
+            fail_stage retry-smoke-status
+          fi
           jq -e '
             .ok == true and
             .testOnly == true and
