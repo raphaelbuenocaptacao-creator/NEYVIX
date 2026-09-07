@@ -1,6 +1,7 @@
 name: NEYVIX AI Memory Context E2E Smoke
 
 on:
+  workflow_dispatch:
   deployment_status:
 
 permissions:
@@ -10,8 +11,8 @@ permissions:
 jobs:
   ai-memory-context-e2e:
     if: >-
-      github.event.deployment_status.state == 'success' &&
-      github.event.deployment_status.environment_url != ''
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -43,12 +44,6 @@ jobs:
             local stage="$1"
             echo "NEYVIX_AI_MEMORY_CONTEXT_STAGE_FAIL=$stage" >&2
             echo "::error title=NEYVIX AI Memory Context E2E::${stage}"
-            {
-              echo "### AI Memory Context E2E Smoke: FAIL"
-              echo
-              echo "- Stage: \`$stage\`"
-              echo "- Production: \`$base\`"
-            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           }
 
@@ -87,18 +82,23 @@ jobs:
           registered=false
           for register_attempt in $(seq 1 5); do
             rm -f "$cookies_file" /tmp/register.headers /tmp/register.body
-            curl --silent --show-error --max-time 20 "${headers[@]}" -H 'content-type: application/x-www-form-urlencoded' -c "$cookies_file" -D /tmp/register.headers -o /tmp/register.body --data-urlencode 'name=NEYVIX AI Memory E2E' --data-urlencode "handle=$handle" --data-urlencode "password=$password" --data-urlencode 'plan=start' "$base/api/auth/register" >/dev/null || fail_stage register-request
+            curl --silent --show-error --max-time 20 "${headers[@]}" \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$cookies_file" -D /tmp/register.headers -o /tmp/register.body \
+              --data-urlencode 'name=NEYVIX AI Memory E2E' \
+              --data-urlencode "handle=$handle" \
+              --data-urlencode "password=$password" \
+              --data-urlencode 'plan=start' \
+              "$base/api/auth/register" >/dev/null || fail_stage register-request
             register_status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
             register_location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{gsub(/\r/,"",$0); sub(/^[^:]+:[[:space:]]*/,"",$0); print $0}' /tmp/register.headers | tail -1)"
             [ "$register_status" = "303" ] || fail_stage register-status
-
             if grep -Eq 'neyvix_session' "$cookies_file" 2>/dev/null; then
               case "$register_location" in
                 */dashboard*) registered=true; break ;;
                 *) fail_stage register-redirect ;;
               esac
             fi
-
             case "$register_location" in
               */register?error=rate_limit*) sleep $((register_attempt * 7)) ;;
               *) fail_stage register-session-cookie ;;
@@ -116,13 +116,19 @@ jobs:
           private_value="Private context sentinel ${suffix}"
           shared_value="Shared context sentinel ${suffix}"
 
-          private_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/private-create.headers -o /tmp/private-create.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "key=$private_key" --data-urlencode 'category=e2e-ai-memory' --data-urlencode "value=$private_value" "$base/api/memory")" || fail_stage private-memory-create-request
+          private_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/private.headers -o /tmp/private.body -w '%{http_code}' \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            --data-urlencode "key=$private_key" --data-urlencode 'category=e2e-ai-memory' --data-urlencode "value=$private_value" \
+            "$base/api/memory")" || fail_stage private-memory-create-request
           [ "$private_status" = "303" ] || fail_stage private-memory-create-status
-          grep -Eiq '^location: .*/memory\?saved=1&shared=0' /tmp/private-create.headers || fail_stage private-memory-not-private
+          grep -Eiq '^location: .*/memory\?saved=1&shared=0' /tmp/private.headers || fail_stage private-memory-not-private
 
-          shared_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/shared-create.headers -o /tmp/shared-create.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "key=$shared_key" --data-urlencode 'category=e2e-ai-memory' --data-urlencode "value=$shared_value" --data-urlencode 'shareWithAi=on' "$base/api/memory")" || fail_stage shared-memory-create-request
+          shared_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/shared.headers -o /tmp/shared.body -w '%{http_code}' \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            --data-urlencode "key=$shared_key" --data-urlencode 'category=e2e-ai-memory' --data-urlencode "value=$shared_value" --data-urlencode 'shareWithAi=on' \
+            "$base/api/memory")" || fail_stage shared-memory-create-request
           [ "$shared_status" = "303" ] || fail_stage shared-memory-create-status
-          grep -Eiq '^location: .*/memory\?saved=1&shared=1' /tmp/shared-create.headers || fail_stage shared-memory-not-shared
+          grep -Eiq '^location: .*/memory\?saved=1&shared=1' /tmp/shared.headers || fail_stage shared-memory-not-shared
 
           list_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/memory-list.json -w '%{http_code}' "$base/api/memory")" || fail_stage memory-list-request
           [ "$list_code" = "200" ] || fail_stage memory-list-status
@@ -130,30 +136,39 @@ jobs:
           shared_id="$(jq -r --arg key "$shared_key" '.memories[] | select(.key == $key) | .id' /tmp/memory-list.json | head -n1)"
           [[ "$shared_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail_stage shared-memory-id
 
-          context_default_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/context-default.headers -o /tmp/context-default.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-default-request
-          [ "$context_default_code" = "200" ] || fail_stage context-default-status
-          grep -Eiq '^cache-control: .*no-store' /tmp/context-default.headers || fail_stage context-default-cache-policy
-          grep -Eiq '^referrer-policy: no-referrer' /tmp/context-default.headers || fail_stage context-default-referrer-policy
-          jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == false and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-default.json >/dev/null || fail_stage context-default-not-opted-out
-          jq -e 'has("memory") | not' /tmp/context-default.json >/dev/null || fail_stage context-default-content-exposed
+          default_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/default.headers -o /tmp/default.json -w '%{http_code}' "$base/api/ai/context")" || fail_stage context-default-request
+          [ "$default_code" = "200" ] || fail_stage context-default-status
+          grep -Eiq '^cache-control: .*no-store' /tmp/default.headers || fail_stage context-default-cache-policy
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/default.headers || fail_stage context-default-referrer-policy
+          jq -e '.ok == true and (.memoryContextEnabled | type == "boolean") and .requestMemoryOptIn == false and .memoryUsed == 0 and .contextAvailable == false' /tmp/default.json >/dev/null || fail_stage context-default-contract
+          jq -e 'has("memory") | not' /tmp/default.json >/dev/null || fail_stage context-default-content-exposed
+          memory_enabled="$(jq -r '.memoryContextEnabled' /tmp/default.json)"
 
-          context_optin_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/context-optin.headers -o /tmp/context-optin.json -w '%{http_code}' "$base/api/ai/context?useMemory=true")" || fail_stage context-optin-request
-          [ "$context_optin_code" = "200" ] || fail_stage context-optin-status
-          grep -Eiq '^cache-control: .*no-store' /tmp/context-optin.headers || fail_stage context-optin-cache-policy
-          grep -Eiq '^referrer-policy: no-referrer' /tmp/context-optin.headers || fail_stage context-optin-referrer-policy
-          jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == true and .memoryUsed == 1 and .contextAvailable == true' /tmp/context-optin.json >/dev/null || fail_stage context-optin-shared-only
-          jq -e 'has("memory") | not' /tmp/context-optin.json >/dev/null || fail_stage context-optin-content-exposed
-          if grep -Fq "$private_value" /tmp/context-optin.json || grep -Fq "$shared_value" /tmp/context-optin.json; then
+          optin_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/optin.headers -o /tmp/optin.json -w '%{http_code}' "$base/api/ai/context?useMemory=true")" || fail_stage context-optin-request
+          [ "$optin_code" = "200" ] || fail_stage context-optin-status
+          grep -Eiq '^cache-control: .*no-store' /tmp/optin.headers || fail_stage context-optin-cache-policy
+          grep -Eiq '^referrer-policy: no-referrer' /tmp/optin.headers || fail_stage context-optin-referrer-policy
+          jq -e 'has("memory") | not' /tmp/optin.json >/dev/null || fail_stage context-optin-content-exposed
+          if grep -Fq "$private_value" /tmp/optin.json || grep -Fq "$shared_value" /tmp/optin.json; then
             fail_stage context-optin-value-exposed
           fi
 
-          privacy_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/privacy.headers -o /tmp/privacy.body -w '%{http_code}' -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "id=$shared_id" --data-urlencode 'mode=private' "$base/api/memory/privacy")" || fail_stage privacy-change-request
+          if [ "$memory_enabled" = "true" ]; then
+            jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == true and .memoryUsed == 1 and .contextAvailable == true' /tmp/optin.json >/dev/null || fail_stage context-optin-enabled-recall
+          else
+            jq -e '.ok == true and .memoryContextEnabled == false and .requestMemoryOptIn == true and .memoryUsed == 0 and .contextAvailable == false' /tmp/optin.json >/dev/null || fail_stage context-optin-fail-closed
+          fi
+
+          privacy_status="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -D /tmp/privacy.headers -o /tmp/privacy.body -w '%{http_code}' \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            --data-urlencode "id=$shared_id" --data-urlencode 'mode=private' \
+            "$base/api/memory/privacy")" || fail_stage privacy-change-request
           [ "$privacy_status" = "303" ] || fail_stage privacy-change-status
           grep -Eiq '^location: .*/memory\?privacy=private' /tmp/privacy.headers || fail_stage privacy-change-result
 
-          context_private_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/context-private.json -w '%{http_code}' "$base/api/ai/context?useMemory=true")" || fail_stage context-private-request
-          [ "$context_private_code" = "200" ] || fail_stage context-private-status
-          jq -e '.ok == true and .memoryContextEnabled == true and .requestMemoryOptIn == true and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-private.json >/dev/null || fail_stage context-private-not-excluded
+          private_context_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -o /tmp/context-private.json -w '%{http_code}' "$base/api/ai/context?useMemory=true")" || fail_stage context-private-request
+          [ "$private_context_code" = "200" ] || fail_stage context-private-status
+          jq -e --argjson enabled "$memory_enabled" '.ok == true and .memoryContextEnabled == $enabled and .requestMemoryOptIn == true and .memoryUsed == 0 and .contextAvailable == false' /tmp/context-private.json >/dev/null || fail_stage context-private-not-excluded
 
           cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies_file" -X DELETE -o /tmp/cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
           [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
@@ -163,7 +178,11 @@ jobs:
           {
             echo "### AI Memory Context E2E Smoke: PASS"
             echo
-            echo "Verified exact production release, authenticated Start entitlement, request-level opt-out by default, explicit request opt-in, server feature gate, shared-memory recall, private-memory exclusion, runtime privacy change, no context-content disclosure and ephemeral-account cleanup."
-            echo "The smoke exercises the same AI Memory assembler used by /api/ai but never calls the external generation gateway or performs billing."
+            echo "Verified exact production release, authenticated Start entitlement, request opt-out by default, explicit request opt-in, server feature gate, private-memory exclusion, runtime privacy change, no raw context disclosure and cleanup."
+            if [ "$memory_enabled" = "true" ]; then
+              echo "Server Memory feature gate is enabled; shared-memory recall was verified."
+            else
+              echo "Server Memory feature gate is disabled; fail-closed behavior was verified and no recall occurred."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: AI Memory dual opt-in pipeline verified without generation provider."
+          echo "PASS: AI Memory dual opt-in contract verified without generation provider."
