@@ -73,14 +73,13 @@ jobs:
             -D /tmp/intelligence.headers -o /tmp/intelligence.json -w '%{http_code}' \
             "$base/api/health/intelligence")" || fail_stage readiness-request
 
-          [ "$readiness_code" = "200" ] || fail_stage readiness-http-status
+          { [ "$readiness_code" = "200" ] || [ "$readiness_code" = "503" ]; } || fail_stage readiness-http-status
           grep -Eqi '^cache-control:.*no-store' /tmp/intelligence.headers || fail_stage readiness-cache-policy
           grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' /tmp/intelligence.headers || fail_stage readiness-referrer-policy
 
           jq -e '
             .service == "neyvix-intelligence" and
             .database == "connected" and
-            .ok == true and
             (.status == "ready" or .status == "partial") and
             (.ai.messageStore == true) and
             (.memory.store == true) and
@@ -93,18 +92,24 @@ jobs:
 
           status="$(jq -r '.status' /tmp/intelligence.json)"
           gateway="$(jq -r '.ai.gatewayConfigured' /tmp/intelligence.json)"
+          ok="$(jq -r '.ok' /tmp/intelligence.json)"
           if [ "$status" = "ready" ]; then
             [ "$gateway" = "true" ] || fail_stage ready-without-gateway
+            [ "$readiness_code" = "200" ] || fail_stage ready-without-http-200
+            [ "$ok" = "true" ] || fail_stage ready-without-ok
           else
             [ "$gateway" = "false" ] || fail_stage partial-with-configured-gateway
+            [ "$readiness_code" = "503" ] || fail_stage partial-without-http-503
+            [ "$ok" = "false" ] || fail_stage partial-with-ok
           fi
 
           {
             echo "### Intelligence Readiness Smoke: PASS"
             echo
-            echo "Verified exact production release SHA, database health, private no-store readiness response, AI message persistence, Memory store/events, and truthful ready/partial gateway state."
+            echo "Verified exact production release SHA, database health, private no-store readiness response, AI message persistence, Memory store/events, and fail-closed ready/partial gateway state."
             echo "No AI generation request or external paid provider call was made."
             echo
             echo "- Readiness: \`$status\`"
+            echo "- HTTP: \`$readiness_code\`"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: production intelligence readiness contract verified for $GITHUB_SHA ($status)."
+          echo "PASS: production intelligence readiness contract verified for $GITHUB_SHA ($status/$readiness_code)."
