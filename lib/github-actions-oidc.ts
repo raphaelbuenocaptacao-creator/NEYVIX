@@ -2,11 +2,20 @@ const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_OIDC_JWKS = `${GITHUB_OIDC_ISSUER}/.well-known/jwks`;
 const EXPECTED_REPOSITORY = "raphaelbuenocaptacao-creator/NEYVIX";
 const EXPECTED_REF = "refs/heads/main";
-const EXPECTED_WORKFLOW_PATH = `${EXPECTED_REPOSITORY}/.github/workflows/business-positive-e2e-smoke.yml`;
-const EXPECTED_WORKFLOW_REF = `${EXPECTED_WORKFLOW_PATH}@${EXPECTED_REF}`;
 const EXPECTED_AUDIENCE = "vercel";
 const MAX_TOKEN_AGE_SECONDS = 10 * 60;
 const CLOCK_SKEW_SECONDS = 30;
+
+const ALLOWED_WORKFLOWS = [
+  {
+    path: `${EXPECTED_REPOSITORY}/.github/workflows/business-positive-e2e-smoke.yml`,
+    events: new Set(["deployment_status"]),
+  },
+  {
+    path: `${EXPECTED_REPOSITORY}/.github/workflows/mail-retry-e2e-smoke.yml`,
+    events: new Set(["deployment_status", "workflow_dispatch"]),
+  },
+] as const;
 
 type JwtHeader = {
   alg?: unknown;
@@ -28,7 +37,10 @@ type GitHubOidcClaims = {
 
 type Jwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
 type JwksDocument = { keys?: Jwk[] };
-type WorkflowRefMatch = "main-ref" | "immutable-sha" | null;
+type WorkflowAuthorization = {
+  match: "main-ref" | "immutable-sha";
+  allowedEvents: ReadonlySet<string>;
+} | null;
 
 let jwksCache: { expiresAt: number; keys: Jwk[] } | null = null;
 
@@ -55,21 +67,26 @@ function repositoryMatches(repository: unknown) {
   return typeof repository === "string" && repository.toLowerCase() === EXPECTED_REPOSITORY.toLowerCase();
 }
 
-function workflowRefMatch(workflowRef: unknown): WorkflowRefMatch {
+function workflowAuthorization(workflowRef: unknown): WorkflowAuthorization {
   if (typeof workflowRef !== "string") return null;
-  if (workflowRef.toLowerCase() === EXPECTED_WORKFLOW_REF.toLowerCase()) return "main-ref";
 
   const separator = workflowRef.lastIndexOf("@");
   if (separator <= 0) return null;
   const path = workflowRef.slice(0, separator);
   const revision = workflowRef.slice(separator + 1);
+  const workflow = ALLOWED_WORKFLOWS.find((candidate) => candidate.path.toLowerCase() === path.toLowerCase());
+  if (!workflow) return null;
+
+  if (revision === EXPECTED_REF) {
+    return { match: "main-ref", allowedEvents: workflow.events };
+  }
 
   // GitHub can represent workflow_ref using the immutable workflow commit SHA.
   // In that form we additionally require the separate signed ref claim to pin
   // the run to main. This prevents a SHA-only workflow identity from widening
   // authorization to another branch.
-  if (path.toLowerCase() === EXPECTED_WORKFLOW_PATH.toLowerCase() && /^[0-9a-f]{40}$/i.test(revision)) {
-    return "immutable-sha";
+  if (/^[0-9a-f]{40}$/i.test(revision)) {
+    return { match: "immutable-sha", allowedEvents: workflow.events };
   }
 
   return null;
@@ -80,18 +97,20 @@ function claimsAreAllowed(claims: GitHubOidcClaims) {
   const exp = typeof claims.exp === "number" ? claims.exp : 0;
   const nbf = typeof claims.nbf === "number" ? claims.nbf : 0;
   const iat = typeof claims.iat === "number" ? claims.iat : 0;
-  const workflowMatch = workflowRefMatch(claims.workflow_ref);
+  const workflow = workflowAuthorization(claims.workflow_ref);
 
   if (claims.iss !== GITHUB_OIDC_ISSUER || !audienceMatches(claims.aud)) return false;
-  if (!repositoryMatches(claims.repository) || !workflowMatch) return false;
-  if (claims.event_name !== "deployment_status") return false;
+  if (!repositoryMatches(claims.repository) || !workflow) return false;
+  if (typeof claims.event_name !== "string" || !workflow.allowedEvents.has(claims.event_name)) return false;
 
   // For deployment_status runs GitHub may omit the standalone ref claim. The
   // signed workflow_ref still pins the workflow itself to refs/heads/main. If
-  // ref is present it must agree with main. If workflow_ref is SHA-based, ref
-  // is mandatory so an immutable workflow revision cannot authorize another
-  // branch by itself.
-  if (workflowMatch === "main-ref") {
+  // ref is present it must agree with main. For workflow_dispatch, GitHub
+  // provides the selected branch ref and it must be main. If workflow_ref is
+  // SHA-based, ref is always mandatory so an immutable workflow revision
+  // cannot authorize another branch by itself.
+  if (workflow.match === "main-ref") {
+    if (claims.event_name === "workflow_dispatch" && claims.ref !== EXPECTED_REF) return false;
     if (claims.ref != null && claims.ref !== EXPECTED_REF) return false;
   } else if (claims.ref !== EXPECTED_REF) {
     return false;
