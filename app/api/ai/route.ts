@@ -8,10 +8,12 @@ import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 import { isRateLimited, rateLimitBucket, recordRateLimitEvent } from "@/lib/rate-limit";
 import { loadAiMemoryContext } from "@/lib/ai-memory-context";
 import { listAiHistory } from "@/lib/ai-history";
+import { isSmokeAccountEmail } from "@/lib/smoke-user-db";
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_RESPONSE_LENGTH = 24000;
 const TIMEOUT_MS = 45_000;
+const SMOKE_GATEWAY_FAILURE_HEADER = "x-neyvix-smoke-ai-gateway-failure";
 
 function privateJson(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -124,17 +126,22 @@ export async function POST(request: Request) {
       console.warn("Unable to load NEYVIX Memory context", memoryError);
     }
 
-    const upstream = await fetch(gateway.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "text/plain, application/json",
-        "Authorization": `Bearer ${gateway.secret}`,
-      },
-      body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
-      signal: controller.signal,
-      cache: "no-store",
-    });
+    const smokeGatewayFailure =
+      request.headers.get(SMOKE_GATEWAY_FAILURE_HEADER) === "1" && isSmokeAccountEmail(session.email);
+
+    const upstream = smokeGatewayFailure
+      ? new Response("provider-free smoke failure", { status: 502 })
+      : await fetch(gateway.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "text/plain, application/json",
+            "Authorization": `Bearer ${gateway.secret}`,
+          },
+          body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
+          signal: controller.signal,
+          cache: "no-store",
+        });
 
     const text = await upstream.text();
     if (!upstream.ok) {
