@@ -108,8 +108,10 @@ export async function POST(request: Request) {
     return privateJson({ error: `A solicitação deve ter no máximo ${MAX_PROMPT_LENGTH} caracteres` }, 413);
   }
 
+  const smokeGatewayFailure =
+    request.headers.get(SMOKE_GATEWAY_FAILURE_HEADER) === "1" && isSmokeAccountEmail(session.email);
   const gateway = getGatewayConfig();
-  if (!gateway) {
+  if (!gateway && !smokeGatewayFailure) {
     return privateJson({ error: "O gateway seguro da NEYVIX AI não está configurado" }, 503);
   }
 
@@ -126,17 +128,14 @@ export async function POST(request: Request) {
       console.warn("Unable to load NEYVIX Memory context", memoryError);
     }
 
-    const smokeGatewayFailure =
-      request.headers.get(SMOKE_GATEWAY_FAILURE_HEADER) === "1" && isSmokeAccountEmail(session.email);
-
     const upstream = smokeGatewayFailure
       ? new Response("provider-free smoke failure", { status: 502 })
-      : await fetch(gateway.url, {
+      : await fetch(gateway!.url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Accept": "text/plain, application/json",
-            "Authorization": `Bearer ${gateway.secret}`,
+            "Authorization": `Bearer ${gateway!.secret}`,
           },
           body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
           signal: controller.signal,
