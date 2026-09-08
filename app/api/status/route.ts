@@ -23,6 +23,13 @@ const modules = {
   cloud: "architecture-only",
 } as const;
 
+type ModuleStage = "functional" | "partial" | "scaffold" | "planned";
+
+type ModuleMaturity = {
+  stage: ModuleStage;
+  evidence: string;
+};
+
 export const dynamic = "force-dynamic";
 
 function toHttpsUrl(host?: string) {
@@ -76,6 +83,105 @@ export async function GET(request: Request) {
     && paymentProviderConfigured
     && billingWebhookConfigured;
 
+  const moduleMaturity: Record<string, ModuleMaturity> = {
+    id: {
+      stage: authReady ? "functional" : "partial",
+      evidence: authReady
+        ? "PostgreSQL identity schema, password data and signed session prerequisites are ready."
+        : "Identity exists, but one or more database/session prerequisites are not currently ready.",
+    },
+    ai: {
+      stage: "partial",
+      evidence: aiGatewayConfigured
+        ? "Gateway configuration is present, but provider reachability is not live-verified by status."
+        : "AI persistence/runtime exists, but no production gateway configuration is detected.",
+    },
+    memory: {
+      stage: "functional",
+      evidence: "Authenticated Memory API and persisted AI-context memory foundation are implemented.",
+    },
+    studio: {
+      stage: "partial",
+      evidence: "Authenticated persisted Studio workspace exists; broader creation/deployment orchestration remains incomplete.",
+    },
+    content: {
+      stage: "partial",
+      evidence: "Authenticated persisted Content workspace exists; external publishing/distribution is not verified.",
+    },
+    admin: {
+      stage: "partial",
+      evidence: "Superadmin-protected User 360 foundation exists; complete operational coverage is not claimed.",
+    },
+    dashboard: {
+      stage: "partial",
+      evidence: "Authenticated Command Center and activity surfaces exist; not every ecosystem module is operational.",
+    },
+    automation: {
+      stage: "partial",
+      evidence: "Authenticated automation persistence and human approve/reject actions exist; external action execution remains bounded.",
+    },
+    mail: {
+      stage: "partial",
+      evidence: mailTransportConfigured
+        ? "Mail persistence and transport configuration are present; external delivery is not asserted without provider evidence."
+        : "Inbox/draft persistence exists, but no external mail transport is configured.",
+    },
+    billing: {
+      stage: commercialReady ? "functional" : "partial",
+      evidence: commercialReady
+        ? "Billing database plus provider and webhook configuration prerequisites are present."
+        : "Trial/entitlement foundation exists; production provider/webhook prerequisites are incomplete or unverified.",
+    },
+    storage: {
+      stage: "functional",
+      evidence: "Authenticated private upload/download/delete with bounded payloads and Drive-backed persistence is implemented.",
+    },
+    drive: {
+      stage: "functional",
+      evidence: "Authenticated folders plus private file upload/download/delete are implemented.",
+    },
+    docs: {
+      stage: "partial",
+      evidence: "Authenticated persisted document foundation exists; full collaborative editing is not claimed.",
+    },
+    business: {
+      stage: "partial",
+      evidence: "Authenticated Business foundation and entitlement boundaries exist; broader business workflows remain incomplete.",
+    },
+    estate: {
+      stage: "partial",
+      evidence: "Persisted site/property builder and published-site route exist; managed media/domain provisioning remain incomplete.",
+    },
+    pwa: {
+      stage: "functional",
+      evidence: "Manifest, service worker, standalone metadata and app shortcuts are implemented.",
+    },
+    chat: {
+      stage: "scaffold",
+      evidence: "Database architecture exists; end-to-end Chat product flow is not implemented.",
+    },
+    social: {
+      stage: "scaffold",
+      evidence: "Database architecture exists; end-to-end Social product flow is not implemented.",
+    },
+    meet: {
+      stage: "scaffold",
+      evidence: "Database architecture exists; realtime meeting/media transport is not implemented.",
+    },
+    deploy: {
+      stage: "scaffold",
+      evidence: "Deploy product surface/schema exists; provider-backed deployment orchestration is not implemented.",
+    },
+    cloud: {
+      stage: "scaffold",
+      evidence: "Architecture exists; managed cloud runtime/provisioning is not implemented.",
+    },
+    pay: {
+      stage: "scaffold",
+      evidence: "Payment/billing architecture exists; no real-money movement or regulated payment execution is implemented.",
+    },
+  };
+
   return Response.json({
     ok,
     service: "NEYVIX",
@@ -125,6 +231,8 @@ export async function GET(request: Request) {
       serviceWorkerReady: true,
     },
     modules,
+    moduleMaturity,
+    moduleStageTaxonomy: ["functional", "partial", "scaffold", "planned"] as const,
     timestamp: new Date().toISOString(),
   }, {
     status: ok ? 200 : 503,
