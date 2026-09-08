@@ -69,6 +69,31 @@ async function readUpstreamTextWithinLimit(response: Response) {
   }
 }
 
+function extractGatewayAnswer(response: Response, text: string) {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const payload: unknown = JSON.parse(text);
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) || !("answer" in payload)) {
+        return null;
+      }
+
+      const answer = (payload as { answer?: unknown }).answer;
+      return typeof answer === "string" && answer.trim() ? answer.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (contentType && !contentType.startsWith("text/plain")) {
+    return null;
+  }
+
+  const answer = text.trim();
+  return answer || null;
+}
+
 function gatewayUserId(email: string) {
   return createHash("sha256").update(`neyvix-ai:${email.trim().toLowerCase()}`).digest("hex");
 }
@@ -202,19 +227,22 @@ export async function POST(request: Request) {
       console.error("NEYVIX AI gateway response exceeded limit");
       return privateJson({ error: "A resposta da NEYVIX AI excedeu o limite permitido" }, 502);
     }
-    if (!text.trim()) {
-      return privateJson({ error: "A NEYVIX AI retornou uma resposta vazia" }, 502);
+
+    const answer = extractGatewayAnswer(upstream, text);
+    if (!answer) {
+      console.error("NEYVIX AI gateway returned an invalid response contract");
+      return privateJson({ error: "A NEYVIX AI retornou uma resposta inválida" }, 502);
     }
 
     try {
-      const persisted = await saveAiExchange(session.email, prompt, text);
+      const persisted = await saveAiExchange(session.email, prompt, answer);
       if (!persisted) throw new Error("database unavailable");
     } catch (dbError) {
       console.error("Unable to persist complete NEYVIX AI exchange", dbError);
       return privateJson({ error: "A resposta foi gerada, mas não pôde ser salva com segurança. Tente novamente." }, 503);
     }
 
-    return privateJson({ answer: text, memoryUsed: memory.length });
+    return privateJson({ answer, memoryUsed: memory.length });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
     return privateJson({ error: timedOut ? "A solicitação da IA excedeu o tempo limite" : "Não foi possível conectar à NEYVIX AI" }, timedOut ? 504 : 502);
