@@ -17,6 +17,10 @@ const TIMEOUT_MS = 45_000;
 const SMOKE_GATEWAY_FAILURE_HEADER = "x-neyvix-smoke-ai-gateway-failure";
 const SMOKE_GATEWAY_SUCCESS_HEADER = "x-neyvix-smoke-ai-gateway-success";
 const SMOKE_GATEWAY_OVERSIZE_HEADER = "x-neyvix-smoke-ai-gateway-oversize";
+const SMOKE_GATEWAY_MALFORMED_JSON_HEADER = "x-neyvix-smoke-ai-gateway-malformed-json";
+const SMOKE_GATEWAY_INVALID_SHAPE_HEADER = "x-neyvix-smoke-ai-gateway-invalid-shape";
+const SMOKE_GATEWAY_EMPTY_ANSWER_HEADER = "x-neyvix-smoke-ai-gateway-empty-answer";
+const SMOKE_GATEWAY_INVALID_CONTENT_TYPE_HEADER = "x-neyvix-smoke-ai-gateway-invalid-content-type";
 const SMOKE_GATEWAY_SUCCESS_ANSWER = "NEYVIX AI provider-free success probe";
 
 function privateJson(body: unknown, status = 200) {
@@ -167,7 +171,12 @@ export async function POST(request: Request) {
   const smokeGatewayFailureRequested = request.headers.get(SMOKE_GATEWAY_FAILURE_HEADER) === "1";
   const smokeGatewaySuccessRequested = request.headers.get(SMOKE_GATEWAY_SUCCESS_HEADER) === "1";
   const smokeGatewayOversizeRequested = request.headers.get(SMOKE_GATEWAY_OVERSIZE_HEADER) === "1";
-  const smokeProbeRequested = smokeGatewayFailureRequested || smokeGatewaySuccessRequested || smokeGatewayOversizeRequested;
+  const smokeGatewayMalformedJsonRequested = request.headers.get(SMOKE_GATEWAY_MALFORMED_JSON_HEADER) === "1";
+  const smokeGatewayInvalidShapeRequested = request.headers.get(SMOKE_GATEWAY_INVALID_SHAPE_HEADER) === "1";
+  const smokeGatewayEmptyAnswerRequested = request.headers.get(SMOKE_GATEWAY_EMPTY_ANSWER_HEADER) === "1";
+  const smokeGatewayInvalidContentTypeRequested = request.headers.get(SMOKE_GATEWAY_INVALID_CONTENT_TYPE_HEADER) === "1";
+  const smokeProbeRequested = smokeGatewayFailureRequested || smokeGatewaySuccessRequested || smokeGatewayOversizeRequested ||
+    smokeGatewayMalformedJsonRequested || smokeGatewayInvalidShapeRequested || smokeGatewayEmptyAnswerRequested || smokeGatewayInvalidContentTypeRequested;
 
   let smokeProbeAuthorized = false;
   if (smokeProbeRequested) {
@@ -181,8 +190,12 @@ export async function POST(request: Request) {
   const smokeGatewayFailure = smokeGatewayFailureRequested && smokeProbeAuthorized;
   const smokeGatewaySuccess = smokeGatewaySuccessRequested && smokeProbeAuthorized;
   const smokeGatewayOversize = smokeGatewayOversizeRequested && smokeProbeAuthorized;
+  const smokeGatewayMalformedJson = smokeGatewayMalformedJsonRequested && smokeProbeAuthorized;
+  const smokeGatewayInvalidShape = smokeGatewayInvalidShapeRequested && smokeProbeAuthorized;
+  const smokeGatewayEmptyAnswer = smokeGatewayEmptyAnswerRequested && smokeProbeAuthorized;
+  const smokeGatewayInvalidContentType = smokeGatewayInvalidContentTypeRequested && smokeProbeAuthorized;
   const gateway = getGatewayConfig();
-  if (!gateway && !smokeGatewayFailure && !smokeGatewaySuccess && !smokeGatewayOversize) {
+  if (!gateway && !smokeProbeAuthorized) {
     return privateJson({ error: "O gateway seguro da NEYVIX AI não está configurado" }, 503);
   }
 
@@ -203,22 +216,30 @@ export async function POST(request: Request) {
       ? new Response("provider-free smoke failure", { status: 502 })
       : smokeGatewayOversize
         ? new Response("x".repeat(MAX_RESPONSE_LENGTH + 1), { status: 200 })
-        : smokeGatewaySuccess
-          ? new Response(JSON.stringify({ answer: SMOKE_GATEWAY_SUCCESS_ANSWER }), {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            })
-          : await fetch(gateway!.url, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Accept": "text/plain, application/json",
-                "Authorization": `Bearer ${gateway!.secret}`,
-              },
-              body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
-              signal: controller.signal,
-              cache: "no-store",
-            });
+        : smokeGatewayMalformedJson
+          ? new Response('{"answer":', { status: 200, headers: { "Content-Type": "application/json" } })
+          : smokeGatewayInvalidShape
+            ? new Response(JSON.stringify({ message: "unexpected envelope" }), { status: 200, headers: { "Content-Type": "application/json" } })
+            : smokeGatewayEmptyAnswer
+              ? new Response(JSON.stringify({ answer: "   " }), { status: 200, headers: { "Content-Type": "application/json" } })
+              : smokeGatewayInvalidContentType
+                ? new Response("NEYVIX AI invalid content type probe", { status: 200, headers: { "Content-Type": "text/html" } })
+                : smokeGatewaySuccess
+                  ? new Response(JSON.stringify({ answer: SMOKE_GATEWAY_SUCCESS_ANSWER }), {
+                      status: 200,
+                      headers: { "Content-Type": "application/json" },
+                    })
+                  : await fetch(gateway!.url, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "Accept": "text/plain, application/json",
+                        "Authorization": `Bearer ${gateway!.secret}`,
+                      },
+                      body: JSON.stringify({ prompt, context: { product: "NEYVIX AI", user: gatewayUserId(session.email), memory } }),
+                      signal: controller.signal,
+                      cache: "no-store",
+                    });
 
     const text = await readUpstreamTextWithinLimit(upstream);
     if (!upstream.ok) {
