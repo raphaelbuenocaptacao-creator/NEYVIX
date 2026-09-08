@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from "react";
 import styles from "./drive.module.css";
 
 type DriveItem = {
@@ -17,6 +17,24 @@ type DriveItem = {
 };
 
 type Crumb = { id: string | null; name: string };
+
+const MAX_UPLOAD_BYTES = 1024 * 1024;
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunk, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function DrivePage() {
   const [items, setItems] = useState<DriveItem[]>([]);
@@ -74,6 +92,104 @@ export default function DrivePage() {
       await load(currentParent);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível criar a pasta.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function uploadFile(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file || busyId) return;
+    input.value = "";
+    setError("");
+    setNotice("");
+    if (file.size < 1) {
+      setError("Arquivo vazio não é permitido.");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError("O NEYVIX Drive aceita arquivos de até 1 MB nesta versão.");
+      return;
+    }
+
+    setBusyId("upload");
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const response = await fetch("/api/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: file.name,
+          mimeType: file.type || "application/octet-stream",
+          contentBase64: bytesToBase64(bytes),
+          parentId: currentParent,
+        }),
+      });
+      const data = await response.json() as { file?: { id: string; name: string }; error?: string };
+      if (response.status === 401) {
+        window.location.assign("/login?reason=session");
+        return;
+      }
+      if (!response.ok || !data.file) throw new Error(data.error || "Não foi possível enviar o arquivo.");
+      setNotice(`Arquivo “${data.file.name}” enviado com segurança.`);
+      await load(currentParent);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível enviar o arquivo.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function downloadFile(item: DriveItem) {
+    if (item.kind !== "file" || busyId) return;
+    setBusyId(item.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/storage/${encodeURIComponent(item.id)}`, { cache: "no-store" });
+      if (response.status === 401) {
+        window.location.assign("/login?reason=session");
+        return;
+      }
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error || "Não foi possível baixar o arquivo.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = item.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setNotice(`Download de “${item.name}” iniciado.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível baixar o arquivo.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function removeFile(item: DriveItem) {
+    if (item.kind !== "file" || busyId || !window.confirm(`Excluir o arquivo “${item.name}”?`)) return;
+    setBusyId(item.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/storage/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      const data = await response.json() as { ok?: boolean; error?: string };
+      if (response.status === 401) {
+        window.location.assign("/login?reason=session");
+        return;
+      }
+      if (!response.ok || !data.ok) throw new Error(data.error || "Não foi possível excluir o arquivo.");
+      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      setNotice(`Arquivo “${item.name}” excluído.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível excluir o arquivo.");
     } finally {
       setBusyId("");
     }
@@ -171,10 +287,10 @@ export default function DrivePage() {
         <div>
           <p className={styles.eyebrow}>NEYVIX DRIVE · WORKSPACE PRIVADO</p>
           <h1>Organize o que sustenta seu ecossistema.</h1>
-          <p>Pastas persistidas, isoladas pelo seu NEYVIX ID e prontas para receber a próxima camada de arquivos. Upload binário ainda não está habilitado.</p>
+          <p>Pastas e arquivos privados persistidos, isolados pelo seu NEYVIX ID e disponíveis para upload e download autenticados.</p>
         </div>
         <div className={styles.heroBadge} aria-label="Status do Drive">
-          <strong>PASTAS</strong><span>FUNCIONAL</span>
+          <strong>DRIVE</strong><span>FUNCIONAL</span>
         </div>
       </section>
 
@@ -192,9 +308,9 @@ export default function DrivePage() {
             ))}
           </nav>
           <div className={styles.storageNote}>
-            <strong>Storage binário</strong>
-            <span>Planejado</span>
-            <p>A base já preserva metadados de arquivos, mas nenhum upload é anunciado como funcional antes de existir armazenamento real.</p>
+            <strong>Storage privado</strong>
+            <span>FUNCIONAL · ATÉ 1 MB</span>
+            <p>Arquivos ficam vinculados ao seu NEYVIX ID, com download autenticado e checksum SHA-256 no backend.</p>
           </div>
         </aside>
 
@@ -205,6 +321,10 @@ export default function DrivePage() {
               <label htmlFor="folder-name" className={styles.srOnly}>Nome da nova pasta</label>
               <input id="folder-name" value={folderName} onChange={(event) => setFolderName(event.target.value)} maxLength={160} placeholder="Nome da nova pasta" disabled={Boolean(busyId)} />
               <button type="submit" disabled={!folderName.trim() || Boolean(busyId)}>{busyId === "create" ? "Criando…" : "+ Nova pasta"}</button>
+              <label htmlFor="file-upload" role="button" aria-disabled={Boolean(busyId)}>
+                {busyId === "upload" ? "Enviando…" : "↑ Enviar arquivo"}
+              </label>
+              <input id="file-upload" className={styles.srOnly} type="file" onChange={(event) => void uploadFile(event)} disabled={Boolean(busyId)} />
             </form>
           </div>
 
@@ -223,7 +343,7 @@ export default function DrivePage() {
                       <span className={styles.itemIcon}>{item.kind === "folder" ? "▰" : "◇"}</span>
                       <div>
                         {editing ? <span className={styles.editingLabel}>Renomeando</span> : <strong>{item.name}</strong>}
-                        <small>{item.kind === "folder" ? "Pasta privada" : item.mimeType || "Arquivo"}</small>
+                        <small>{item.kind === "folder" ? "Pasta privada" : `${item.mimeType || "Arquivo"} · ${formatBytes(item.sizeBytes)}`}</small>
                       </div>
                     </button>
 
@@ -238,6 +358,8 @@ export default function DrivePage() {
                       <div className={styles.itemActions}>
                         <span>{new Date(item.updatedAt).toLocaleDateString("pt-BR")}</span>
                         <button type="button" onClick={() => beginRename(item)} disabled={Boolean(busyId)}>Renomear</button>
+                        {item.kind === "file" ? <button type="button" onClick={() => void downloadFile(item)} disabled={Boolean(busyId)}>{busyId === item.id ? "Abrindo…" : "Baixar"}</button> : null}
+                        {item.kind === "file" ? <button type="button" onClick={() => void removeFile(item)} disabled={Boolean(busyId)}>{busyId === item.id ? "Aguarde…" : "Excluir"}</button> : null}
                         {item.kind === "folder" ? <button type="button" onClick={() => void removeFolder(item)} disabled={Boolean(busyId)}>{busyId === item.id ? "Excluindo…" : "Excluir"}</button> : null}
                       </div>
                     )}
@@ -249,7 +371,7 @@ export default function DrivePage() {
             <div className={styles.emptyState}>
               <span>＋</span>
               <strong>Esta pasta está pronta para começar.</strong>
-              <p>Crie uma pasta para organizar projetos, documentos e ativos antes da chegada do upload de arquivos.</p>
+              <p>Crie uma pasta ou envie um arquivo privado de até 1 MB para iniciar seu espaço.</p>
             </div>
           )}
         </section>
