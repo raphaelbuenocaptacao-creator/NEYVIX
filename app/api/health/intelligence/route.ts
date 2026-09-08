@@ -28,6 +28,8 @@ function aiHealth(gatewayConfigured: boolean, gatewayUrlConfigured: boolean, gat
     gatewayUrlConfigured,
     gatewaySecretConfigured,
     providerReachability: "not_probed" as const,
+    providerVerified: false,
+    operational: false,
     readinessEvidence: "configuration_and_schema_only" as const,
     messageStore,
     schemaReady,
@@ -88,11 +90,11 @@ export async function GET() {
     const aiSchemaReady = aiMessages && Boolean(row.ai_messages_columns);
     const memorySchemaReady = memories && memoryEvents && Boolean(row.memory_columns) && Boolean(row.memory_event_columns);
     const persistenceReady = aiSchemaReady && memorySchemaReady;
-    const ready = persistenceReady && gatewayConfigured;
-    const status = ready ? "ready" : persistenceReady ? "partial" : "unavailable";
+    const configured = persistenceReady && gatewayConfigured;
+    const status = configured ? "configured_unverified" : persistenceReady ? "partial" : "unavailable";
 
     return json({
-      ok: ready,
+      ok: configured,
       service: "neyvix-intelligence",
       status,
       database: "connected",
@@ -103,7 +105,7 @@ export async function GET() {
         schemaReady: memorySchemaReady,
         aiContextEnabled: memoryAiContext,
       },
-    }, ready ? 200 : 503);
+    }, configured ? 200 : 503);
   } catch (error) {
     console.error("NEYVIX intelligence readiness check failed", error);
     return json({
