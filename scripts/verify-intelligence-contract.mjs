@@ -3,6 +3,7 @@ import fs from "node:fs";
 const route = fs.readFileSync("app/api/ai/route.ts", "utf8");
 const health = fs.readFileSync("app/api/health/intelligence/route.ts", "utf8");
 const memory = fs.readFileSync("lib/memory-db.ts", "utf8");
+const aiMemoryContext = fs.readFileSync("lib/ai-memory-context.ts", "utf8");
 const workspace = fs.readFileSync("app/ai/page.tsx", "utf8");
 
 const checks = [
@@ -17,7 +18,8 @@ const checks = [
   ["only normalized gateway answer is persisted", route.includes("saveAiExchange(session.email, prompt, answer)") && !route.includes("saveAiExchange(session.email, prompt, text)")],
   ["health readiness requires URL and secret", health.includes("gatewayConfigured = gatewayUrlConfigured && gatewaySecretConfigured")],
   ["health fails closed until persistence and gateway are ready", health.includes("const ready = persistenceReady && gatewayConfigured;") && health.includes("ok: ready") && health.includes("}, ready ? 200 : 503);")],
-  ["memory context is explicit opt-in", route.includes('useMemory && process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"')],
+  ["memory context request is explicit opt-in", route.includes('(body as { useMemory?: unknown }).useMemory === true') && route.includes("loadAiMemoryContext(session.email, useMemory, 8)")],
+  ["memory context feature gate is explicit opt-in", aiMemoryContext.includes('process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"') && aiMemoryContext.includes("if (!useMemory || !isAiMemoryContextEnabled()) return [];")],
   ["AI memory excludes private records", memory.includes("AND m.is_private = false")],
   ["AI memory is scoped to the active user", memory.includes("WHERE lower(u.email) = ${email.trim().toLowerCase()}") && memory.includes("AND u.is_active = true")],
   ["workspace starts in checking state", workspace.includes('useState<IntelligenceStatus>("checking")')],
