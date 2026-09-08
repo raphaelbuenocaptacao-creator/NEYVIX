@@ -32,7 +32,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify provider-free successful exchange persistence and isolation
+      - name: Verify bounded response handling, successful persistence and isolation
         shell: bash
         run: |
           set -euo pipefail
@@ -124,6 +124,19 @@ jobs:
             jq -e '.count == 0 and (.messages | length == 0)' "/tmp/before-${who}.json" >/dev/null || fail_stage "history-${who}-before-not-empty"
           done
 
+          oversize_prompt="provider-free oversized response probe ${suffix}"
+          oversize_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/oversize.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -H 'x-neyvix-smoke-ai-gateway-oversize: 1' \
+            --data "$(jq -nc --arg prompt "$oversize_prompt" '{prompt:$prompt,useMemory:false}')" \
+            "$base/api/ai")" || fail_stage oversize-request
+          [ "$oversize_code" = "502" ] || fail_stage oversize-status
+          jq -e '.error == "A resposta da NEYVIX AI excedeu o limite permitido" and (has("answer") | not)' /tmp/oversize.json >/dev/null || fail_stage oversize-contract
+
+          after_oversize_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-oversize.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-after-oversize-request
+          [ "$after_oversize_code" = "200" ] || fail_stage history-after-oversize-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-oversize.json >/dev/null || fail_stage oversize-persisted-unexpectedly
+
           prompt="provider-free success persistence probe ${suffix}"
           success_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/success.json -w '%{http_code}' \
             -H 'content-type: application/json' \
@@ -158,9 +171,9 @@ jobs:
           {
             echo "### AI Success Persistence E2E Smoke: PASS"
             echo
-            echo "Verified exact production release, connected database, two authenticated Start sessions, provider-free successful AI response, atomic user+assistant persistence, exact history readback, cross-account isolation, and cleanup."
+            echo "Verified exact production release, connected database, two authenticated Start sessions, oversized-response rejection with zero persistence, provider-free successful AI response, atomic user+assistant persistence, exact history readback, cross-account isolation, and cleanup."
             echo
-            echo "The success probe is accepted only for allowlisted ephemeral smoke-account identities and never calls the external AI provider."
+            echo "Technical probes are accepted only for allowlisted ephemeral smoke-account identities carrying a valid GitHub Actions OIDC token and never call the external AI provider."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "PASS: provider-free successful AI exchange persists atomically and remains isolated per account."
+          echo "PASS: oversized AI responses are rejected without persistence; valid provider-free exchanges persist atomically and remain isolated per account."
