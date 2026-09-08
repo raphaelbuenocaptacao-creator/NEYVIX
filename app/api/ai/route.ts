@@ -41,6 +41,33 @@ function getGatewayConfig() {
   }
 }
 
+async function readUpstreamTextWithinLimit(response: Response) {
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      text += decoder.decode(value, { stream: true });
+      if (text.length > MAX_RESPONSE_LENGTH) {
+        await reader.cancel("NEYVIX AI gateway response exceeded limit");
+        return null;
+      }
+    }
+
+    text += decoder.decode();
+    return text.length > MAX_RESPONSE_LENGTH ? null : text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function gatewayUserId(email: string) {
   return createHash("sha256").update(`neyvix-ai:${email.trim().toLowerCase()}`).digest("hex");
 }
@@ -160,18 +187,18 @@ export async function POST(request: Request) {
             cache: "no-store",
           });
 
-    const text = await upstream.text();
+    const text = await readUpstreamTextWithinLimit(upstream);
     if (!upstream.ok) {
       console.error("NEYVIX AI gateway error", upstream.status);
       return privateJson({ error: "A NEYVIX AI está temporariamente indisponível" }, 502);
     }
 
+    if (text === null) {
+      console.error("NEYVIX AI gateway response exceeded limit");
+      return privateJson({ error: "A resposta da NEYVIX AI excedeu o limite permitido" }, 502);
+    }
     if (!text.trim()) {
       return privateJson({ error: "A NEYVIX AI retornou uma resposta vazia" }, 502);
-    }
-    if (text.length > MAX_RESPONSE_LENGTH) {
-      console.error("NEYVIX AI gateway response exceeded limit", text.length);
-      return privateJson({ error: "A resposta da NEYVIX AI excedeu o limite permitido" }, 502);
     }
 
     try {
