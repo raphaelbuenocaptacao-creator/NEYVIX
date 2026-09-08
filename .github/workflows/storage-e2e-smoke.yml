@@ -117,7 +117,7 @@ jobs:
 
           invalid_persistence_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-after-invalid.json -w '%{http_code}' "$base/api/drive")" || fail_stage invalid-mime-persistence-request
           [ "$invalid_persistence_code" = "200" ] || fail_stage invalid-mime-persistence-status
-          jq -e '.items | type == "array" and all(.items[]; .name != "unsafe.txt")' /tmp/drive-after-invalid.json >/dev/null || fail_stage invalid-mime-persisted-unexpectedly
+          jq -e '(.items | type == "array") and all(.items[]; .name != "unsafe.txt")' /tmp/drive-after-invalid.json >/dev/null || fail_stage invalid-mime-persisted-unexpectedly
           jq -r '.items[]?.id' /tmp/drive-after-invalid.json | sort > /tmp/drive-after-invalid.ids
           cmp -s /tmp/drive-before-invalid.ids /tmp/drive-after-invalid.ids || fail_stage invalid-mime-mutated-drive
 
@@ -141,7 +141,7 @@ jobs:
 
           oversize_persistence_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-after-oversize.json -w '%{http_code}' "$base/api/drive")" || fail_stage oversize-persistence-request
           [ "$oversize_persistence_code" = "200" ] || fail_stage oversize-persistence-status
-          jq -e '.items | type == "array" and all(.items[]; .name != "oversized.bin")' /tmp/drive-after-oversize.json >/dev/null || fail_stage oversize-persisted-unexpectedly
+          jq -e '(.items | type == "array") and all(.items[]; .name != "oversized.bin")' /tmp/drive-after-oversize.json >/dev/null || fail_stage oversize-persisted-unexpectedly
           jq -r '.items[]?.id' /tmp/drive-after-oversize.json | sort > /tmp/drive-after-oversize.ids
           cmp -s /tmp/drive-before-oversize.ids /tmp/drive-after-oversize.ids || fail_stage oversize-mutated-drive
 
