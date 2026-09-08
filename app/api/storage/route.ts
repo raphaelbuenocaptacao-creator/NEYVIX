@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Tamanho da requisição inválido" }, { status: 400, headers: PRIVATE_HEADERS });
     }
     if (requestBytes > MAX_REQUEST_BYTES) {
-      return NextResponse.json({ error: "Arquivo excede o limite atual de 1 MB" }, { status: 413, headers: PRIVATE_HEADERS });
+      return NextResponse.json({ error: "Arquivo muito grande" }, { status: 413, headers: PRIVATE_HEADERS });
     }
   }
 
@@ -67,13 +67,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Conteúdo base64 inválido" }, { status: 400, headers: PRIVATE_HEADERS });
   }
   if (contentBase64.length > MAX_BASE64_LENGTH) {
-    return NextResponse.json({ error: "Arquivo excede o limite atual de 1 MB" }, { status: 413, headers: PRIVATE_HEADERS });
+    return NextResponse.json({ error: "Arquivo muito grande" }, { status: 413, headers: PRIVATE_HEADERS });
   }
 
   const content = Buffer.from(contentBase64, "base64");
   if (!content.length) return NextResponse.json({ error: "Arquivo vazio não é permitido" }, { status: 400, headers: PRIVATE_HEADERS });
   if (content.length > MAX_FILE_BYTES) {
-    return NextResponse.json({ error: "Arquivo excede o limite atual de 1 MB" }, { status: 413, headers: PRIVATE_HEADERS });
+    return NextResponse.json({ error: "Arquivo muito grande" }, { status: 413, headers: PRIVATE_HEADERS });
   }
 
   try {
