@@ -52,10 +52,12 @@ if (statusRoute.includes("listMailMessages")) {
   throw new Error("Outbox reconciliation must not depend on a bounded message list");
 }
 
-const reserveIndex = route.indexOf("beginOutgoingMessage");
-const payloadIndex = route.indexOf("getOwnedMailOutboxPayload");
-const transportIndex = route.indexOf("deliverMail({");
-const finalizeIndex = route.indexOf("finalizeOutgoingMessage");
+// Inspect executable calls rather than import declarations so refactors that
+// reorder named imports cannot create false failures in this safety contract.
+const reserveIndex = route.indexOf("await beginOutgoingMessage({");
+const payloadIndex = route.indexOf("await getOwnedMailOutboxPayload(");
+const transportIndex = route.indexOf("await deliverMail({");
+const finalizeIndex = route.indexOf("await finalizeOutgoingMessage(");
 if (!(reserveIndex >= 0 && payloadIndex > reserveIndex && transportIndex > payloadIndex && finalizeIndex > transportIndex)) {
   throw new Error("Mail send order must be reserve -> canonical payload -> transport -> finalize");
 }
