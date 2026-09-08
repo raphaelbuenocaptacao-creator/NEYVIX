@@ -204,7 +204,10 @@ export async function POST(request: Request) {
       : smokeGatewayOversize
         ? new Response("x".repeat(MAX_RESPONSE_LENGTH + 1), { status: 200 })
         : smokeGatewaySuccess
-          ? new Response(SMOKE_GATEWAY_SUCCESS_ANSWER, { status: 200 })
+          ? new Response(JSON.stringify({ answer: SMOKE_GATEWAY_SUCCESS_ANSWER }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
           : await fetch(gateway!.url, {
               method: "POST",
               headers: {
