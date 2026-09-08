@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 const files = {
   db: await readFile(new URL("../lib/drive-db.ts", import.meta.url), "utf8"),
   api: await readFile(new URL("../app/api/drive/route.ts", import.meta.url), "utf8"),
+  storageApi: await readFile(new URL("../app/api/storage/route.ts", import.meta.url), "utf8"),
+  storageItemApi: await readFile(new URL("../app/api/storage/[id]/route.ts", import.meta.url), "utf8"),
   page: await readFile(new URL("../app/drive/page.tsx", import.meta.url), "utf8"),
   layout: await readFile(new URL("../app/drive/layout.tsx", import.meta.url), "utf8"),
   ecosystem: await readFile(new URL("../app/ecosystem/page.tsx", import.meta.url), "utf8"),
@@ -37,8 +39,14 @@ const checks = [
   ["drive UI exposes accessible success feedback", /role="status"[\s\S]*aria-live="polite"/.test(files.page)],
   ["drive UI exposes empty state", /styles\.emptyState/.test(files.page)],
   ["ecosystem exposes Drive as MVP with live route", /NEYVIX Drive", status: "MVP"[\s\S]*href: "\/drive"/m.test(files.ecosystem)],
-  ["drive clearly labels binary upload as unavailable", /Upload binário ainda não está habilitado/.test(files.page)],
-  ["drive does not expose binary upload yet", !/multipart\/form-data|putBlob|uploadFile|storage provider/i.test(files.api)],
+  ["storage upload API requires active session", /export async function POST[\s\S]*getSession\(\)[\s\S]*status: 401/m.test(files.storageApi)],
+  ["storage upload API enforces 1 MiB limit", /MAX_FILE_BYTES = 1024 \* 1024/.test(files.storageApi) && /status: 413/.test(files.storageApi)],
+  ["storage item API supports authenticated download", /export async function GET[\s\S]*getSession\(\)[\s\S]*readPrivateDriveFile/m.test(files.storageItemApi)],
+  ["storage item API supports authenticated delete", /export async function DELETE[\s\S]*getSession\(\)[\s\S]*deletePrivateDriveFile/m.test(files.storageItemApi)],
+  ["drive UI uploads private files through storage API", /fetch\("\/api\/storage"[\s\S]*contentBase64[\s\S]*parentId: currentParent/m.test(files.page)],
+  ["drive UI enforces upload limit before transfer", /MAX_UPLOAD_BYTES = 1024 \* 1024[\s\S]*file\.size > MAX_UPLOAD_BYTES/m.test(files.page)],
+  ["drive UI downloads authenticated files", /fetch\(`\/api\/storage\/\$\{encodeURIComponent\(item\.id\)\}`[\s\S]*response\.blob\(\)/m.test(files.page)],
+  ["drive UI deletes private files through storage API", /fetch\(`\/api\/storage\/\$\{encodeURIComponent\(item\.id\)\}`[\s\S]*method: "DELETE"/m.test(files.page)],
 ];
 
 let failed = false;
