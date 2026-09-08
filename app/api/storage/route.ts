@@ -11,6 +11,8 @@ const PRIVATE_HEADERS = {
   "X-Content-Type-Options": "nosniff",
 };
 const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_BASE64_LENGTH = Math.ceil(MAX_FILE_BYTES / 3) * 4;
+const MAX_REQUEST_BYTES = MAX_BASE64_LENGTH + 4096;
 const MAX_NAME_LENGTH = 160;
 const MAX_MIME_LENGTH = 160;
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -33,6 +35,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: PRIVATE_HEADERS });
   }
 
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const requestBytes = Number(contentLength);
+    if (!Number.isSafeInteger(requestBytes) || requestBytes < 0) {
+      return NextResponse.json({ error: "Tamanho da requisição inválido" }, { status: 400, headers: PRIVATE_HEADERS });
+    }
+    if (requestBytes > MAX_REQUEST_BYTES) {
+      return NextResponse.json({ error: "Arquivo excede o limite atual de 1 MB" }, { status: 413, headers: PRIVATE_HEADERS });
+    }
+  }
+
   const body = await request.json().catch(() => null) as {
     name?: unknown;
     mimeType?: unknown;
@@ -52,6 +65,9 @@ export async function POST(request: Request) {
   if (parentId === undefined) return NextResponse.json({ error: "Pasta pai inválida" }, { status: 400, headers: PRIVATE_HEADERS });
   if (!contentBase64 || !BASE64_RE.test(contentBase64)) {
     return NextResponse.json({ error: "Conteúdo base64 inválido" }, { status: 400, headers: PRIVATE_HEADERS });
+  }
+  if (contentBase64.length > MAX_BASE64_LENGTH) {
+    return NextResponse.json({ error: "Arquivo excede o limite atual de 1 MB" }, { status: 413, headers: PRIVATE_HEADERS });
   }
 
   const content = Buffer.from(contentBase64, "base64");
