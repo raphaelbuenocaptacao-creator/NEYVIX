@@ -32,7 +32,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify bounded response handling, successful persistence and isolation
+      - name: Verify bounded responses, invalid contracts, successful persistence and isolation
         shell: bash
         run: |
           set -euo pipefail
@@ -133,9 +133,30 @@ jobs:
           [ "$oversize_code" = "502" ] || fail_stage oversize-status
           jq -e '.error == "A resposta da NEYVIX AI excedeu o limite permitido" and (has("answer") | not)' /tmp/oversize.json >/dev/null || fail_stage oversize-contract
 
-          after_oversize_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-oversize.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-after-oversize-request
-          [ "$after_oversize_code" = "200" ] || fail_stage history-after-oversize-status
-          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-oversize.json >/dev/null || fail_stage oversize-persisted-unexpectedly
+          declare -a invalid_names=(malformed-json invalid-shape empty-answer invalid-content-type)
+          declare -a invalid_headers=(
+            x-neyvix-smoke-ai-gateway-malformed-json
+            x-neyvix-smoke-ai-gateway-invalid-shape
+            x-neyvix-smoke-ai-gateway-empty-answer
+            x-neyvix-smoke-ai-gateway-invalid-content-type
+          )
+
+          for i in "${!invalid_names[@]}"; do
+            name="${invalid_names[$i]}"
+            probe_header="${invalid_headers[$i]}"
+            probe_prompt="provider-free ${name} response probe ${suffix}"
+            probe_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o "/tmp/${name}.json" -w '%{http_code}' \
+              -H 'content-type: application/json' \
+              -H "${probe_header}: 1" \
+              --data "$(jq -nc --arg prompt "$probe_prompt" '{prompt:$prompt,useMemory:false}')" \
+              "$base/api/ai")" || fail_stage "${name}-request"
+            [ "$probe_code" = "502" ] || fail_stage "${name}-status"
+            jq -e '.error == "A NEYVIX AI retornou uma resposta inválida" and (has("answer") | not)' "/tmp/${name}.json" >/dev/null || fail_stage "${name}-contract"
+          done
+
+          after_invalid_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-invalid.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-after-invalid-request
+          [ "$after_invalid_code" = "200" ] || fail_stage history-after-invalid-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-invalid.json >/dev/null || fail_stage invalid-response-persisted-unexpectedly
 
           prompt="provider-free success persistence probe ${suffix}"
           success_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/success.json -w '%{http_code}' \
@@ -171,9 +192,9 @@ jobs:
           {
             echo "### AI Success Persistence E2E Smoke: PASS"
             echo
-            echo "Verified exact production release, connected database, two authenticated Start sessions, oversized-response rejection with zero persistence, provider-free successful AI response, atomic user+assistant persistence, exact history readback, cross-account isolation, and cleanup."
+            echo "Verified exact production release, connected database, two authenticated Start sessions, oversized-response rejection, malformed JSON rejection, invalid envelope rejection, empty-answer rejection, invalid content-type rejection, zero persistence across every rejected response, provider-free successful AI response, atomic user+assistant persistence, exact history readback, cross-account isolation, and cleanup."
             echo
             echo "Technical probes are accepted only for allowlisted ephemeral smoke-account identities carrying a valid GitHub Actions OIDC token and never call the external AI provider."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "PASS: oversized AI responses are rejected without persistence; valid provider-free exchanges persist atomically and remain isolated per account."
+          echo "PASS: invalid and oversized AI gateway responses are rejected without persistence; valid provider-free exchanges persist atomically and remain isolated per account."
