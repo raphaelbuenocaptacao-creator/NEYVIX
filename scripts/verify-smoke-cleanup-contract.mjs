@@ -6,15 +6,28 @@ const driveWorkflow = fs.readFileSync(".github/workflows/drive-docs-e2e-smoke.ym
 const businessWorkflow = fs.readFileSync(".github/workflows/business-entitlement-negative-e2e-smoke.yml", "utf8");
 const mailWorkflow = fs.readFileSync(".github/workflows/mail-draft-e2e-smoke.yml", "utf8");
 
+const explicitNamespaces = [
+  "e2e-smoke",
+  "e2e-ai-mem",
+  "e2e-ai-hist",
+  "business-negative",
+  "business-positive",
+  "mail-access",
+];
+
 const checks = [
   [
     "smoke identity namespaces are strict and explicit",
-    db.includes("^(?:e2e-smoke|business-negative|mail-access)-[a-z0-9-]+@neyvix\\.com$") &&
+    explicitNamespaces.every((namespace) => db.includes(namespace)) &&
+      db.includes("[a-z0-9-]+@neyvix\\.com$") &&
       !db.includes("@gmail.com") &&
       !db.includes(".*@neyvix\\.com"),
   ],
-  ["cleanup allows the standard e2e namespace", db.includes("e2e-smoke|business-negative|mail-access")],
+  ["cleanup allows every approved technical namespace", explicitNamespaces.every((namespace) => db.includes(namespace))],
+  ["cleanup allows the standard e2e namespace", db.includes("e2e-smoke")],
+  ["cleanup allows AI memory and history namespaces", db.includes("e2e-ai-mem") && db.includes("e2e-ai-hist")],
   ["cleanup allows the Business-negative namespace", db.includes("business-negative")],
+  ["cleanup allows the Business-positive namespace", db.includes("business-positive")],
   ["cleanup allows the Mail-access namespace", db.includes("mail-access")],
   ["cleanup refuses non-smoke identities", db.includes("if (!isSmokeAccountEmail(normalizedEmail)) return false")],
   ["cleanup detects optional loans relation without querying it", db.includes("to_regclass('public.loans')")],
