@@ -29,18 +29,29 @@ jobs:
           test -f "$history"
 
           grep -F 'import { saveAiExchange } from "@/lib/ai-exchange";' "$route" >/dev/null
-          grep -F 'await saveAiExchange(session.email, prompt, text)' "$route" >/dev/null
+          grep -F 'const answer = extractGatewayAnswer(upstream, text);' "$route" >/dev/null
+          grep -F 'await saveAiExchange(session.email, prompt, answer)' "$route" >/dev/null
           if grep -F 'saveAiMessage(' "$route" >/dev/null; then
             echo 'AI route must not persist individual turns independently.' >&2
             exit 1
           fi
+          if grep -F 'saveAiExchange(session.email, prompt, text)' "$route" >/dev/null; then
+            echo 'AI route must never persist the raw upstream envelope.' >&2
+            exit 1
+          fi
 
           upstream_line="$(grep -n 'if (!upstream.ok)' "$route" | head -n1 | cut -d: -f1)"
-          persistence_line="$(grep -n 'await saveAiExchange(session.email, prompt, text)' "$route" | head -n1 | cut -d: -f1)"
+          normalization_line="$(grep -n 'const answer = extractGatewayAnswer(upstream, text);' "$route" | head -n1 | cut -d: -f1)"
+          persistence_line="$(grep -n 'await saveAiExchange(session.email, prompt, answer)' "$route" | head -n1 | cut -d: -f1)"
           test -n "$upstream_line"
+          test -n "$normalization_line"
           test -n "$persistence_line"
-          [ "$persistence_line" -gt "$upstream_line" ] || {
-            echo 'AI exchange must only be persisted after a successful upstream response.' >&2
+          [ "$normalization_line" -gt "$upstream_line" ] || {
+            echo 'Gateway response must only be normalized after a successful upstream response.' >&2
+            exit 1
+          }
+          [ "$persistence_line" -gt "$normalization_line" ] || {
+            echo 'AI exchange must only be persisted after gateway response normalization.' >&2
             exit 1
           }
 
@@ -62,4 +73,4 @@ jobs:
           grep -F "AND m.role IN ('user', 'assistant', 'system')" "$history" >/dev/null
           grep -F 'LIMIT ${safeLimit}' "$history" >/dev/null
 
-          echo 'PASS: AI history persists only complete, ordered role-validated exchanges and reads remain scoped to the active owner.'
+          echo 'PASS: AI history persists only normalized, complete, ordered role-validated exchanges and reads remain scoped to the active owner.'
