@@ -22,6 +22,18 @@ function validHttpsUrl(value?: string) {
   }
 }
 
+function aiHealth(gatewayConfigured: boolean, gatewayUrlConfigured: boolean, gatewaySecretConfigured: boolean, messageStore: boolean, schemaReady: boolean) {
+  return {
+    gatewayConfigured,
+    gatewayUrlConfigured,
+    gatewaySecretConfigured,
+    providerReachability: "not_probed" as const,
+    readinessEvidence: "configuration_and_schema_only" as const,
+    messageStore,
+    schemaReady,
+  };
+}
+
 export async function GET() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   const gatewayUrlConfigured = validHttpsUrl(process.env.NEYVIX_AI_GATEWAY_URL);
@@ -35,7 +47,7 @@ export async function GET() {
       service: "neyvix-intelligence",
       status: "unavailable",
       database: "not_configured",
-      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false, schemaReady: false },
+      ai: aiHealth(gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, false, false),
       memory: { store: false, events: false, schemaReady: false, aiContextEnabled: memoryAiContext },
     }, 503);
   }
@@ -84,13 +96,7 @@ export async function GET() {
       service: "neyvix-intelligence",
       status,
       database: "connected",
-      ai: {
-        gatewayConfigured,
-        gatewayUrlConfigured,
-        gatewaySecretConfigured,
-        messageStore: aiMessages,
-        schemaReady: aiSchemaReady,
-      },
+      ai: aiHealth(gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, aiMessages, aiSchemaReady),
       memory: {
         store: memories,
         events: memoryEvents,
@@ -105,7 +111,7 @@ export async function GET() {
       service: "neyvix-intelligence",
       status: "unavailable",
       database: "error",
-      ai: { gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, messageStore: false, schemaReady: false },
+      ai: aiHealth(gatewayConfigured, gatewayUrlConfigured, gatewaySecretConfigured, false, false),
       memory: { store: false, events: false, schemaReady: false, aiContextEnabled: memoryAiContext },
     }, 503);
   }
