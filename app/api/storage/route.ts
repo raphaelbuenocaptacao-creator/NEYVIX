@@ -14,6 +14,7 @@ const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_NAME_LENGTH = 160;
 const MAX_MIME_LENGTH = 160;
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const MIME_TYPE_RE = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:\s*;\s*[A-Za-z0-9!#$&^_.+-]+=(?:"[^"\r\n]*"|[A-Za-z0-9!#$&^_.+%-]+))*$/;
 
 async function getSession() {
   const store = await cookies();
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
   if (!name) return NextResponse.json({ error: "Nome do arquivo é obrigatório" }, { status: 400, headers: PRIVATE_HEADERS });
   if (name.length > MAX_NAME_LENGTH) return NextResponse.json({ error: "Nome excede o limite permitido" }, { status: 413, headers: PRIVATE_HEADERS });
   if (mimeType.length > MAX_MIME_LENGTH) return NextResponse.json({ error: "Tipo de conteúdo excede o limite permitido" }, { status: 413, headers: PRIVATE_HEADERS });
+  if (!MIME_TYPE_RE.test(mimeType)) return NextResponse.json({ error: "Tipo de conteúdo inválido" }, { status: 400, headers: PRIVATE_HEADERS });
   if (parentId === undefined) return NextResponse.json({ error: "Pasta pai inválida" }, { status: 400, headers: PRIVATE_HEADERS });
   if (!contentBase64 || !BASE64_RE.test(contentBase64)) {
     return NextResponse.json({ error: "Conteúdo base64 inválido" }, { status: 400, headers: PRIVATE_HEADERS });
