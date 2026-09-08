@@ -25,9 +25,13 @@ requireText(route, "hasValidGitHubActionsOidc", "Business elevation must support
 requireText(oidc, 'const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"', "OIDC issuer must be pinned to GitHub Actions");
 requireText(oidc, 'const EXPECTED_REPOSITORY = "raphaelbuenocaptacao-creator/NEYVIX"', "OIDC repository claim must be pinned to NEYVIX");
 requireText(oidc, 'const EXPECTED_REF = "refs/heads/main"', "OIDC ref claim must be pinned to main");
-requireText(oidc, "business-positive-e2e-smoke.yml@${EXPECTED_REF}", "OIDC workflow_ref must be pinned to the positive Business workflow");
+requireText(oidc, 'path: `${EXPECTED_REPOSITORY}/.github/workflows/business-positive-e2e-smoke.yml`', "Business OIDC allowlist must be pinned to the positive Business workflow path");
+requireText(oidc, "if (revision === EXPECTED_REF)", "Business OIDC workflow_ref must accept the pinned main revision");
+requireText(oidc, "if (/^[0-9a-f]{40}$/i.test(revision))", "deployment OIDC workflow_ref may use an immutable commit revision");
+requireText(oidc, "const releaseSha = deployedReleaseSha();", "immutable workflow revisions must resolve the deployed Vercel release SHA");
+requireText(oidc, "if (!releaseSha || workflow.revision !== releaseSha) return false;", "immutable workflow revision must exactly match the deployed release");
 requireText(oidc, 'const EXPECTED_AUDIENCE = "vercel"', "OIDC audience must be pinned");
-requireText(oidc, 'claims.event_name !== "deployment_status"', "OIDC event must be restricted to deployment_status");
+requireText(oidc, 'events: new Set(["deployment_status"])', "Business OIDC event must remain restricted to deployment_status");
 requireText(oidc, 'header.alg !== "RS256"', "OIDC verifier must reject algorithms other than RS256");
 requireText(oidc, "GITHUB_OIDC_JWKS", "OIDC signature must resolve keys from GitHub issuer JWKS");
 requireText(oidc, "crypto.subtle.verify", "OIDC signature must be cryptographically verified");
