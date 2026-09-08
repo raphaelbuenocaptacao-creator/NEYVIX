@@ -34,6 +34,7 @@ const checks = [
   ["drive UI creates nested folders", /method: "POST"[\s\S]*parentId: currentParent/m.test(files.page)],
   ["drive UI supports rename", /method: "PUT"[\s\S]*id: item\.id[\s\S]*name/m.test(files.page)],
   ["drive UI only requests safe folder deletion", /method: "DELETE"[\s\S]*id: item\.id/m.test(files.page)],
+  ["drive UI redirects expired sessions consistently", /function redirectIfUnauthorized[\s\S]*\/login\?reason=session/.test(files.page) && (files.page.match(/redirectIfUnauthorized\(response\)/g) ?? []).length >= 6],
   ["drive UI exposes loading state", /styles\.loading/.test(files.page)],
   ["drive UI exposes accessible error feedback", /role="alert"[\s\S]*aria-live="assertive"/.test(files.page)],
   ["drive UI exposes accessible success feedback", /role="status"[\s\S]*aria-live="polite"/.test(files.page)],

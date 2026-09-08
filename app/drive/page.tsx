@@ -36,6 +36,12 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function redirectIfUnauthorized(response: Response) {
+  if (response.status !== 401) return false;
+  window.location.assign("/login?reason=session");
+  return true;
+}
+
 export default function DrivePage() {
   const [items, setItems] = useState<DriveItem[]>([]);
   const [crumbs, setCrumbs] = useState<Crumb[]>([{ id: null, name: "Meu Drive" }]);
@@ -56,10 +62,7 @@ export default function DrivePage() {
       const query = parentId ? `?parent=${encodeURIComponent(parentId)}` : "";
       const response = await fetch(`/api/drive${query}`, { cache: "no-store" });
       const data = await response.json() as { items?: DriveItem[]; error?: string };
-      if (response.status === 401) {
-        window.location.assign("/login?reason=session");
-        return;
-      }
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok) throw new Error(data.error || "Não foi possível carregar o Drive.");
       setItems(data.items ?? []);
     } catch (err) {
@@ -86,6 +89,7 @@ export default function DrivePage() {
         body: JSON.stringify({ name, parentId: currentParent }),
       });
       const data = await response.json() as { item?: DriveItem; error?: string };
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok || !data.item) throw new Error(data.error || "Não foi possível criar a pasta.");
       setFolderName("");
       setNotice(`Pasta “${data.item.name}” criada.`);
@@ -127,10 +131,7 @@ export default function DrivePage() {
         }),
       });
       const data = await response.json() as { file?: { id: string; name: string }; error?: string };
-      if (response.status === 401) {
-        window.location.assign("/login?reason=session");
-        return;
-      }
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok || !data.file) throw new Error(data.error || "Não foi possível enviar o arquivo.");
       setNotice(`Arquivo “${data.file.name}” enviado com segurança.`);
       await load(currentParent);
@@ -148,10 +149,7 @@ export default function DrivePage() {
     setNotice("");
     try {
       const response = await fetch(`/api/storage/${encodeURIComponent(item.id)}`, { cache: "no-store" });
-      if (response.status === 401) {
-        window.location.assign("/login?reason=session");
-        return;
-      }
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok) {
         const data = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(data?.error || "Não foi possível baixar o arquivo.");
@@ -181,10 +179,7 @@ export default function DrivePage() {
     try {
       const response = await fetch(`/api/storage/${encodeURIComponent(item.id)}`, { method: "DELETE" });
       const data = await response.json() as { ok?: boolean; error?: string };
-      if (response.status === 401) {
-        window.location.assign("/login?reason=session");
-        return;
-      }
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok || !data.ok) throw new Error(data.error || "Não foi possível excluir o arquivo.");
       setItems((current) => current.filter((candidate) => candidate.id !== item.id));
       setNotice(`Arquivo “${item.name}” excluído.`);
@@ -241,6 +236,7 @@ export default function DrivePage() {
         body: JSON.stringify({ id: item.id, name }),
       });
       const data = await response.json() as { item?: DriveItem; error?: string };
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok || !data.item) throw new Error(data.error || "Não foi possível renomear o item.");
       setItems((current) => current.map((candidate) => candidate.id === item.id ? data.item! : candidate));
       setEditingId("");
@@ -265,6 +261,7 @@ export default function DrivePage() {
         body: JSON.stringify({ id: item.id }),
       });
       const data = await response.json() as { ok?: boolean; error?: string };
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok) throw new Error(data.error || "Não foi possível excluir a pasta.");
       setItems((current) => current.filter((candidate) => candidate.id !== item.id));
       setNotice(`Pasta “${item.name}” excluída.`);
