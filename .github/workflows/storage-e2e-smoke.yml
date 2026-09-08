@@ -121,6 +121,30 @@ jobs:
           jq -r '.items[]?.id' /tmp/drive-after-invalid.json | sort > /tmp/drive-after-invalid.ids
           cmp -s /tmp/drive-before-invalid.ids /tmp/drive-after-invalid.ids || fail_stage invalid-mime-mutated-drive
 
+          cp /tmp/drive-after-invalid.ids /tmp/drive-before-oversize.ids
+          node <<'NODE'
+          const fs = require('fs');
+          const bytes = Buffer.alloc(1024 * 1024 + 1, 0x4e);
+          fs.writeFileSync('/tmp/storage-oversize.json', JSON.stringify({
+            name: 'oversized.bin',
+            mimeType: 'application/octet-stream',
+            contentBase64: bytes.toString('base64'),
+          }));
+          NODE
+
+          oversize_code="$(curl --silent --show-error --max-time 30 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' -o /tmp/storage-oversize-response.json -w '%{http_code}' \
+            --data-binary @/tmp/storage-oversize.json \
+            "$base/api/storage")" || fail_stage oversize-request
+          [ "$oversize_code" = "413" ] || fail_stage oversize-status
+          jq -e '.error == "Arquivo muito grande"' /tmp/storage-oversize-response.json >/dev/null || fail_stage oversize-contract
+
+          oversize_persistence_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-after-oversize.json -w '%{http_code}' "$base/api/drive")" || fail_stage oversize-persistence-request
+          [ "$oversize_persistence_code" = "200" ] || fail_stage oversize-persistence-status
+          jq -e '.items | type == "array" and all(.items[]; .name != "oversized.bin")' /tmp/drive-after-oversize.json >/dev/null || fail_stage oversize-persisted-unexpectedly
+          jq -r '.items[]?.id' /tmp/drive-after-oversize.json | sort > /tmp/drive-after-oversize.ids
+          cmp -s /tmp/drive-before-oversize.ids /tmp/drive-after-oversize.ids || fail_stage oversize-mutated-drive
+
           filename="storage-smoke-${GITHUB_RUN_ID}.txt"
           text="NEYVIX private storage smoke ${GITHUB_RUN_ID}"
           content_base64="$(printf '%s' "$text" | base64 -w0)"
@@ -162,7 +186,7 @@ jobs:
           {
             echo "### Storage E2E Smoke: PASS"
             echo
-            echo "Verified anonymous denial, release SHA, NEYVIX ID/session, invalid MIME rejection with a byte-for-byte-stable Drive ID set, private upload, Drive metadata persistence, byte-exact download, SHA-256 integrity, delete persistence, private cache headers, and ephemeral-account cleanup."
-            echo "Storage smoke is limited to a tiny generated text payload and performs no external upload, billing mutation, payment, mail delivery, webhook, AI generation or schema migration."
+            echo "Verified anonymous denial, release SHA, NEYVIX ID/session, invalid MIME rejection, >1 MiB rejection with byte-for-byte-stable Drive ID sets, private upload, Drive metadata persistence, byte-exact download, SHA-256 integrity, delete persistence, private cache headers, and ephemeral-account cleanup."
+            echo "Storage smoke performs no external upload, billing mutation, payment, mail delivery, webhook, AI generation or schema migration."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: private Storage lifecycle and MIME safety verified in production."
+          echo "PASS: private Storage lifecycle, MIME safety and oversized-upload non-persistence verified in production."
