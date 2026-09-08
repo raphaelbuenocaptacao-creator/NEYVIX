@@ -21,6 +21,7 @@ const SMOKE_GATEWAY_MALFORMED_JSON_HEADER = "x-neyvix-smoke-ai-gateway-malformed
 const SMOKE_GATEWAY_INVALID_SHAPE_HEADER = "x-neyvix-smoke-ai-gateway-invalid-shape";
 const SMOKE_GATEWAY_EMPTY_ANSWER_HEADER = "x-neyvix-smoke-ai-gateway-empty-answer";
 const SMOKE_GATEWAY_INVALID_CONTENT_TYPE_HEADER = "x-neyvix-smoke-ai-gateway-invalid-content-type";
+const SMOKE_MEMORY_FAILURE_HEADER = "x-neyvix-smoke-ai-memory-failure";
 const SMOKE_GATEWAY_SUCCESS_ANSWER = "NEYVIX AI provider-free success probe";
 
 function privateJson(body: unknown, status = 200) {
@@ -180,8 +181,10 @@ export async function POST(request: Request) {
   const smokeGatewayInvalidShapeRequested = request.headers.get(SMOKE_GATEWAY_INVALID_SHAPE_HEADER) === "1";
   const smokeGatewayEmptyAnswerRequested = request.headers.get(SMOKE_GATEWAY_EMPTY_ANSWER_HEADER) === "1";
   const smokeGatewayInvalidContentTypeRequested = request.headers.get(SMOKE_GATEWAY_INVALID_CONTENT_TYPE_HEADER) === "1";
+  const smokeMemoryFailureRequested = request.headers.get(SMOKE_MEMORY_FAILURE_HEADER) === "1";
   const smokeProbeRequested = smokeGatewayFailureRequested || smokeGatewaySuccessRequested || smokeGatewayOversizeRequested ||
-    smokeGatewayMalformedJsonRequested || smokeGatewayInvalidShapeRequested || smokeGatewayEmptyAnswerRequested || smokeGatewayInvalidContentTypeRequested;
+    smokeGatewayMalformedJsonRequested || smokeGatewayInvalidShapeRequested || smokeGatewayEmptyAnswerRequested ||
+    smokeGatewayInvalidContentTypeRequested || smokeMemoryFailureRequested;
 
   let smokeProbeAuthorized = false;
   if (smokeProbeRequested) {
@@ -199,30 +202,34 @@ export async function POST(request: Request) {
   const smokeGatewayInvalidShape = smokeGatewayInvalidShapeRequested && smokeProbeAuthorized;
   const smokeGatewayEmptyAnswer = smokeGatewayEmptyAnswerRequested && smokeProbeAuthorized;
   const smokeGatewayInvalidContentType = smokeGatewayInvalidContentTypeRequested && smokeProbeAuthorized;
+  const smokeMemoryFailure = smokeMemoryFailureRequested && smokeProbeAuthorized;
   const gateway = getGatewayConfig();
   if (!gateway && !smokeProbeAuthorized) {
     return privateJson({ error: "O gateway seguro da NEYVIX AI não está configurado" }, 503);
   }
 
+  let memory: Array<{ key: string; category: string; value: string }> = [];
+  try {
+    if (smokeMemoryFailure) throw new Error("provider-free memory failure probe");
+    memory = await loadAiMemoryContext(session.email, useMemory, 8);
+  } catch (memoryError) {
+    console.error("Unable to load requested NEYVIX Memory context", memoryError);
+    if (useMemory) {
+      return privateJson({
+        error: "A NEYVIX Memory está temporariamente indisponível. A solicitação não foi enviada sem o contexto solicitado.",
+        code: "memory_context_unavailable",
+      }, 503);
+    }
+  }
+
+  // Consume generation quota only after all requested preconditions are available.
+  // A failed Memory dependency must never spend a user's AI generation allowance.
   await recordRateLimitEvent("ai", aiBucket);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    let memory: Array<{ key: string; category: string; value: string }> = [];
-    try {
-      memory = await loadAiMemoryContext(session.email, useMemory, 8);
-    } catch (memoryError) {
-      console.error("Unable to load requested NEYVIX Memory context", memoryError);
-      if (useMemory) {
-        return privateJson({
-          error: "A NEYVIX Memory está temporariamente indisponível. A solicitação não foi enviada sem o contexto solicitado.",
-          code: "memory_context_unavailable",
-        }, 503);
-      }
-    }
-
     const upstream = smokeGatewayFailure
       ? new Response("provider-free smoke failure", { status: 502 })
       : smokeGatewayOversize
