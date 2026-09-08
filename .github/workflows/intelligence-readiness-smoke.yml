@@ -80,23 +80,27 @@ jobs:
           jq -e '
             .service == "neyvix-intelligence" and
             .database == "connected" and
-            (.status == "ready" or .status == "partial") and
+            (.status == "configured_unverified" or .status == "partial") and
             (.ai.messageStore == true) and
             (.memory.store == true) and
             (.memory.events == true) and
             (.ai.gatewayConfigured | type == "boolean") and
             (.ai.gatewayUrlConfigured | type == "boolean") and
             (.ai.gatewaySecretConfigured | type == "boolean") and
+            (.ai.providerReachability == "not_probed") and
+            (.ai.providerVerified == false) and
+            (.ai.operational == false) and
+            (.ai.readinessEvidence == "configuration_and_schema_only") and
             (.memory.aiContextEnabled | type == "boolean")
           ' /tmp/intelligence.json >/dev/null || fail_stage readiness-contract
 
           status="$(jq -r '.status' /tmp/intelligence.json)"
           gateway="$(jq -r '.ai.gatewayConfigured' /tmp/intelligence.json)"
           ok="$(jq -r '.ok' /tmp/intelligence.json)"
-          if [ "$status" = "ready" ]; then
-            [ "$gateway" = "true" ] || fail_stage ready-without-gateway
-            [ "$readiness_code" = "200" ] || fail_stage ready-without-http-200
-            [ "$ok" = "true" ] || fail_stage ready-without-ok
+          if [ "$status" = "configured_unverified" ]; then
+            [ "$gateway" = "true" ] || fail_stage configured-unverified-without-gateway
+            [ "$readiness_code" = "200" ] || fail_stage configured-unverified-without-http-200
+            [ "$ok" = "true" ] || fail_stage configured-unverified-without-ok
           else
             [ "$gateway" = "false" ] || fail_stage partial-with-configured-gateway
             [ "$readiness_code" = "503" ] || fail_stage partial-without-http-503
@@ -106,8 +110,8 @@ jobs:
           {
             echo "### Intelligence Readiness Smoke: PASS"
             echo
-            echo "Verified exact production release SHA, database health, private no-store readiness response, AI message persistence, Memory store/events, and fail-closed ready/partial gateway state."
-            echo "No AI generation request or external paid provider call was made."
+            echo "Verified exact production release SHA, database health, private no-store readiness response, AI message persistence, Memory store/events, and evidence-safe configured_unverified/partial gateway state."
+            echo "Provider reachability remains explicitly unprobed; no AI generation request or external paid provider call was made."
             echo
             echo "- Readiness: \`$status\`"
             echo "- HTTP: \`$readiness_code\`"
