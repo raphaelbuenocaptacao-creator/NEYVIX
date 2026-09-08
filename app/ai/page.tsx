@@ -6,7 +6,7 @@ import styles from "./page.module.css";
 
 type Message = { role: "user" | "assistant"; content: string };
 type HistoryMessage = { role: "user" | "assistant" | "system"; content: string; createdAt?: string };
-type IntelligenceStatus = "checking" | "ready" | "partial" | "unavailable";
+type IntelligenceStatus = "checking" | "configured_unverified" | "ready" | "partial" | "unavailable";
 
 const welcomeMessage: Message = {
   role: "assistant",
@@ -30,7 +30,8 @@ export default function AiPage() {
   const [memoryUsed, setMemoryUsed] = useState<number | null>(null);
   const [intelligenceStatus, setIntelligenceStatus] = useState<IntelligenceStatus>("checking");
   const turns = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
-  const generationUnavailable = intelligenceStatus !== "ready";
+  const generationAvailable = intelligenceStatus === "configured_unverified" || intelligenceStatus === "ready";
+  const generationUnavailable = !generationAvailable;
 
   useEffect(() => {
     let active = true;
@@ -69,7 +70,9 @@ export default function AiPage() {
         const response = await fetch("/api/health/intelligence", { cache: "no-store" });
         const data = (await response.json()) as { status?: string; ai?: { gatewayConfigured?: boolean } };
         if (!active) return;
-        if (data.status === "ready" && data.ai?.gatewayConfigured === true) {
+        if (data.status === "configured_unverified" && data.ai?.gatewayConfigured === true) {
+          setIntelligenceStatus("configured_unverified");
+        } else if (data.status === "ready" && data.ai?.gatewayConfigured === true) {
           setIntelligenceStatus("ready");
         } else if (data.status === "partial") {
           setIntelligenceStatus("partial");
@@ -88,7 +91,7 @@ export default function AiPage() {
     const clean = value.trim();
     if (!clean || loading) return;
     if (generationUnavailable) {
-      setError("O núcleo de geração da NEYVIX AI não está pronto agora. Seu histórico e Memory continuam preservados.");
+      setError("O núcleo de geração da NEYVIX AI não está configurado para uso agora. Seu histórico e Memory continuam preservados.");
       return;
     }
     setError("");
@@ -111,6 +114,7 @@ export default function AiPage() {
       if (!response.ok || !data.answer) throw new Error(data.error || "Não foi possível obter uma resposta.");
       setMemoryUsed(typeof data.memoryUsed === "number" ? data.memoryUsed : 0);
       setMessages((current) => [...current, { role: "assistant", content: data.answer ?? "" }]);
+      setIntelligenceStatus("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao conectar com a NEYVIX AI.");
     } finally {
@@ -124,12 +128,14 @@ export default function AiPage() {
   }
 
   const statusLabel = intelligenceStatus === "ready"
-    ? "NÚCLEO DE IA PRONTO"
-    : intelligenceStatus === "checking"
-      ? "VALIDANDO NÚCLEO DE IA"
-      : intelligenceStatus === "partial"
-        ? "IA PARCIAL · GERAÇÃO INDISPONÍVEL"
-        : "NÚCLEO DE IA INDISPONÍVEL";
+    ? "NÚCLEO DE IA VERIFICADO NESTA SESSÃO"
+    : intelligenceStatus === "configured_unverified"
+      ? "IA CONFIGURADA · PROVIDER A VALIDAR"
+      : intelligenceStatus === "checking"
+        ? "VALIDANDO NÚCLEO DE IA"
+        : intelligenceStatus === "partial"
+          ? "IA PARCIAL · GERAÇÃO INDISPONÍVEL"
+          : "NÚCLEO DE IA INDISPONÍVEL";
 
   return (
     <main className={styles.shell}>
@@ -169,8 +175,8 @@ export default function AiPage() {
           </div>
           <div className={styles.metaCard}>
             <span>READINESS</span>
-            <strong>{intelligenceStatus === "ready" ? "Geração pronta" : intelligenceStatus === "checking" ? "Verificando" : "Modo preservação"}</strong>
-            <small>{intelligenceStatus === "checking" ? "Geração bloqueada até o health confirmar prontidão" : generationUnavailable ? "Histórico e Memory seguem disponíveis sem prometer geração externa" : "Estado lido do health real da inteligência"}</small>
+            <strong>{intelligenceStatus === "ready" ? "Provider verificado" : intelligenceStatus === "configured_unverified" ? "Pronta para validar" : intelligenceStatus === "checking" ? "Verificando" : "Modo preservação"}</strong>
+            <small>{intelligenceStatus === "checking" ? "Geração bloqueada até o health confirmar configuração" : intelligenceStatus === "configured_unverified" ? "A primeira geração real valida o provider sem fingir prontidão antecipada" : generationUnavailable ? "Histórico e Memory seguem disponíveis sem prometer geração externa" : "Uma resposta real confirmou o provider nesta sessão"}</small>
           </div>
         </aside>
 
@@ -195,7 +201,7 @@ export default function AiPage() {
               </label>
               <div className={styles.footer}>
                 <span>{prompt.length}/4000</span>
-                {needsLogin ? <Link className={styles.send} href="/login?next=/ai">Entrar novamente →</Link> : <button className={styles.send} type="submit" disabled={loading || historyLoading || generationUnavailable || !prompt.trim()}>{loading ? "Processando" : historyLoading ? "Sincronizando" : generationUnavailable ? "Geração indisponível" : "Enviar para a NEYVIX AI →"}</button>}
+                {needsLogin ? <Link className={styles.send} href="/login?next=/ai">Entrar novamente →</Link> : <button className={styles.send} type="submit" disabled={loading || historyLoading || generationUnavailable || !prompt.trim()}>{loading ? "Processando" : historyLoading ? "Sincronizando" : generationUnavailable ? "Geração indisponível" : intelligenceStatus === "configured_unverified" ? "Validar e enviar →" : "Enviar para a NEYVIX AI →"}</button>}
               </div>
             </div>
             {error ? <p className={styles.error} role="status">{error}</p> : null}
