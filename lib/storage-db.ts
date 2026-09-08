@@ -148,6 +148,17 @@ export async function deletePrivateDriveFile(emailInput: string, id: string): Pr
       WHERE d.id = ${id}::uuid
         AND d.owner_user_id = u.id
         AND d.kind = 'file'
+        AND EXISTS (
+          SELECT 1
+          FROM public.storage_objects s
+          JOIN public.projects p ON p.id = s.project_id
+          WHERE s.owner_user_id = d.owner_user_id
+            AND s.object_key = d.storage_key
+            AND s.bucket = 'drive'
+            AND s.deleted_at IS NULL
+            AND p.slug = 'neyvix'
+            AND p.is_active = true
+        )
       RETURNING d.owner_user_id, d.storage_key
     )
     DELETE FROM public.storage_objects s
@@ -155,8 +166,10 @@ export async function deletePrivateDriveFile(emailInput: string, id: string): Pr
     WHERE s.owner_user_id = r.owner_user_id
       AND s.object_key = r.storage_key
       AND s.bucket = 'drive'
+      AND s.deleted_at IS NULL
       AND s.project_id = p.id
       AND p.slug = 'neyvix'
+      AND p.is_active = true
     RETURNING s.id
   ` as Array<{ id: string }>;
   return rows.length === 1;
