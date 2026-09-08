@@ -27,6 +27,7 @@ const requiredFiles = [
   "lib/health.ts",
   "lib/register-db.ts",
   "lib/memory-db.ts",
+  "lib/ai-memory-context.ts",
   "proxy.ts",
   "database/008_password_reset.sql",
   "database/010_mail_core.sql",
@@ -234,7 +235,14 @@ for (const contract of [
 }
 
 const aiRoute = readFileSync("app/api/ai/route.ts", "utf8");
-if (!aiRoute.includes("NEYVIX_MEMORY_AI_CONTEXT") || !aiRoute.includes("getMemoryContext")) {
+const aiMemoryContext = readFileSync("lib/ai-memory-context.ts", "utf8");
+if (
+  !aiRoute.includes("loadAiMemoryContext") ||
+  !aiRoute.includes("loadAiMemoryContext(session.email, useMemory, 8)") ||
+  !aiMemoryContext.includes('process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"') ||
+  !aiMemoryContext.includes("getMemoryContext") ||
+  !aiMemoryContext.includes("if (!useMemory || !isAiMemoryContextEnabled()) return [];")
+) {
   console.error("NEYVIX readiness failed: AI/Memory integration contract is missing.");
   process.exit(1);
 }
