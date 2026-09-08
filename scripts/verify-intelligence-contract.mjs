@@ -17,15 +17,18 @@ const checks = [
   ["unsupported gateway response types fail closed", route.includes('contentType && !contentType.startsWith("text/plain")') && route.includes('gateway returned an invalid response contract')],
   ["only normalized gateway answer is persisted", route.includes("saveAiExchange(session.email, prompt, answer)") && !route.includes("saveAiExchange(session.email, prompt, text)")],
   ["health readiness requires URL and secret", health.includes("gatewayConfigured = gatewayUrlConfigured && gatewaySecretConfigured")],
-  ["health fails closed until persistence and gateway are ready", health.includes("const ready = persistenceReady && gatewayConfigured;") && health.includes("ok: ready") && health.includes("}, ready ? 200 : 503);")],
+  ["health never claims provider verification from configuration alone", health.includes('providerReachability: "not_probed"') && health.includes("providerVerified: false") && health.includes("operational: false")],
+  ["health uses configured-unverified until a provider is actually proven", health.includes('configured ? "configured_unverified"') && health.includes('readinessEvidence: "configuration_and_schema_only"')],
   ["memory context request is explicit opt-in", route.includes('(body as { useMemory?: unknown }).useMemory === true') && route.includes("loadAiMemoryContext(session.email, useMemory, 8)")],
+  ["requested memory failure aborts generation instead of silently dropping context", route.includes("if (useMemory)") && route.includes('code: "memory_context_unavailable"') && route.includes("A solicitação não foi enviada sem o contexto solicitado")],
   ["memory context feature gate is explicit opt-in", aiMemoryContext.includes('process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"') && aiMemoryContext.includes("if (!useMemory || !isAiMemoryContextEnabled()) return [];")],
   ["AI memory excludes private records", memory.includes("AND m.is_private = false")],
   ["AI memory is scoped to the active user", memory.includes("WHERE lower(u.email) = ${email.trim().toLowerCase()}") && memory.includes("AND u.is_active = true")],
   ["workspace starts in checking state", workspace.includes('useState<IntelligenceStatus>("checking")')],
-  ["workspace generation is fail-closed until ready", workspace.includes('const generationUnavailable = intelligenceStatus !== "ready";')],
+  ["workspace allows configured gateway to perform first real verification", workspace.includes('intelligenceStatus === "configured_unverified" || intelligenceStatus === "ready"') && workspace.includes('data.status === "configured_unverified"')],
+  ["workspace only marks provider verified after a successful answer", workspace.includes('setIntelligenceStatus("ready");') && workspace.includes("if (!response.ok || !data.answer) throw new Error")],
   ["workspace validates intelligence health without cache", workspace.includes('fetch("/api/health/intelligence", { cache: "no-store" })')],
-  ["workspace blocks direct submit while readiness is unavailable", workspace.includes("if (generationUnavailable)") && workspace.includes("disabled={loading || historyLoading || generationUnavailable || !prompt.trim()}")],
+  ["workspace blocks direct submit while configuration is unavailable", workspace.includes("if (generationUnavailable)") && workspace.includes("disabled={loading || historyLoading || generationUnavailable || !prompt.trim()}")],
 ];
 
 let failed = false;
