@@ -214,7 +214,13 @@ export async function POST(request: Request) {
     try {
       memory = await loadAiMemoryContext(session.email, useMemory, 8);
     } catch (memoryError) {
-      console.warn("Unable to load NEYVIX Memory context", memoryError);
+      console.error("Unable to load requested NEYVIX Memory context", memoryError);
+      if (useMemory) {
+        return privateJson({
+          error: "A NEYVIX Memory está temporariamente indisponível. A solicitação não foi enviada sem o contexto solicitado.",
+          code: "memory_context_unavailable",
+        }, 503);
+      }
     }
 
     const upstream = smokeGatewayFailure
