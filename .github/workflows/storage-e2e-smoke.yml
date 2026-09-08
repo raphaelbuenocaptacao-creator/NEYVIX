@@ -102,6 +102,18 @@ jobs:
           grep -Eq 'neyvix_session' "$cookies" || fail_stage session-cookie
           account_registered=true
 
+          invalid_mime=$'text/plain\r\nx-neyvix-injected: 1'
+          invalid_mime_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" \
+            -H 'content-type: application/json' -o /tmp/storage-invalid-mime.json -w '%{http_code}' \
+            --data "$(jq -nc --arg name 'unsafe.txt' --arg mime "$invalid_mime" --arg content 'eA==' '{name:$name,mimeType:$mime,contentBase64:$content}')" \
+            "$base/api/storage")" || fail_stage invalid-mime-request
+          [ "$invalid_mime_code" = "400" ] || fail_stage invalid-mime-status
+          jq -e '.error == "Tipo de conteúdo inválido"' /tmp/storage-invalid-mime.json >/dev/null || fail_stage invalid-mime-contract
+
+          invalid_persistence_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/drive-after-invalid.json -w '%{http_code}' "$base/api/drive")" || fail_stage invalid-mime-persistence-request
+          [ "$invalid_persistence_code" = "200" ] || fail_stage invalid-mime-persistence-status
+          jq -e '.items | length == 0' /tmp/drive-after-invalid.json >/dev/null || fail_stage invalid-mime-persisted-unexpectedly
+
           filename="storage-smoke-${GITHUB_RUN_ID}.txt"
           text="NEYVIX private storage smoke ${GITHUB_RUN_ID}"
           content_base64="$(printf '%s' "$text" | base64 -w0)"
@@ -143,7 +155,7 @@ jobs:
           {
             echo "### Storage E2E Smoke: PASS"
             echo
-            echo "Verified anonymous denial, release SHA, NEYVIX ID/session, private upload, Drive metadata persistence, byte-exact download, SHA-256 integrity, delete persistence, private cache headers, and ephemeral-account cleanup."
+            echo "Verified anonymous denial, release SHA, NEYVIX ID/session, invalid MIME rejection with zero persistence, private upload, Drive metadata persistence, byte-exact download, SHA-256 integrity, delete persistence, private cache headers, and ephemeral-account cleanup."
             echo "Storage smoke is limited to a tiny generated text payload and performs no external upload, billing mutation, payment, mail delivery, webhook, AI generation or schema migration."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: private Storage lifecycle verified in production."
+          echo "PASS: private Storage lifecycle and MIME safety verified in production."
