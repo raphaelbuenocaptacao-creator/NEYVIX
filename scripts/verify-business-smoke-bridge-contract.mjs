@@ -43,13 +43,17 @@ requireText(oidc, "claims.iat", "OIDC issued-at time must be checked");
 requireText(route, "readActiveSession", "Business elevation must require an authenticated NEYVIX session");
 requireText(route, 'email.startsWith("business-positive-")', "Business elevation must stay inside the disposable business-positive namespace");
 requireText(route, 'provider: "neyvix-smoke"', "synthetic billing events must use the isolated smoke provider");
-requireText(route, 'type: "subscription.active"', "positive E2E must exercise the active-subscription resolver path");
+requireText(route, 'action !== "activate" && action !== "cancel"', "Business bridge must only accept explicit activation or cancellation actions");
+requireText(route, 'type: cancelling ? "subscription.canceled" : "subscription.active"', "positive E2E must exercise both active and canceled subscription resolver paths");
 requireText(route, 'plan: "business"', "positive E2E must resolve the Business plan");
 requireText(route, "externalPayment: false", "synthetic E2E must explicitly declare that no external payment occurred");
 requireText(route, 'return response({ error: "Não encontrado" }, 404)', "missing/invalid E2E credentials must fail closed without advertising the bridge");
 requireText(route, 'billing.features.includes("mail")', "Business convergence must require Mail entitlement");
 requireText(route, 'billing.features.includes("approvals")', "Business convergence must require Approvals entitlement");
-requireText(route, 'const eventId = `smoke-business-${nonce}`', "synthetic grants must derive a stable provider event id from the validated nonce");
+requireText(route, 'billing.plan === "expired"', "cancellation convergence must revoke the Business plan");
+requireText(route, '!billing.features.includes("mail")', "cancellation convergence must revoke Mail entitlement");
+requireText(route, '!billing.features.includes("approvals")', "cancellation convergence must revoke Approvals entitlement");
+requireText(route, 'const eventId = cancelling ? `smoke-business-cancel-${nonce}` : `smoke-business-${nonce}`', "synthetic activation and cancellation must derive distinct stable provider event ids");
 
 // Replay safety is a production invariant, not just a workflow convention.
 requireText(billingDb, "ON CONFLICT (provider, provider_event_id) DO NOTHING", "provider events must remain idempotent under replay");
@@ -69,4 +73,4 @@ requireText(workflow, "/api/automation/approvals", "workflow must exercise Appro
 requireText(workflow, "/api/auth/smoke-cleanup", "workflow must clean up its disposable account");
 requireText(workflow, "No checkout, real payment", "workflow summary must preserve the no-payment safety boundary");
 
-console.log("PASS: Business synthetic E2E bridge remains fail-closed, OIDC-authenticated, session-scoped, replay-safe, no-payment, and end-to-end scoped.");
+console.log("PASS: Business synthetic E2E bridge remains fail-closed, OIDC-authenticated, session-scoped, replay-safe, no-payment, and verifies activation plus revocation end to end.");
