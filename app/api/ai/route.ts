@@ -156,9 +156,14 @@ export async function POST(request: Request) {
     return privateJson({ error: "Corpo JSON inválido" }, 400);
   }
 
-  const prompt = typeof body === "object" && body !== null && "prompt" in body
-    ? String((body as { prompt?: unknown }).prompt ?? "").trim()
-    : "";
+  const rawPrompt = typeof body === "object" && body !== null && "prompt" in body
+    ? (body as { prompt?: unknown }).prompt
+    : undefined;
+  if (typeof rawPrompt !== "string") {
+    return privateJson({ error: "A solicitação deve ser enviada como texto" }, 400);
+  }
+
+  const prompt = rawPrompt.trim();
   const useMemory = typeof body === "object" && body !== null && "useMemory" in body
     ? (body as { useMemory?: unknown }).useMemory === true
     : false;
