@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "neyvix-shell-";
-const CACHE = `${CACHE_PREFIX}v8-raster-safe-shell`;
+const CACHE = `${CACHE_PREFIX}v9-private-vary-star-safe-shell`;
 const SHELL = [
   "/manifest.webmanifest",
   "/neyvix-icon-192.png",
@@ -69,9 +69,19 @@ function isPrivate(request, url) {
   return false;
 }
 
+function hasUnsafeVary(response) {
+  const vary = response.headers.get("vary") || "";
+  return vary
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .some((value) => value === "*" || value === "cookie" || value === "authorization" || value === "range");
+}
+
 function isCacheableResponse(response) {
   if (!response || !response.ok || response.redirected || response.status === 206) return false;
   if (response.headers.has("content-range") || response.headers.has("set-cookie")) return false;
+  if (hasUnsafeVary(response)) return false;
   const cacheControl = response.headers.get("cache-control") || "";
   return !/(private|no-store)/i.test(cacheControl);
 }
