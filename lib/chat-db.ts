@@ -64,7 +64,7 @@ export async function sendChatMessage(email:string,recipientEmail:string,text:st
     sql`SELECT set_config('aureon.project_id',${identity.project_id},true),set_config('aureon.user_id',${identity.user_id},true)`,
     sql`INSERT INTO public.project_users(project_id,user_id,role) VALUES (${identity.project_id}::uuid,${identity.user_id}::uuid,'member') ON CONFLICT (project_id,user_id) DO NOTHING`,
     sql`INSERT INTO public.realtime_events(project_id,actor_user_id,topic,event_type,payload)
-        VALUES (${identity.project_id}::uuid,${identity.user_id}::uuid,'chat:direct','chat.message.v1',jsonb_build_object('recipientUserId',${recipientUser.id},'text',${body}))
+        VALUES (${identity.project_id}::uuid,${identity.user_id}::uuid,'chat:direct','chat.message.v1',jsonb_build_object('recipientUserId',${recipientUser.id}::text,'text',${body}::text))
         RETURNING id,created_at`,
   ]);
   const inserted=(results[2] as Array<Record<string,unknown>>)[0];
