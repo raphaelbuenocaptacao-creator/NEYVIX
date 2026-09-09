@@ -38,18 +38,31 @@ function mergeConversation(older: Message[], current: Message[]) {
   });
 }
 
-function isPersistedExchange(value: unknown): value is PersistedExchange {
+function isPersistedExchange(
+  value: unknown,
+  expectedPrompt: string,
+  expectedAnswer: string,
+): value is PersistedExchange {
   if (!Array.isArray(value) || value.length !== 2) return false;
-  const roles = new Set<string>();
+
+  const ids = new Set<string>();
+  const byRole = new Map<"user" | "assistant", { content: string; createdAt: string }>();
+
   for (const item of value) {
     if (!item || typeof item !== "object") return false;
     const candidate = item as Record<string, unknown>;
-    if (typeof candidate.id !== "string" || !candidate.id) return false;
+    if (typeof candidate.id !== "string" || !candidate.id.trim() || ids.has(candidate.id)) return false;
     if (candidate.role !== "user" && candidate.role !== "assistant") return false;
     if (typeof candidate.content !== "string" || typeof candidate.createdAt !== "string") return false;
-    roles.add(candidate.role);
+    if (!candidate.createdAt || Number.isNaN(Date.parse(candidate.createdAt))) return false;
+    if (byRole.has(candidate.role)) return false;
+
+    ids.add(candidate.id);
+    byRole.set(candidate.role, { content: candidate.content, createdAt: candidate.createdAt });
   }
-  return roles.has("user") && roles.has("assistant");
+
+  return byRole.get("user")?.content === expectedPrompt
+    && byRole.get("assistant")?.content === expectedAnswer;
 }
 
 export default function AiPage() {
@@ -164,7 +177,7 @@ export default function AiPage() {
       if (!response.ok || !data.answer) throw new Error(data.error || "Não foi possível obter uma resposta.");
       setMemoryUsed(typeof data.memoryUsed === "number" ? data.memoryUsed : 0);
 
-      if (isPersistedExchange(data.exchange)) {
+      if (isPersistedExchange(data.exchange, clean, data.answer)) {
         const persisted: Message[] = data.exchange.map((message) => ({
           id: message.id,
           role: message.role,
@@ -176,9 +189,9 @@ export default function AiPage() {
           persisted,
         ));
       } else {
-        // Backward-compatible fallback during a rolling deploy: remove the optimistic turn,
-        // then re-read authoritative history. If that read fails, preserve the successful
-        // exchange visibly without pretending it has database identity in this client.
+        // Never trust an exchange that does not exactly match this generation. During a
+        // rolling deploy or contract mismatch, discard optimistic state and reconcile
+        // from the authoritative history endpoint instead of accepting ambiguous IDs.
         setMessages((current) => current.filter((message) => message.id !== optimisticId));
         const reconciled = await loadHistory();
         if (!reconciled) {
