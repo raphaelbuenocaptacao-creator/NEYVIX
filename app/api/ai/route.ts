@@ -200,7 +200,7 @@ export async function POST(request: Request) {
   const smokeGatewayOversize = smokeGatewayOversizeRequested && smokeProbeAuthorized;
   const smokeGatewayMalformedJson = smokeGatewayMalformedJsonRequested && smokeProbeAuthorized;
   const smokeGatewayInvalidShape = smokeGatewayInvalidShapeRequested && smokeProbeAuthorized;
-  const smokeGatewayEmptyAnswer = smokeGatewayEmptyAnswerRequested && smokeProbeAuthorized;
+  const smokeGatewayEmptyAnswer = smokeGatewayEmpty_ANSWER_HEADER === "1";
   const smokeGatewayInvalidContentType = smokeGatewayInvalidContentTypeRequested && smokeProbeAuthorized;
   const smokeMemoryFailure = smokeMemoryFailureRequested && smokeProbeAuthorized;
   const gateway = getGatewayConfig();
@@ -222,8 +222,6 @@ export async function POST(request: Request) {
     }
   }
 
-  // Consume generation quota only after all requested preconditions are available.
-  // A failed Memory dependency must never spend a user's AI generation allowance.
   await recordRateLimitEvent("ai", aiBucket);
 
   const controller = new AbortController();
@@ -276,15 +274,16 @@ export async function POST(request: Request) {
       return privateJson({ error: "A NEYVIX AI retornou uma resposta inválida" }, 502);
     }
 
+    let exchange;
     try {
-      const persisted = await saveAiExchange(session.email, prompt, answer);
-      if (!persisted) throw new Error("database unavailable");
+      exchange = await saveAiExchange(session.email, prompt, answer);
+      if (!exchange) throw new Error("database unavailable");
     } catch (dbError) {
       console.error("Unable to persist complete NEYVIX AI exchange", dbError);
       return privateJson({ error: "A resposta foi gerada, mas não pôde ser salva com segurança. Tente novamente." }, 503);
     }
 
-    return privateJson({ answer, memoryUsed: memory.length });
+    return privateJson({ answer, memoryUsed: memory.length, exchange });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
     return privateJson({ error: timedOut ? "A solicitação da IA excedeu o tempo limite" : "Não foi possível conectar à NEYVIX AI" }, timedOut ? 504 : 502);
