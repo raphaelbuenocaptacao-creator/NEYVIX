@@ -114,7 +114,7 @@ jobs:
             ([.exchange[].id] | unique | length == 2) and
             ([.exchange[] | select(.role == "user") | .content] == [$prompt]) and
             ([.exchange[] | select(.role == "assistant") | .content] == ["NEYVIX AI provider-free success probe"]) and
-            ([.exchange[].createdAt | fromdateiso8601] | length == 2)
+            ([.exchange[].createdAt | select(type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"))] | length == 2)
           ' /tmp/success.json >/dev/null || fail_stage authoritative-exchange-contract
 
           first_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/history-first.json -w '%{http_code}' "$base/api/ai/history?limit=40")" || fail_stage history-first-request
