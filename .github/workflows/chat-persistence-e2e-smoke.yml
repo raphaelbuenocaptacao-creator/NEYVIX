@@ -55,10 +55,11 @@ jobs:
 
           fail_http_stage() {
             local stage="$1" code="$2" body_file="$3"
-            local safe_error safe_code
+            local safe_error safe_code safe_db_class
             safe_error="$(jq -r '.error // empty' "$body_file" 2>/dev/null || true)"
             safe_code="$(jq -r '.code // empty' "$body_file" 2>/dev/null || true)"
-            echo "::error title=NEYVIX Chat Persistence E2E::${stage} http=${code} error=${safe_error:-unknown} code=${safe_code:-none}"
+            safe_db_class="$(jq -r '.dbClass // empty' "$body_file" 2>/dev/null || true)"
+            echo "::error title=NEYVIX Chat Persistence E2E::${stage} http=${code} error=${safe_error:-unknown} code=${safe_code:-none} dbClass=${safe_db_class:-none}"
             exit 1
           }
 
@@ -124,8 +125,6 @@ jobs:
             eval "registered_${who}=true"
           done
 
-          # Prove each newly registered session resolves to the expected canonical NEYVIX ID
-          # before testing cross-account messaging. This separates auth failures from Chat failures.
           for who in a b c; do
             jar_var="jar_${who}"; email_var="email_${who}"
             code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -o "/tmp/me-${who}.json" -w '%{http_code}' "$base/api/auth/me")" || fail_stage "identity-${who}-request"
