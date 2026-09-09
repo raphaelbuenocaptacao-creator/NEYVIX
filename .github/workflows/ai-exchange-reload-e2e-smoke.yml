@@ -1,0 +1,147 @@
+name: NEYVIX AI Exchange Reload E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ai-exchange-reload-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify persisted exchange identity survives authoritative history reload
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          jar=/tmp/neyvix-ai-exchange-reload.cookies
+          headers=(
+            -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}"
+            -H "x-neyvix-github-oidc: ${VERCEL_OIDC_TOKEN}"
+          )
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            local stage="$1"
+            echo "NEYVIX_AI_EXCHANGE_RELOAD_STAGE_FAIL=$stage" >&2
+            echo "::error title=NEYVIX AI Exchange Reload E2E::${stage}"
+            exit 1
+          }
+
+          registered=false
+          cleanup() {
+            set +e
+            if [ "$registered" = true ] && [ -s "$jar" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle="e2e-ai-hist-reload-${suffix}"
+          password="$(openssl rand -base64 30 | tr -d '\n')"
+          echo "::add-mask::$password"
+
+          rm -f "$jar" /tmp/register.headers /tmp/register.body
+          curl --silent --show-error --max-time 20 "${headers[@]}" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -c "$jar" -D /tmp/register.headers -o /tmp/register.body \
+            --data-urlencode 'name=NEYVIX AI Exchange Reload Smoke' \
+            --data-urlencode "handle=$handle" \
+            --data-urlencode "password=$password" \
+            --data-urlencode 'plan=start' \
+            "$base/api/auth/register" >/dev/null || fail_stage register-request
+          status="$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' /tmp/register.headers)"
+          [ "$status" = "303" ] || fail_stage register-status
+          grep -Eq 'neyvix_session' "$jar" || fail_stage register-session-cookie
+          registered=true
+
+          before_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/history-before.json -w '%{http_code}' "$base/api/ai/history?limit=40")" || fail_stage history-before-request
+          [ "$before_code" = "200" ] || fail_stage history-before-status
+          jq -e '.count == 0 and (.messages | length == 0)' /tmp/history-before.json >/dev/null || fail_stage history-before-not-empty
+
+          prompt="provider-free exchange reload probe ${suffix}"
+          success_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/success.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -H 'x-neyvix-smoke-ai-gateway-success: 1' \
+            --data "$(jq -nc --arg prompt "$prompt" '{prompt:$prompt,useMemory:false}')" \
+            "$base/api/ai")" || fail_stage success-request
+          [ "$success_code" = "200" ] || fail_stage success-status
+
+          jq -e --arg prompt "$prompt" '
+            .answer == "NEYVIX AI provider-free success probe" and
+            .memoryUsed == 0 and
+            (.exchange | type == "array" and length == 2) and
+            ([.exchange[].role] | sort == ["assistant","user"]) and
+            ([.exchange[].id] | unique | length == 2) and
+            ([.exchange[] | select(.role == "user") | .content] == [$prompt]) and
+            ([.exchange[] | select(.role == "assistant") | .content] == ["NEYVIX AI provider-free success probe"]) and
+            ([.exchange[].createdAt | fromdateiso8601] | length == 2)
+          ' /tmp/success.json >/dev/null || fail_stage authoritative-exchange-contract
+
+          first_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/history-first.json -w '%{http_code}' "$base/api/ai/history?limit=40")" || fail_stage history-first-request
+          [ "$first_code" = "200" ] || fail_stage history-first-status
+          jq -e '.count == 2 and .pageSize == 40 and (.messages | length == 2)' /tmp/history-first.json >/dev/null || fail_stage history-first-contract
+
+          jq -n --slurpfile generated /tmp/success.json --slurpfile history /tmp/history-first.json '
+            ($generated[0].exchange | sort_by(.id)) == ($history[0].messages | sort_by(.id))
+          ' | grep -qx true || fail_stage exchange-history-identity-mismatch
+
+          second_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -o /tmp/history-second.json -w '%{http_code}' "$base/api/ai/history?limit=40")" || fail_stage history-second-request
+          [ "$second_code" = "200" ] || fail_stage history-second-status
+          jq -S '.messages | sort_by(.id)' /tmp/history-first.json > /tmp/history-first.messages.json
+          jq -S '.messages | sort_by(.id)' /tmp/history-second.json > /tmp/history-second.messages.json
+          cmp -s /tmp/history-first.messages.json /tmp/history-second.messages.json || fail_stage reload-duplicated-or-mutated-history
+
+          ids_count="$(jq -r '[.messages[].id] | unique | length' /tmp/history-second.json)"
+          [ "$ids_count" = "2" ] || fail_stage reload-message-id-duplication
+
+          cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar" -X DELETE -o /tmp/cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-request
+          [ "$cleanup_code" = "200" ] || fail_stage cleanup-status
+          registered=false
+
+          {
+            echo "### AI Exchange Reload E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, authenticated Start account, provider-free successful generation, authoritative persisted exchange identities, exact exchange-to-history identity match, stable reload without duplication or mutation, and cleanup."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "PASS: authoritative AI exchange identities survive history reload without duplication."
