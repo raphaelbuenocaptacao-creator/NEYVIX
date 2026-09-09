@@ -6,8 +6,9 @@ type ChatIdentity={user_id:string;project_id:string;email:string;name:string};
 function getSql(){const url=process.env.DATABASE_URL?.trim();return url?neon(url):null;}
 async function ready(sql:NonNullable<ReturnType<typeof getSql>>){const rows=await sql`SELECT to_regclass('public.realtime_events')::text AS events,to_regclass('public.projects')::text AS projects,to_regclass('public.users')::text AS users,to_regclass('public.project_users')::text AS project_users`;const r=rows[0] as Record<string,unknown>|undefined;return Boolean(r?.events&&r?.projects&&r?.users&&r?.project_users);}
 function normalize(email:string){return email.trim().toLowerCase();}
-function map(row:Record<string,unknown>,me:string):ChatMessage{return{id:String(row.id),fromEmail:String(row.from_email),fromName:String(row.from_name??row.from_email),toEmail:String(row.to_email),toName:String(row.to_name??row.to_email),text:String(row.text??""),createdAt:String(row.created_at),direction:normalize(String(row.from_email))===normalize(me)?"sent":"received"};}
-function parseCursor(value?:string|null){const cursor=value?.trim();if(!cursor)return{createdAt:null as string|null,id:null as string|null};const split=cursor.lastIndexOf('|');if(split>0){const createdAt=cursor.slice(0,split);const id=cursor.slice(split+1);if(!Number.isNaN(Date.parse(createdAt))&&/^\d+$/.test(id))return{createdAt,id};}return{createdAt:cursor,id:null as string|null};}
+function normalizeTimestamp(value:unknown){const date=value instanceof Date?value:new Date(String(value));return Number.isNaN(date.getTime())?null:date.toISOString();}
+function map(row:Record<string,unknown>,me:string):ChatMessage{return{id:String(row.id),fromEmail:String(row.from_email),fromName:String(row.from_name??row.from_email),toEmail:String(row.to_email),toName:String(row.to_name??row.to_email),text:String(row.text??""),createdAt:normalizeTimestamp(row.created_at)??String(row.created_at),direction:normalize(String(row.from_email))===normalize(me)?"sent":"received"};}
+function parseCursor(value?:string|null){const cursor=value?.trim();if(!cursor)return{createdAt:null as string|null,id:null as string|null};const split=cursor.lastIndexOf('|');if(split>0){const createdAt=normalizeTimestamp(cursor.slice(0,split));const id=cursor.slice(split+1);if(createdAt&&/^\d+$/.test(id))return{createdAt,id};}return{createdAt:normalizeTimestamp(cursor),id:null as string|null};}
 async function resolveIdentity(sql:NonNullable<ReturnType<typeof getSql>>,email:string){
   const rows=await sql`
     SELECT u.id::text AS user_id,p.id::text AS project_id,u.email,COALESCE(NULLIF(u.name,''),u.email) AS name
@@ -45,7 +46,8 @@ export async function listChatMessages(email:string,options?:{limit?:number;befo
   const hasMore=pageRows.length>limit;
   const selected=pageRows.slice(0,limit);
   const last=selected[selected.length-1];
-  const nextCursor=hasMore&&last?`${String(last.created_at)}|${String(last.id)}`:null;
+  const cursorTimestamp=last?normalizeTimestamp(last.created_at):null;
+  const nextCursor=hasMore&&last&&cursorTimestamp?`${cursorTimestamp}|${String(last.id)}`:null;
   return{messages:selected.reverse().map((row)=>map(row,me)),nextCursor,hasMore};
 }
 
@@ -71,6 +73,6 @@ export async function sendChatMessage(email:string,recipientEmail:string,text:st
   if(!inserted)return null;
   return{
     id:String(inserted.id),fromEmail:identity.email,fromName:identity.name,toEmail:recipientUser.email,toName:recipientUser.name,
-    text:body,createdAt:String(inserted.created_at),direction:"sent" as const,
+    text:body,createdAt:normalizeTimestamp(inserted.created_at)??String(inserted.created_at),direction:"sent" as const,
   };
 }
