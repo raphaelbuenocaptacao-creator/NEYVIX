@@ -32,7 +32,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify provider-free history isolation and no orphan turns on rejected input
+      - name: Verify paginated history isolation and rejected-input persistence safety
         shell: bash
         run: |
           set -euo pipefail
@@ -77,7 +77,7 @@ jobs:
           [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
           jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
 
-          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/anonymous.json -w '%{http_code}' "$base/api/ai")" || fail_stage anonymous-request
+          anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/anonymous.json -w '%{http_code}' "$base/api/ai/history")" || fail_stage anonymous-request
           [ "$anonymous_code" = "401" ] || fail_stage anonymous-history-not-blocked
 
           suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -126,14 +126,21 @@ jobs:
           jq -e --arg email "$email_b" '.authenticated == true and .user.email == $email' /tmp/me-b.json >/dev/null || fail_stage me-b-identity
           [ "$email_a" != "$email_b" ] || fail_stage session-identities-collided
 
-          history_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -D /tmp/history-a.headers -o /tmp/history-a.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-a-request
+          history_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -D /tmp/history-a.headers -o /tmp/history-a.json -w '%{http_code}' "$base/api/ai/history?limit=7")" || fail_stage history-a-request
           [ "$history_a_code" = "200" ] || fail_stage history-a-status
           grep -Eiq '^cache-control: .*no-store' /tmp/history-a.headers || fail_stage history-a-cache-policy
-          jq -e '.count == 0 and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-a.json >/dev/null || fail_stage history-a-not-empty
+          jq -e '.count == 0 and .pageSize == 7 and .hasMore == false and .nextCursor == null and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-a.json >/dev/null || fail_stage history-a-contract
 
-          history_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/history-b.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-b-request
+          history_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/history-b.json -w '%{http_code}' "$base/api/ai/history?limit=3")" || fail_stage history-b-request
           [ "$history_b_code" = "200" ] || fail_stage history-b-status
-          jq -e '.count == 0 and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-b.json >/dev/null || fail_stage history-b-not-empty
+          jq -e '.count == 0 and .pageSize == 3 and .hasMore == false and .nextCursor == null and (.messages | type == "array") and (.messages | length == 0)' /tmp/history-b.json >/dev/null || fail_stage history-b-contract
+
+          clamped_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/clamped.json -w '%{http_code}' "$base/api/ai/history?limit=999")" || fail_stage clamped-request
+          [ "$clamped_code" = "200" ] || fail_stage clamped-status
+          jq -e '.pageSize == 80 and .count == 0 and .hasMore == false' /tmp/clamped.json >/dev/null || fail_stage clamped-page-size
+
+          invalid_cursor_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/invalid-cursor.json -w '%{http_code}' "$base/api/ai/history?cursor=definitely-not-a-valid-cursor")" || fail_stage invalid-cursor-request
+          [ "$invalid_cursor_code" = "400" ] || fail_stage invalid-cursor-not-rejected
 
           oversized_prompt="$(python -c "print('x' * 4001)")"
           rejected_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/rejected.json -w '%{http_code}' \
@@ -144,13 +151,13 @@ jobs:
             -H 'content-type: application/json' --data '{' "$base/api/ai")" || fail_stage invalid-json-request
           [ "$invalid_json_code" = "400" ] || fail_stage invalid-json-not-rejected
 
-          after_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-a.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-a-after-request
+          after_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/after-a.json -w '%{http_code}' "$base/api/ai/history?limit=7")" || fail_stage history-a-after-request
           [ "$after_a_code" = "200" ] || fail_stage history-a-after-status
-          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-a.json >/dev/null || fail_stage rejected-input-created-orphan-a
+          jq -e '.count == 0 and .pageSize == 7 and .hasMore == false and .nextCursor == null and (.messages | length == 0)' /tmp/after-a.json >/dev/null || fail_stage rejected-input-created-orphan-a
 
-          after_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/after-b.json -w '%{http_code}' "$base/api/ai")" || fail_stage history-b-after-request
+          after_b_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/after-b.json -w '%{http_code}' "$base/api/ai/history?limit=3")" || fail_stage history-b-after-request
           [ "$after_b_code" = "200" ] || fail_stage history-b-after-status
-          jq -e '.count == 0 and (.messages | length == 0)' /tmp/after-b.json >/dev/null || fail_stage rejected-input-created-orphan-b
+          jq -e '.count == 0 and .pageSize == 3 and .hasMore == false and .nextCursor == null and (.messages | length == 0)' /tmp/after-b.json >/dev/null || fail_stage rejected-input-created-orphan-b
 
           cleanup_a_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -X DELETE -o /tmp/cleanup-a.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage cleanup-a-request
           [ "$cleanup_a_code" = "200" ] || fail_stage cleanup-a-status
@@ -163,9 +170,9 @@ jobs:
           {
             echo "### AI History Isolation E2E Smoke: PASS"
             echo
-            echo "Verified exact production release, database health, anonymous denial, two distinct authenticated Start sessions, empty per-user histories, fail-fast rejection before persistence for oversized and malformed JSON input, no orphan turns after rejected requests, and smoke-account cleanup."
+            echo "Verified exact production release, database health, anonymous denial on /api/ai/history, two distinct authenticated Start sessions, stable paginated-history contract, page-size clamping, invalid-cursor rejection, per-user isolation, fail-fast rejection before persistence for oversized and malformed JSON input, no orphan turns after rejected requests, and smoke-account cleanup."
             echo
-            echo "This test is provider-free. It does not claim to simulate an upstream gateway failure."
+            echo "This test is provider-free. It does not claim to verify external model generation."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "PASS: provider-free AI history isolation and rejected-input persistence safety verified."
+          echo "PASS: paginated AI history isolation and rejected-input persistence safety verified."
