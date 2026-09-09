@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const rawLimit = Number(url.searchParams.get("limit") ?? "40");
   const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(80, Math.trunc(rawLimit))) : 40;
-  const before = url.searchParams.get("before");
+  const before = url.searchParams.get("before") ?? url.searchParams.get("cursor");
 
   if (before && !validCursor(before)) {
     return NextResponse.json({ error: "Cursor de histórico inválido" }, { status: 400, headers: HEADERS });
