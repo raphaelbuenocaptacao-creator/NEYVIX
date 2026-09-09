@@ -6,6 +6,10 @@ const memory = fs.readFileSync("lib/memory-db.ts", "utf8");
 const aiMemoryContext = fs.readFileSync("lib/ai-memory-context.ts", "utf8");
 const workspace = fs.readFileSync("app/ai/page.tsx", "utf8");
 
+const memoryFailureIndex = route.indexOf('code: "memory_context_unavailable"');
+const rateLimitRecordIndex = route.indexOf('await recordRateLimitEvent("ai", aiBucket)');
+const providerFetchIndex = route.indexOf("await fetch(gateway!.url");
+
 const checks = [
   ["gateway requires HTTPS", route.includes('parsed.protocol !== "https:"')],
   ["gateway secret is mandatory", route.includes("if (!url || !secret) return null")],
@@ -21,6 +25,8 @@ const checks = [
   ["health uses configured-unverified until a provider is actually proven", health.includes('configured ? "configured_unverified"') && health.includes('readinessEvidence: "configuration_and_schema_only"')],
   ["memory context request is explicit opt-in", route.includes('(body as { useMemory?: unknown }).useMemory === true') && route.includes("loadAiMemoryContext(session.email, useMemory, 8)")],
   ["requested memory failure aborts generation instead of silently dropping context", route.includes("if (useMemory)") && route.includes('code: "memory_context_unavailable"') && route.includes("A solicitação não foi enviada sem o contexto solicitado")],
+  ["requested memory failure is resolved before AI rate-limit accounting", memoryFailureIndex >= 0 && rateLimitRecordIndex > memoryFailureIndex],
+  ["rate-limit accounting still happens before any real provider call", rateLimitRecordIndex >= 0 && providerFetchIndex > rateLimitRecordIndex],
   ["memory context feature gate is explicit opt-in", aiMemoryContext.includes('process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"') && aiMemoryContext.includes("if (!useMemory || !isAiMemoryContextEnabled()) return [];")],
   ["AI memory excludes private records", memory.includes("AND m.is_private = false")],
   ["AI memory is scoped to the active user", memory.includes("WHERE lower(u.email) = ${email.trim().toLowerCase()}") && memory.includes("AND u.is_active = true")],
