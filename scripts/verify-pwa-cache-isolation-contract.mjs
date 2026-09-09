@@ -14,6 +14,9 @@ const checks = [
   ["cross-origin requests bypass SW cache", /url\.origin\s*!==\s*self\.location\.origin/.test(source)],
   ["sensitive query parameters bypass SW cache", /SENSITIVE_QUERY/.test(source) && /hasSensitiveQuery\(url\)/.test(source)],
   ["private routes include API and auth surfaces", /PRIVATE_PATH[^\n]*api[^\n]*auth/i.test(source)],
+  ["unsafe Vary responses are rejected", /hasUnsafeVary\(response\)/.test(source) && /value\s*===\s*["']\*["']/.test(source) && /value\s*===\s*["']cookie["']/.test(source) && /value\s*===\s*["']authorization["']/.test(source)],
+  ["Set-Cookie responses are rejected", /response\.headers\.has\(["']set-cookie["']\)/.test(source)],
+  ["private and no-store responses are rejected", /\(private\|no-store\)/i.test(source)],
   ["activation only deletes NEYVIX-owned caches", /key\.startsWith\(CACHE_PREFIX\)/.test(source)],
 ];
 
