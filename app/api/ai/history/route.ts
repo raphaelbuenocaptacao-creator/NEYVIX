@@ -43,7 +43,14 @@ export async function GET(request: Request) {
 
   try {
     const page = await listAiHistoryPage(session.email, { limit, before });
-    return NextResponse.json(page, { headers: HEADERS });
+    return NextResponse.json(
+      {
+        ...page,
+        count: page.messages.length,
+        pageSize: limit,
+      },
+      { headers: HEADERS },
+    );
   } catch (error) {
     console.warn("Unable to load paginated NEYVIX AI history", error);
     return NextResponse.json(
