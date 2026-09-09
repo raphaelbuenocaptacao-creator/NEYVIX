@@ -16,15 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify complete AI exchanges and isolated history
+      - name: Verify complete AI exchanges, isolation and deterministic history
         shell: bash
         run: |
           set -euo pipefail
           route="app/api/ai/route.ts"
+          history_route="app/api/ai/history/route.ts"
           exchange="lib/ai-exchange.ts"
           history="lib/ai-history.ts"
 
           test -f "$route"
+          test -f "$history_route"
           test -f "$exchange"
           test -f "$history"
 
@@ -66,11 +68,26 @@ jobs:
           grep -F 'const persistedRoles = rows.map' "$exchange" >/dev/null
           grep -F 'persistedRoles[0] !== "assistant" || persistedRoles[1] !== "user"' "$exchange" >/dev/null
 
-          # History must remain scoped to the authenticated identity and active accounts.
+          # History remains scoped to the authenticated active owner.
           grep -F 'JOIN public.users u ON u.id = m.user_id' "$history" >/dev/null
           grep -F 'WHERE u.email = ${normalizedEmail}' "$history" >/dev/null
           grep -F 'AND u.is_active = true' "$history" >/dev/null
           grep -F "AND m.role IN ('user', 'assistant', 'system')" "$history" >/dev/null
-          grep -F 'LIMIT ${safeLimit}' "$history" >/dev/null
 
-          echo 'PASS: AI history persists only normalized, complete, ordered role-validated exchanges and reads remain scoped to the active owner.'
+          # Pagination must be stable even if multiple messages share created_at.
+          grep -F 'SELECT m.id::text AS id, m.role, m.content, m.created_at' "$history" >/dev/null
+          grep -F 'ORDER BY m.created_at DESC, m.id DESC' "$history" >/dev/null
+          grep -F 'm.created_at = ${before.createdAt}::timestamptz' "$history" >/dev/null
+          grep -F 'm.id < ${before.id}::uuid' "$history" >/dev/null
+          grep -F 'const fetchLimit = limit + 1' "$history" >/dev/null
+          grep -F 'const hasMore = rows.length > limit' "$history" >/dev/null
+          grep -F 'nextCursor' "$history" >/dev/null
+
+          # Dedicated history endpoint must preserve auth, entitlement and cursor validation.
+          grep -F 'readActiveSession' "$history_route" >/dev/null
+          grep -F 'getProductAccess(session.email, "ai")' "$history_route" >/dev/null
+          grep -F 'if (before && !validCursor(before))' "$history_route" >/dev/null
+          grep -F 'listAiHistoryPage(session.email, { limit, before })' "$history_route" >/dev/null
+          grep -F '"Cache-Control": "no-store, max-age=0"' "$history_route" >/dev/null
+
+          echo 'PASS: AI exchanges stay complete and normalized; paginated history is owner-scoped, deterministic and cursor-validated.'
