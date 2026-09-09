@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { getAiMessagesByIds } from "@/lib/ai-history";
 
 export type PersistedAiMessage = {
   id: string;
@@ -41,11 +42,21 @@ export async function saveAiExchange(email: string, userContent: string, assista
     throw new Error("NEYVIX AI exchange persistence did not write both turns");
   }
 
-  const persisted = rows.map((row) => ({
-    id: String(row.id),
-    role: String(row.role) as "user" | "assistant",
-    content: String(row.content),
-    createdAt: new Date(String(row.created_at)).toISOString(),
+  const insertedIds = rows.map((row) => String(row.id));
+  if (!insertedIds[0] || !insertedIds[1] || insertedIds[0] === insertedIds[1]) {
+    throw new Error("NEYVIX AI exchange persistence returned invalid message identities");
+  }
+
+  const reread = await getAiMessagesByIds(normalizedEmail, [insertedIds[0], insertedIds[1]]);
+  if (reread.length !== 2) {
+    throw new Error("NEYVIX AI exchange persistence could not be verified by authoritative reread");
+  }
+
+  const persisted = reread.map((message) => ({
+    id: message.id,
+    role: message.role as "user" | "assistant",
+    content: message.content,
+    createdAt: message.createdAt,
   }));
 
   const byRole = new Map(persisted.map((message) => [message.role, message]));
