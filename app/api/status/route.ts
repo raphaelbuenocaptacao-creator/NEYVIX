@@ -158,7 +158,7 @@ export async function GET(request: Request) {
     },
     chat: {
       stage: "partial",
-      evidence: "Authenticated direct-message UI/API and persisted per-user message flow are implemented; realtime delivery and two-account E2E remain unverified.",
+      evidence: "Authenticated direct-message UI/API, persisted per-user history and cursor pagination are implemented; realtime delivery remains unverified.",
     },
     social: {
       stage: "scaffold",
