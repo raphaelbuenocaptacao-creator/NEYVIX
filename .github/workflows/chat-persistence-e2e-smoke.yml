@@ -53,6 +53,15 @@ jobs:
             exit 1
           }
 
+          fail_http_stage() {
+            local stage="$1" code="$2" body_file="$3"
+            local safe_error safe_code
+            safe_error="$(jq -r '.error // empty' "$body_file" 2>/dev/null || true)"
+            safe_code="$(jq -r '.code // empty' "$body_file" 2>/dev/null || true)"
+            echo "::error title=NEYVIX Chat Persistence E2E::${stage} http=${code} error=${safe_error:-unknown} code=${safe_code:-none}"
+            exit 1
+          }
+
           registered_a=false
           registered_b=false
           registered_c=false
@@ -115,10 +124,19 @@ jobs:
             eval "registered_${who}=true"
           done
 
+          # Prove each newly registered session resolves to the expected canonical NEYVIX ID
+          # before testing cross-account messaging. This separates auth failures from Chat failures.
+          for who in a b c; do
+            jar_var="jar_${who}"; email_var="email_${who}"
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -o "/tmp/me-${who}.json" -w '%{http_code}' "$base/api/auth/me")" || fail_stage "identity-${who}-request"
+            [ "$code" = "200" ] || fail_http_stage "identity-${who}-status" "$code" "/tmp/me-${who}.json"
+            jq -e --arg expected "${!email_var}" '.user.email == $expected' "/tmp/me-${who}.json" >/dev/null || fail_stage "identity-${who}-email-mismatch"
+          done
+
           for who in a b c; do
             jar_var="jar_${who}"
             code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -o "/tmp/before-${who}.json" -w '%{http_code}' "$base/api/chat?limit=2")" || fail_stage "before-${who}-request"
-            [ "$code" = "200" ] || fail_stage "before-${who}-status"
+            [ "$code" = "200" ] || fail_http_stage "before-${who}-status" "$code" "/tmp/before-${who}.json"
             jq -e '.messages == [] and .hasMore == false and .nextCursor == null' "/tmp/before-${who}.json" >/dev/null || fail_stage "before-${who}-not-empty"
           done
 
@@ -136,32 +154,32 @@ jobs:
           for n in 1 2 3; do
             msg_var="msg${n}"
             code="$(send_message "$email_b" "${!msg_var}" "/tmp/send-${n}.json")" || fail_stage "send-${n}-request"
-            [ "$code" = "201" ] || fail_stage "send-${n}-status"
+            [ "$code" = "201" ] || fail_http_stage "send-${n}-status" "$code" "/tmp/send-${n}.json"
             jq -e --arg from "$email_a" --arg to "$email_b" --arg text "${!msg_var}" '.message.fromEmail == $from and .message.toEmail == $to and .message.text == $text and .message.direction == "sent"' "/tmp/send-${n}.json" >/dev/null || fail_stage "send-${n}-contract"
             sleep 1
           done
 
           code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/b-page1.json -w '%{http_code}' "$base/api/chat?limit=2")" || fail_stage b-page1-request
-          [ "$code" = "200" ] || fail_stage b-page1-status
+          [ "$code" = "200" ] || fail_http_stage b-page1-status "$code" /tmp/b-page1.json
           jq -e --arg m2 "$msg2" --arg m3 "$msg3" '.hasMore == true and (.nextCursor|type)=="string" and [.messages[].text] == [$m2,$m3] and ([.messages[].direction] | all(. == "received"))' /tmp/b-page1.json >/dev/null || fail_stage b-page1-contract
           cursor="$(jq -r '.nextCursor' /tmp/b-page1.json)"
 
           code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/b-page2.json -w '%{http_code}' "$base/api/chat?limit=2&before=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$cursor")")" || fail_stage b-page2-request
-          [ "$code" = "200" ] || fail_stage b-page2-status
+          [ "$code" = "200" ] || fail_http_stage b-page2-status "$code" /tmp/b-page2.json
           jq -e --arg m1 "$msg1" '.hasMore == false and .nextCursor == null and [.messages[].text] == [$m1] and .messages[0].direction == "received"' /tmp/b-page2.json >/dev/null || fail_stage b-page2-contract
 
           code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/a-history.json -w '%{http_code}' "$base/api/chat?limit=10")" || fail_stage a-history-request
-          [ "$code" = "200" ] || fail_stage a-history-status
+          [ "$code" = "200" ] || fail_http_stage a-history-status "$code" /tmp/a-history.json
           jq -e --arg m1 "$msg1" --arg m2 "$msg2" --arg m3 "$msg3" '[.messages[].text] == [$m1,$m2,$m3] and ([.messages[].direction] | all(. == "sent"))' /tmp/a-history.json >/dev/null || fail_stage a-history-contract
 
           code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_c" -o /tmp/c-history.json -w '%{http_code}' "$base/api/chat?limit=10")" || fail_stage c-history-request
-          [ "$code" = "200" ] || fail_stage c-history-status
+          [ "$code" = "200" ] || fail_http_stage c-history-status "$code" /tmp/c-history.json
           jq -e '.messages == [] and .hasMore == false and .nextCursor == null' /tmp/c-history.json >/dev/null || fail_stage cross-account-leak
 
           for who in a b c; do
             jar_var="jar_${who}"
             code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -X DELETE -o "/tmp/cleanup-${who}.json" -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage "cleanup-${who}-request"
-            [ "$code" = "200" ] || fail_stage "cleanup-${who}-status"
+            [ "$code" = "200" ] || fail_http_stage "cleanup-${who}-status" "$code" "/tmp/cleanup-${who}.json"
             eval "registered_${who}=false"
           done
 
