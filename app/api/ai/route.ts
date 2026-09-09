@@ -200,7 +200,7 @@ export async function POST(request: Request) {
   const smokeGatewayOversize = smokeGatewayOversizeRequested && smokeProbeAuthorized;
   const smokeGatewayMalformedJson = smokeGatewayMalformedJsonRequested && smokeProbeAuthorized;
   const smokeGatewayInvalidShape = smokeGatewayInvalidShapeRequested && smokeProbeAuthorized;
-  const smokeGatewayEmptyAnswer = smokeGatewayEmpty_ANSWER_HEADER === "1";
+  const smokeGatewayEmptyAnswer = smokeGatewayEmptyAnswerRequested && smokeProbeAuthorized;
   const smokeGatewayInvalidContentType = smokeGatewayInvalidContentTypeRequested && smokeProbeAuthorized;
   const smokeMemoryFailure = smokeMemoryFailureRequested && smokeProbeAuthorized;
   const gateway = getGatewayConfig();
@@ -222,6 +222,8 @@ export async function POST(request: Request) {
     }
   }
 
+  // Consume generation quota only after all requested preconditions are available.
+  // A failed Memory dependency must never spend a user's AI generation allowance.
   await recordRateLimitEvent("ai", aiBucket);
 
   const controller = new AbortController();
