@@ -1,6 +1,13 @@
 import { neon } from "@neondatabase/serverless";
 
-export async function saveAiExchange(email: string, userContent: string, assistantContent: string) {
+export type PersistedAiMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
+export async function saveAiExchange(email: string, userContent: string, assistantContent: string): Promise<PersistedAiMessage[] | false> {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) return false;
 
@@ -27,7 +34,7 @@ export async function saveAiExchange(email: string, userContent: string, assista
     FROM target_user
     CROSS JOIN exchange
     ORDER BY exchange.ordinal
-    RETURNING role
+    RETURNING id, role, content, created_at
   `;
 
   if (rows.length !== 2) {
@@ -39,5 +46,12 @@ export async function saveAiExchange(email: string, userContent: string, assista
     throw new Error("NEYVIX AI exchange persistence wrote an invalid role set");
   }
 
-  return true;
+  return rows
+    .map((row) => ({
+      id: String(row.id),
+      role: String(row.role) as "user" | "assistant",
+      content: String(row.content),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+    }))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
