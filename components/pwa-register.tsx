@@ -11,10 +11,13 @@ export default function PwaRegister() {
 
     const register = async () => {
       try {
-        const registration = await navigator.serviceWorker.register("/sw.js", {
-          scope: "/",
-          updateViaCache: "none",
-        });
+        const registration = await navigator.serviceWorker.register(
+          "/sw.js?v=9-private-vary-star-safe-shell",
+          {
+            scope: "/",
+            updateViaCache: "none",
+          },
+        );
         await registration.update();
       } catch (error) {
         console.error("Falha ao registrar o service worker do NEYVIX", error);
