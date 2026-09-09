@@ -1,0 +1,174 @@
+name: NEYVIX Chat Persistence E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  chat-persistence-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify authenticated persistence, isolation and pagination
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          jar_a=/tmp/neyvix-chat-a.cookies
+          jar_b=/tmp/neyvix-chat-b.cookies
+          jar_c=/tmp/neyvix-chat-c.cookies
+          headers=(
+            -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}"
+            -H "x-neyvix-github-oidc: ${VERCEL_OIDC_TOKEN}"
+          )
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            echo "::error title=NEYVIX Chat Persistence E2E::$1"
+            exit 1
+          }
+
+          registered_a=false
+          registered_b=false
+          registered_c=false
+          cleanup() {
+            set +e
+            for who in a b c; do
+              registered_var="registered_${who}"
+              jar_var="jar_${who}"
+              if [ "${!registered_var}" = true ] && [ -s "${!jar_var}" ]; then
+                curl --silent --max-time 15 "${headers[@]}" -b "${!jar_var}" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+              fi
+            done
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+          jq -e '.checks.database == "connected"' /tmp/health.json >/dev/null || fail_stage database-health
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle_a="e2e-chat-a-${suffix}"
+          handle_b="e2e-chat-b-${suffix}"
+          handle_c="e2e-chat-c-${suffix}"
+          email_a="${handle_a}@neyvix.com"
+          email_b="${handle_b}@neyvix.com"
+          email_c="${handle_c}@neyvix.com"
+          password_a="$(openssl rand -base64 30 | tr -d '\n')"
+          password_b="$(openssl rand -base64 30 | tr -d '\n')"
+          password_c="$(openssl rand -base64 30 | tr -d '\n')"
+          for secret in "$email_a" "$email_b" "$email_c" "$password_a" "$password_b" "$password_c"; do echo "::add-mask::$secret"; done
+
+          register_account() {
+            local handle="$1" password="$2" jar="$3" body="$4" headers_file="$5"
+            rm -f "$jar" "$body" "$headers_file"
+            curl --silent --show-error --max-time 20 "${headers[@]}" \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$jar" -D "$headers_file" -o "$body" \
+              --data-urlencode 'name=NEYVIX Chat Smoke' \
+              --data-urlencode "handle=$handle" \
+              --data-urlencode "password=$password" \
+              --data-urlencode 'plan=start' \
+              "$base/api/auth/register" >/dev/null
+            awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' "$headers_file"
+          }
+
+          for who in a b c; do
+            handle_var="handle_${who}"; password_var="password_${who}"; jar_var="jar_${who}"
+            status="$(register_account "${!handle_var}" "${!password_var}" "${!jar_var}" "/tmp/register-${who}.body" "/tmp/register-${who}.headers")" || fail_stage "register-${who}-request"
+            [ "$status" = "303" ] || fail_stage "register-${who}-status"
+            grep -Eq 'neyvix_session' "${!jar_var}" || fail_stage "register-${who}-session-cookie"
+            eval "registered_${who}=true"
+          done
+
+          for who in a b c; do
+            jar_var="jar_${who}"
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -o "/tmp/before-${who}.json" -w '%{http_code}' "$base/api/chat?limit=2")" || fail_stage "before-${who}-request"
+            [ "$code" = "200" ] || fail_stage "before-${who}-status"
+            jq -e '.messages == [] and .hasMore == false and .nextCursor == null' "/tmp/before-${who}.json" >/dev/null || fail_stage "before-${who}-not-empty"
+          done
+
+          send_message() {
+            local recipient="$1" text="$2" output="$3"
+            curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o "$output" -w '%{http_code}' \
+              -H 'content-type: application/json' \
+              --data "$(jq -nc --arg recipientEmail "$recipient" --arg text "$text" '{recipientEmail:$recipientEmail,text:$text}')" \
+              "$base/api/chat"
+          }
+
+          msg1="chat persistence probe one ${suffix}"
+          msg2="chat persistence probe two ${suffix}"
+          msg3="chat persistence probe three ${suffix}"
+          for n in 1 2 3; do
+            msg_var="msg${n}"
+            code="$(send_message "$email_b" "${!msg_var}" "/tmp/send-${n}.json")" || fail_stage "send-${n}-request"
+            [ "$code" = "201" ] || fail_stage "send-${n}-status"
+            jq -e --arg from "$email_a" --arg to "$email_b" --arg text "${!msg_var}" '.message.fromEmail == $from and .message.toEmail == $to and .message.text == $text and .message.direction == "sent"' "/tmp/send-${n}.json" >/dev/null || fail_stage "send-${n}-contract"
+            sleep 1
+          done
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/b-page1.json -w '%{http_code}' "$base/api/chat?limit=2")" || fail_stage b-page1-request
+          [ "$code" = "200" ] || fail_stage b-page1-status
+          jq -e --arg m2 "$msg2" --arg m3 "$msg3" '.hasMore == true and (.nextCursor|type)=="string" and [.messages[].text] == [$m2,$m3] and ([.messages[].direction] | all(. == "received"))' /tmp/b-page1.json >/dev/null || fail_stage b-page1-contract
+          cursor="$(jq -r '.nextCursor' /tmp/b-page1.json)"
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/b-page2.json -w '%{http_code}' "$base/api/chat?limit=2&before=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$cursor")")" || fail_stage b-page2-request
+          [ "$code" = "200" ] || fail_stage b-page2-status
+          jq -e --arg m1 "$msg1" '.hasMore == false and .nextCursor == null and [.messages[].text] == [$m1] and .messages[0].direction == "received"' /tmp/b-page2.json >/dev/null || fail_stage b-page2-contract
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/a-history.json -w '%{http_code}' "$base/api/chat?limit=10")" || fail_stage a-history-request
+          [ "$code" = "200" ] || fail_stage a-history-status
+          jq -e --arg m1 "$msg1" --arg m2 "$msg2" --arg m3 "$msg3" '[.messages[].text] == [$m1,$m2,$m3] and ([.messages[].direction] | all(. == "sent"))' /tmp/a-history.json >/dev/null || fail_stage a-history-contract
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_c" -o /tmp/c-history.json -w '%{http_code}' "$base/api/chat?limit=10")" || fail_stage c-history-request
+          [ "$code" = "200" ] || fail_stage c-history-status
+          jq -e '.messages == [] and .hasMore == false and .nextCursor == null' /tmp/c-history.json >/dev/null || fail_stage cross-account-leak
+
+          for who in a b c; do
+            jar_var="jar_${who}"
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -X DELETE -o "/tmp/cleanup-${who}.json" -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage "cleanup-${who}-request"
+            [ "$code" = "200" ] || fail_stage "cleanup-${who}-status"
+            eval "registered_${who}=false"
+          done
+
+          {
+            echo "### Chat Persistence E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, connected database, three authenticated ephemeral sessions, direct send A→B, persisted sender readback, recipient readback, two-page cursor pagination, third-account isolation, and cleanup."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "PASS: authenticated NEYVIX Chat persistence, recipient visibility, pagination and cross-account isolation verified in production."
