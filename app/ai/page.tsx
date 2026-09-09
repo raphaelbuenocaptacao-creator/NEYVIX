@@ -7,6 +7,8 @@ import styles from "./page.module.css";
 type Message = { id?: string; role: "user" | "assistant"; content: string; createdAt?: string };
 type HistoryMessage = { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: string };
 type HistoryPage = { messages?: HistoryMessage[]; nextCursor?: string | null; hasMore?: boolean; error?: string };
+type PersistedExchange = Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string }>;
+type AiResponse = { answer?: string; error?: string; memoryUsed?: number; exchange?: PersistedExchange };
 type IntelligenceStatus = "checking" | "configured_unverified" | "ready" | "partial" | "unavailable";
 
 const welcomeMessage: Message = {
@@ -34,6 +36,20 @@ function mergeConversation(older: Message[], current: Message[]) {
     persistedIds.add(message.id);
     return true;
   });
+}
+
+function isPersistedExchange(value: unknown): value is PersistedExchange {
+  if (!Array.isArray(value) || value.length !== 2) return false;
+  const roles = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") return false;
+    const candidate = item as Record<string, unknown>;
+    if (typeof candidate.id !== "string" || !candidate.id) return false;
+    if (candidate.role !== "user" && candidate.role !== "assistant") return false;
+    if (typeof candidate.content !== "string" || typeof candidate.createdAt !== "string") return false;
+    roles.add(candidate.role);
+  }
+  return roles.has("user") && roles.has("assistant");
 }
 
 export default function AiPage() {
@@ -125,19 +141,22 @@ export default function AiPage() {
       setError("O núcleo de geração da NEYVIX AI não está configurado para uso agora. Seu histórico e Memory continuam preservados.");
       return;
     }
+
+    const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setError("");
     setNeedsLogin(false);
     setPrompt("");
     setMemoryUsed(null);
-    setMessages((current) => [...current, { role: "user", content: clean }]);
+    setMessages((current) => [...current, { id: optimisticId, role: "user", content: clean }]);
     setLoading(true);
+
     try {
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: clean, useMemory }),
       });
-      const data = (await response.json()) as { answer?: string; error?: string; memoryUsed?: number };
+      const data = (await response.json()) as AiResponse;
       if (response.status === 401) {
         setNeedsLogin(true);
         throw new Error("Sua sessão expirou ou sua conta precisa ser validada novamente.");
@@ -145,15 +164,33 @@ export default function AiPage() {
       if (!response.ok || !data.answer) throw new Error(data.error || "Não foi possível obter uma resposta.");
       setMemoryUsed(typeof data.memoryUsed === "number" ? data.memoryUsed : 0);
 
-      // The POST contract persists the complete exchange before reporting success.
-      // Re-read authoritative history so the UI immediately adopts the real database IDs
-      // and timestamps instead of keeping an optimistic duplicate that would reappear on reload.
-      const reconciled = await loadHistory();
-      if (!reconciled) {
-        setMessages((current) => [...current, { role: "assistant", content: data.answer ?? "" }]);
+      if (isPersistedExchange(data.exchange)) {
+        const persisted: Message[] = data.exchange.map((message) => ({
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          createdAt: message.createdAt,
+        }));
+        setMessages((current) => mergeConversation(
+          current.filter((message) => message.id !== optimisticId),
+          persisted,
+        ));
+      } else {
+        // Backward-compatible fallback during a rolling deploy: remove the optimistic turn,
+        // then re-read authoritative history. If that read fails, preserve the successful
+        // exchange visibly without pretending it has database identity in this client.
+        setMessages((current) => current.filter((message) => message.id !== optimisticId));
+        const reconciled = await loadHistory();
+        if (!reconciled) {
+          setMessages((current) => [...current, { role: "user", content: clean }, { role: "assistant", content: data.answer ?? "" }]);
+        }
       }
       setIntelligenceStatus("ready");
     } catch (err) {
+      // A failed request is not persisted by the POST contract. Remove the optimistic
+      // prompt so the UI never presents unsaved content as part of durable history.
+      setMessages((current) => current.filter((message) => message.id !== optimisticId));
+      setPrompt((current) => current || clean);
       setError(err instanceof Error ? err.message : "Falha ao conectar com a NEYVIX AI.");
     } finally {
       setLoading(false);
