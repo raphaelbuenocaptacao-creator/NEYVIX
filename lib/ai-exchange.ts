@@ -41,17 +41,29 @@ export async function saveAiExchange(email: string, userContent: string, assista
     throw new Error("NEYVIX AI exchange persistence did not write both turns");
   }
 
-  const persistedRoles = rows.map((row) => String(row.role)).sort();
-  if (persistedRoles[0] !== "assistant" || persistedRoles[1] !== "user") {
+  const persisted = rows.map((row) => ({
+    id: String(row.id),
+    role: String(row.role) as "user" | "assistant",
+    content: String(row.content),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+  }));
+
+  const byRole = new Map(persisted.map((message) => [message.role, message]));
+  const persistedUser = byRole.get("user");
+  const persistedAssistant = byRole.get("assistant");
+
+  if (!persistedUser || !persistedAssistant || byRole.size !== 2) {
     throw new Error("NEYVIX AI exchange persistence wrote an invalid role set");
   }
+  if (persistedUser.content !== userContent || persistedAssistant.content !== assistantContent) {
+    throw new Error("NEYVIX AI exchange persistence returned content that does not match the generated exchange");
+  }
+  if (!persistedUser.id || !persistedAssistant.id || persistedUser.id === persistedAssistant.id) {
+    throw new Error("NEYVIX AI exchange persistence returned invalid message identities");
+  }
+  if (!Number.isFinite(Date.parse(persistedUser.createdAt)) || !Number.isFinite(Date.parse(persistedAssistant.createdAt))) {
+    throw new Error("NEYVIX AI exchange persistence returned invalid timestamps");
+  }
 
-  return rows
-    .map((row) => ({
-      id: String(row.id),
-      role: String(row.role) as "user" | "assistant",
-      content: String(row.content),
-      createdAt: new Date(String(row.created_at)).toISOString(),
-    }))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return persisted.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
