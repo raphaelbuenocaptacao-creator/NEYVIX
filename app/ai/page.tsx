@@ -53,7 +53,7 @@ export default function AiPage() {
   const generationAvailable = intelligenceStatus === "configured_unverified" || intelligenceStatus === "ready";
   const generationUnavailable = !generationAvailable;
 
-  const loadHistory = useCallback(async (before?: string | null, prepend = false) => {
+  const loadHistory = useCallback(async (before?: string | null, prepend = false): Promise<boolean> => {
     prepend ? setHistoryLoadingOlder(true) : setHistoryLoading(true);
     try {
       const params = new URLSearchParams({ limit: "40" });
@@ -63,15 +63,15 @@ export default function AiPage() {
       if (response.status === 401) {
         setNeedsLogin(true);
         setError("Sua sessão expirou ou sua conta precisa ser validada novamente.");
-        return;
+        return false;
       }
       if (response.status === 403) {
         setError("Seu plano atual não inclui acesso ao histórico da NEYVIX AI.");
-        return;
+        return false;
       }
       if (!response.ok) {
         setError(data.error || "Seu histórico não pôde ser carregado agora. Você ainda pode continuar nesta sessão.");
-        return;
+        return false;
       }
 
       const restored = toConversation(data.messages ?? []);
@@ -81,8 +81,10 @@ export default function AiPage() {
         if (prepend) return mergeConversation(restored, current);
         return restored.length > 0 ? restored : current;
       });
+      return true;
     } catch {
       setError("Seu histórico não pôde ser carregado agora. Você ainda pode continuar nesta sessão.");
+      return false;
     } finally {
       prepend ? setHistoryLoadingOlder(false) : setHistoryLoading(false);
     }
@@ -142,7 +144,14 @@ export default function AiPage() {
       }
       if (!response.ok || !data.answer) throw new Error(data.error || "Não foi possível obter uma resposta.");
       setMemoryUsed(typeof data.memoryUsed === "number" ? data.memoryUsed : 0);
-      setMessages((current) => [...current, { role: "assistant", content: data.answer ?? "" }]);
+
+      // The POST contract persists the complete exchange before reporting success.
+      // Re-read authoritative history so the UI immediately adopts the real database IDs
+      // and timestamps instead of keeping an optimistic duplicate that would reappear on reload.
+      const reconciled = await loadHistory();
+      if (!reconciled) {
+        setMessages((current) => [...current, { role: "assistant", content: data.answer ?? "" }]);
+      }
       setIntelligenceStatus("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao conectar com a NEYVIX AI.");
