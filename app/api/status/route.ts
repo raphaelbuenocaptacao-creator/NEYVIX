@@ -9,7 +9,7 @@ const modules = {
   estate: "beta-persistence-ready",
   pwa: "installable-ready",
   deploy: "mvp",
-  chat: "schema-ready",
+  chat: "partial-persistence-ready",
   meet: "schema-ready",
   social: "schema-ready",
   ai: "gateway-ready",
@@ -157,8 +157,8 @@ export async function GET(request: Request) {
       evidence: "Manifest, service worker, standalone metadata and app shortcuts are implemented.",
     },
     chat: {
-      stage: "scaffold",
-      evidence: "Database architecture exists; end-to-end Chat product flow is not implemented.",
+      stage: "partial",
+      evidence: "Authenticated direct-message UI/API and persisted per-user message flow are implemented; realtime delivery and two-account E2E remain unverified.",
     },
     social: {
       stage: "scaffold",
