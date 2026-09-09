@@ -23,6 +23,15 @@ function normalizeTimestamp(value: unknown) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function mapAiMessageRow(row: Record<string, unknown>): AiHistoryMessage {
+  return {
+    id: String(row.id),
+    role: String(row.role) as AiHistoryMessage["role"],
+    content: String(row.content ?? ""),
+    createdAt: normalizeTimestamp(row.created_at) ?? String(row.created_at),
+  };
+}
+
 function parseCursor(value?: string | null) {
   const cursor = value?.trim();
   if (!cursor) return { createdAt: null as string | null, id: null as string | null };
@@ -37,6 +46,25 @@ function parseCursor(value?: string | null) {
   }
 
   return { createdAt: normalizeTimestamp(cursor), id: null as string | null };
+}
+
+export async function getAiMessagesByIds(email: string, ids: [string, string]): Promise<AiHistoryMessage[]> {
+  const sql = getSql();
+  if (!sql) throw new Error("NEYVIX AI history database is unavailable");
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const rows = await sql`
+    SELECT m.id::text AS id, m.role, m.content, m.created_at
+    FROM public.neyvix_ai_messages m
+    JOIN public.users u ON u.id = m.user_id
+    WHERE u.email = ${normalizedEmail}
+      AND u.is_active = true
+      AND (m.id = ${ids[0]}::uuid OR m.id = ${ids[1]}::uuid)
+      AND m.role IN ('user', 'assistant', 'system')
+    ORDER BY m.created_at ASC, m.id ASC
+  `;
+
+  return rows.map((row) => mapAiMessageRow(row as Record<string, unknown>));
 }
 
 export async function listAiHistoryPage(
@@ -80,12 +108,7 @@ export async function listAiHistoryPage(
     : null;
 
   return {
-    messages: selected.reverse().map((row) => ({
-      id: String(row.id),
-      role: String(row.role) as AiHistoryMessage["role"],
-      content: String(row.content ?? ""),
-      createdAt: normalizeTimestamp(row.created_at) ?? String(row.created_at),
-    })),
+    messages: selected.reverse().map((row) => mapAiMessageRow(row as Record<string, unknown>)),
     nextCursor,
     hasMore,
   };
