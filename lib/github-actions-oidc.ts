@@ -26,6 +26,10 @@ const AI_SMOKE_WORKFLOWS = [
     path: `${EXPECTED_REPOSITORY}/.github/workflows/ai-success-persistence-e2e-smoke.yml`,
     events: new Set(["push", "deployment_status", "workflow_dispatch"]),
   },
+  {
+    path: `${EXPECTED_REPOSITORY}/.github/workflows/ai-exchange-reload-e2e-smoke.yml`,
+    events: new Set(["push", "deployment_status", "workflow_dispatch"]),
+  },
 ] as const;
 
 type JwtHeader = {
