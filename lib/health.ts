@@ -17,6 +17,8 @@ export type HealthStatus = {
     automation: "ready" | "partial" | "missing" | "unknown";
     ai: "ready" | "partial" | "missing" | "unknown";
     memory: "ready" | "partial" | "missing" | "unknown";
+    studio: "ready" | "partial" | "missing" | "unknown";
+    content: "ready" | "partial" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
     drive: "ready" | "partial" | "missing" | "unknown";
     docs: "ready" | "partial" | "missing" | "unknown";
@@ -59,6 +61,12 @@ const AUTOMATION_REQUIRED_COLUMNS = [
 const APPROVAL_REQUIRED_COLUMNS = [
   "id", "automation_id", "run_id", "requested_by", "assigned_to", "decided_by", "title", "status", "payload", "decision_note", "decided_at", "created_at",
 ] as const;
+const STUDIO_REQUIRED_COLUMNS = [
+  "id", "user_id", "title", "prompt", "blueprint", "status", "created_at", "updated_at",
+] as const;
+const CONTENT_REQUIRED_COLUMNS = [
+  "id", "user_id", "kind", "prompt", "content", "created_at",
+] as const;
 const DRIVE_REQUIRED_COLUMNS = [
   "id", "owner_user_id", "parent_id", "kind", "name", "mime_type", "size_bytes", "storage_key", "metadata", "created_at", "updated_at",
 ] as const;
@@ -93,6 +101,8 @@ function unavailableSchema() {
     automation: "unknown" as const,
     ai: "unknown" as const,
     memory: "unknown" as const,
+    studio: "unknown" as const,
+    content: "unknown" as const,
     productRecords: "unknown" as const,
     drive: "unknown" as const,
     docs: "unknown" as const,
@@ -188,7 +198,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_ai_messages', 'neyvix_memories', 'neyvix_memory_events', 'neyvix_automations', 'neyvix_approval_requests', 'drive_items', 'documents')
+        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_ai_messages', 'neyvix_memories', 'neyvix_memory_events', 'neyvix_automations', 'neyvix_approval_requests', 'neyvix_studio_projects', 'neyvix_content_items', 'drive_items', 'documents')
     ` as Array<{ table_name: string; column_name: string }>;
     const columnsFor = (table: string) => new Set(shapeRows.filter((column) => column.table_name === table).map((column) => column.column_name));
     const userColumns = columnsFor("users");
@@ -219,8 +229,6 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       && Boolean(catalog.subscriptions_table);
     const mailReady = Boolean(catalog.mailboxes_table) && Boolean(catalog.messages_table);
     const estateReady = Boolean(catalog.estate_sites_table) && Boolean(catalog.estate_properties_table);
-    const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
-    const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
 
     const automationColumns = columnsFor("neyvix_automations");
     const approvalColumns = columnsFor("neyvix_approval_requests");
@@ -235,6 +243,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const aiColumns = columnsFor("neyvix_ai_messages");
     const memoryColumns = columnsFor("neyvix_memories");
     const memoryEventColumns = columnsFor("neyvix_memory_events");
+    const studioColumns = columnsFor("neyvix_studio_projects");
+    const contentColumns = columnsFor("neyvix_content_items");
     const driveColumns = columnsFor("drive_items");
     const docsColumns = columnsFor("documents");
     const ai = shapeState(Boolean(catalog.ai_messages_table), aiColumns, AI_MESSAGE_REQUIRED_COLUMNS);
@@ -244,6 +254,15 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       && MEMORY_EVENT_REQUIRED_COLUMNS.every((column) => memoryEventColumns.has(column));
     const memory = !memoryTablesExist ? "missing" as const : memoryShapeReady ? "ready" as const : "partial" as const;
     const memoryReady = memory === "ready";
+    const studio = shapeState(Boolean(catalog.studio_projects_table), studioColumns, STUDIO_REQUIRED_COLUMNS);
+    const content = shapeState(Boolean(catalog.content_items_table), contentColumns, CONTENT_REQUIRED_COLUMNS);
+    const studioReady = studio === "ready";
+    const contentReady = content === "ready";
+    const productRecords = studio === "missing" && content === "missing"
+      ? "missing" as const
+      : studioReady && contentReady
+        ? "ready" as const
+        : "partial" as const;
     const drive = shapeState(Boolean(catalog.drive_items_table), driveColumns, DRIVE_REQUIRED_COLUMNS);
     const docs = shapeState(Boolean(catalog.documents_table), docsColumns, DOCS_REQUIRED_COLUMNS);
     const driveReady = drive === "ready";
@@ -253,6 +272,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       !automationReady ? "neyvix_automation" : null,
       !aiReady ? "neyvix_ai_messages" : null,
       !memoryReady ? "neyvix_memory" : null,
+      !studioReady ? "neyvix_studio_projects" : null,
+      !contentReady ? "neyvix_content_items" : null,
       !driveReady ? "drive_items" : null,
       !docsReady ? "documents" : null,
     ].filter((value): value is string => Boolean(value));
@@ -289,6 +310,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         automation,
         ai,
         memory,
+        studio,
+        content,
         productRecords,
         drive,
         docs,
