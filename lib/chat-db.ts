@@ -1,10 +1,19 @@
 import { neon } from "@neondatabase/serverless";
+import { evaluateChatSchema, type ChatShapeRow } from "@/lib/chat-schema";
 
 export type ChatMessage={id:string;fromEmail:string;fromName:string;toEmail:string;toName:string;text:string;createdAt:string;direction:"sent"|"received"};
 export type ChatMessagePage={messages:ChatMessage[];nextCursor:string|null;hasMore:boolean};
 type ChatIdentity={user_id:string;project_id:string;email:string;name:string};
 function getSql(){const url=process.env.DATABASE_URL?.trim();return url?neon(url):null;}
-async function ready(sql:NonNullable<ReturnType<typeof getSql>>){const rows=await sql`SELECT to_regclass('public.realtime_events')::text AS events,to_regclass('public.projects')::text AS projects,to_regclass('public.users')::text AS users,to_regclass('public.project_users')::text AS project_users`;const r=rows[0] as Record<string,unknown>|undefined;return Boolean(r?.events&&r?.projects&&r?.users&&r?.project_users);}
+async function ready(sql:NonNullable<ReturnType<typeof getSql>>){
+  const rows=await sql`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema='public'
+      AND table_name IN ('realtime_events','projects','users','project_users')
+  ` as ChatShapeRow[];
+  return evaluateChatSchema(rows).state==="ready";
+}
 function normalize(email:string){return email.trim().toLowerCase();}
 function normalizeTimestamp(value:unknown){const date=value instanceof Date?value:new Date(String(value));return Number.isNaN(date.getTime())?null:date.toISOString();}
 function map(row:Record<string,unknown>,me:string):ChatMessage{return{id:String(row.id),fromEmail:String(row.from_email),fromName:String(row.from_name??row.from_email),toEmail:String(row.to_email),toName:String(row.to_name??row.to_email),text:String(row.text??""),createdAt:normalizeTimestamp(row.created_at)??String(row.created_at),direction:normalize(String(row.from_email))===normalize(me)?"sent":"received"};}
