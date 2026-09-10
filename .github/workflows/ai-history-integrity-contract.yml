@@ -65,8 +65,16 @@ jobs:
           grep -F 'INSERT INTO public.neyvix_ai_messages (user_id, role, content, created_at)' "$exchange" >/dev/null
           grep -F "statement_timestamp() + (exchange.ordinal * interval '1 microsecond')" "$exchange" >/dev/null
           grep -F 'if (rows.length !== 2)' "$exchange" >/dev/null
-          grep -F 'const persistedRoles = rows.map' "$exchange" >/dev/null
-          grep -F 'persistedRoles[0] !== "assistant" || persistedRoles[1] !== "user"' "$exchange" >/dev/null
+          grep -F 'const insertedIds = rows.map' "$exchange" >/dev/null
+          grep -F 'await getAiMessagesByIds(normalizedEmail, [insertedIds[0], insertedIds[1]])' "$exchange" >/dev/null
+          grep -F 'if (reread.length !== 2)' "$exchange" >/dev/null
+          grep -F 'const byRole = new Map' "$exchange" >/dev/null
+          grep -F 'const persistedUser = byRole.get("user")' "$exchange" >/dev/null
+          grep -F 'const persistedAssistant = byRole.get("assistant")' "$exchange" >/dev/null
+          grep -F 'persistedUser.content !== userContent || persistedAssistant.content !== assistantContent' "$exchange" >/dev/null
+          grep -F 'persistedUser.id === persistedAssistant.id' "$exchange" >/dev/null
+          grep -F 'Date.parse(persistedUser.createdAt)' "$exchange" >/dev/null
+          grep -F 'return persisted.sort((a, b) => a.createdAt.localeCompare(b.createdAt))' "$exchange" >/dev/null
 
           # History remains scoped to the authenticated active owner.
           grep -F 'JOIN public.users u ON u.id = m.user_id' "$history" >/dev/null
@@ -90,4 +98,4 @@ jobs:
           grep -F 'listAiHistoryPage(session.email, { limit, before })' "$history_route" >/dev/null
           grep -F '"Cache-Control": "no-store, max-age=0"' "$history_route" >/dev/null
 
-          echo 'PASS: AI exchanges stay complete and normalized; paginated history is owner-scoped, deterministic and cursor-validated.'
+          echo 'PASS: AI exchanges stay complete and normalized; authoritative reread and paginated history remain owner-scoped, deterministic and cursor-validated.'
