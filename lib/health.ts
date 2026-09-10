@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { getMailTransportStatus } from "@/lib/mail-transport";
 
 export type HealthStatus = {
   ok: boolean;
@@ -55,7 +56,11 @@ function integrationStatus() {
     process.env.NEYVIX_CHECKOUT_BUSINESS_URL,
   ].every(validHttps);
   const planEnforcement = process.env.NEYVIX_ENFORCE_PLANS === "true";
-  const mailTransport = validHttps(process.env.MAIL_TRANSPORT_URL) && Boolean(process.env.MAIL_TRANSPORT_SECRET?.trim());
+  // Keep health aligned with the runtime mail contract. Mail can be delivered
+  // through either the authenticated webhook transport or the validated Resend
+  // fallback; checking only MAIL_TRANSPORT_URL would incorrectly report Resend
+  // deployments as not ready.
+  const mailTransport = getMailTransportStatus().ready;
   const mailInbound = Boolean(process.env.MAIL_WEBHOOK_SECRET?.trim());
   const storage = validHttps(process.env.STORAGE_UPLOAD_URL) && Boolean((process.env.STORAGE_UPLOAD_SECRET ?? process.env.STORAGE_TOKEN)?.trim());
 
