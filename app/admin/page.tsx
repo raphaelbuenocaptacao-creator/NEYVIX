@@ -5,7 +5,7 @@ import styles from "./admin.module.css";
 import UserInspector from "./UserInspector";
 import SchemaRepairPanel from "./SchemaRepairPanel";
 import { SESSION_COOKIE } from "@/lib/auth";
-import { getAdminUserSummaries, type AdminUserSummary } from "@/lib/db";
+import { getAdminUserDirectory, type AdminUserSummary } from "@/lib/admin-user360";
 import { getAdminSystemSummary, type AdminSystemSummary } from "@/lib/admin-system";
 import { readActiveSession } from "@/lib/session";
 import { canAccessAdmin, canInspectUser360, getUserRole, roleLabel } from "@/lib/user-role";
@@ -23,7 +23,7 @@ export default async function AdminPage() {
   let system: AdminSystemSummary | null = null;
   try {
     [users, system] = await Promise.all([
-      canInspectUsers ? getAdminUserSummaries() : Promise.resolve([]),
+      canInspectUsers ? getAdminUserDirectory() : Promise.resolve([]),
       getAdminSystemSummary(),
     ]);
   } catch (error) {
