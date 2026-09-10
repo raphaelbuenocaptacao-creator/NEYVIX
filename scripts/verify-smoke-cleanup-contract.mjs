@@ -5,11 +5,13 @@ const route = fs.readFileSync("app/api/auth/smoke-cleanup/route.ts", "utf8");
 const driveWorkflow = fs.readFileSync(".github/workflows/drive-docs-e2e-smoke.yml", "utf8");
 const businessWorkflow = fs.readFileSync(".github/workflows/business-entitlement-negative-e2e-smoke.yml", "utf8");
 const mailWorkflow = fs.readFileSync(".github/workflows/mail-draft-e2e-smoke.yml", "utf8");
+const memoryWorkflow = fs.readFileSync(".github/workflows/ai-memory-context-e2e-smoke.yml", "utf8");
 
 const explicitNamespaces = [
   "e2e-smoke",
   "e2e-ai-mem",
   "e2e-ai-hist",
+  "e2e-memory",
   "business-negative",
   "business-positive",
   "mail-access",
@@ -26,6 +28,7 @@ const checks = [
   ["cleanup allows every approved technical namespace", explicitNamespaces.every((namespace) => db.includes(namespace))],
   ["cleanup allows the standard e2e namespace", db.includes("e2e-smoke")],
   ["cleanup allows AI memory and history namespaces", db.includes("e2e-ai-mem") && db.includes("e2e-ai-hist")],
+  ["cleanup allows the dedicated Memory lifecycle namespace", db.includes("e2e-memory") && memoryWorkflow.includes("e2e-memory-")],
   ["cleanup allows the Business-negative namespace", db.includes("business-negative")],
   ["cleanup allows the Business-positive namespace", db.includes("business-positive")],
   ["cleanup allows the Mail-access namespace", db.includes("mail-access")],
@@ -44,6 +47,8 @@ const checks = [
   ["Mail-access workflow always attempts cleanup on shell exit", mailWorkflow.includes("trap cleanup EXIT")],
   ["Mail-access workflow uses only its dedicated technical namespace", mailWorkflow.includes("mail-access-")],
   ["Mail-access workflow requires explicit successful cleanup on PASS", mailWorkflow.includes("fail_stage cleanup-status") && mailWorkflow.includes("fail_stage cleanup-payload")],
+  ["Memory lifecycle workflow always attempts cleanup on shell exit", memoryWorkflow.includes("trap cleanup EXIT")],
+  ["Memory lifecycle workflow requires explicit successful cleanup on PASS", memoryWorkflow.includes("fail_stage cleanup-status") && memoryWorkflow.includes("fail_stage cleanup-payload")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
