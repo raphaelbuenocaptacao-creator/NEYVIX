@@ -1,7 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 
 type MemoryControlsProps = {
   id: string;
@@ -9,17 +9,30 @@ type MemoryControlsProps = {
   memoryKey: string;
 };
 
-type ApiError = { error?: string };
+type ApiPayload = {
+  error?: unknown;
+  ok?: unknown;
+  id?: unknown;
+  shareWithAi?: unknown;
+};
 
 export default function MemoryControls({ id, isPrivate, memoryKey }: MemoryControlsProps) {
   const router = useRouter();
+  const [privateState, setPrivateState] = useState(isPrivate);
   const [pending, setPending] = useState<"privacy" | "delete" | null>(null);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
 
-  async function readError(response: Response, fallback: string) {
-    const body = await response.json().catch(() => null) as ApiError | null;
-    return typeof body?.error === "string" && body.error.trim() ? body.error : fallback;
+  useEffect(() => {
+    setPrivateState(isPrivate);
+  }, [isPrivate]);
+
+  async function readPayload(response: Response) {
+    return await response.json().catch(() => null) as ApiPayload | null;
+  }
+
+  function errorMessage(payload: ApiPayload | null, fallback: string) {
+    return typeof payload?.error === "string" && payload.error.trim() ? payload.error : fallback;
   }
 
   async function updatePrivacy() {
@@ -28,7 +41,7 @@ export default function MemoryControls({ id, isPrivate, memoryKey }: MemoryContr
     setMessage("");
     setFailed(false);
 
-    const shareWithAi = isPrivate;
+    const shareWithAi = privateState;
     try {
       const response = await fetch("/api/memory", {
         method: "PATCH",
@@ -36,8 +49,13 @@ export default function MemoryControls({ id, isPrivate, memoryKey }: MemoryContr
         cache: "no-store",
         body: JSON.stringify({ id, shareWithAi }),
       });
-      if (!response.ok) throw new Error(await readError(response, "Não foi possível alterar a privacidade."));
+      const payload = await readPayload(response);
+      if (!response.ok) throw new Error(errorMessage(payload, "Não foi possível alterar a privacidade."));
+      if (payload?.ok !== true || payload.id !== id || payload.shareWithAi !== shareWithAi) {
+        throw new Error("A confirmação da alteração de privacidade veio incompleta. A Memory será sincronizada novamente.");
+      }
 
+      setPrivateState(!shareWithAi);
       setMessage(shareWithAi
         ? "Memória autorizada para contexto da NEYVIX AI."
         : "Memória tornada privada e retirada do contexto da AI.");
@@ -45,6 +63,7 @@ export default function MemoryControls({ id, isPrivate, memoryKey }: MemoryContr
     } catch (error) {
       setFailed(true);
       setMessage(error instanceof Error ? error.message : "Não foi possível alterar a privacidade.");
+      router.refresh();
     } finally {
       setPending(null);
     }
@@ -65,13 +84,18 @@ export default function MemoryControls({ id, isPrivate, memoryKey }: MemoryContr
         cache: "no-store",
         body: JSON.stringify({ id }),
       });
-      if (!response.ok) throw new Error(await readError(response, "Não foi possível apagar a memória."));
+      const payload = await readPayload(response);
+      if (!response.ok) throw new Error(errorMessage(payload, "Não foi possível apagar a memória."));
+      if (payload?.ok !== true || payload.id !== id) {
+        throw new Error("A confirmação da exclusão veio incompleta. A Memory será sincronizada novamente.");
+      }
 
       setMessage("Memória apagada.");
       router.refresh();
     } catch (error) {
       setFailed(true);
       setMessage(error instanceof Error ? error.message : "Não foi possível apagar a memória.");
+      router.refresh();
     } finally {
       setPending(null);
     }
@@ -79,8 +103,8 @@ export default function MemoryControls({ id, isPrivate, memoryKey }: MemoryContr
 
   return <div>
     <div className="actions" aria-busy={pending !== null}>
-      <button className="secondary" type="button" onClick={updatePrivacy} disabled={pending !== null} aria-label={isPrivate ? `Permitir que ${memoryKey} seja usada pela NEYVIX AI` : `Tornar ${memoryKey} privada`}>
-        {pending === "privacy" ? "Salvando..." : isPrivate ? "Permitir na AI" : "Tornar privada"}
+      <button className="secondary" type="button" onClick={updatePrivacy} disabled={pending !== null} aria-label={privateState ? `Permitir que ${memoryKey} seja usada pela NEYVIX AI` : `Tornar ${memoryKey} privada`}>
+        {pending === "privacy" ? "Salvando..." : privateState ? "Permitir na AI" : "Tornar privada"}
       </button>
       <button className="secondary" type="button" onClick={removeMemory} disabled={pending !== null} aria-label={`Apagar a memória ${memoryKey}`}>
         {pending === "delete" ? "Apagando..." : "Apagar memória"}
