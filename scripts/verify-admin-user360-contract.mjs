@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 const role = readFileSync("lib/user-role.ts", "utf8");
 const admin = readFileSync("app/admin/page.tsx", "utf8");
+const inspector = readFileSync("app/admin/UserInspector.tsx", "utf8");
+const detailApi = readFileSync("app/api/admin/user360/route.ts", "utf8");
 
 const checks = [
   ["User 360 has a dedicated least-privilege gate", role.includes("export function canInspectUser360")],
@@ -9,11 +11,15 @@ const checks = [
   ["Admin page uses active sessions", admin.includes("readActiveSession")],
   ["Admin page still checks admin-area authorization", admin.includes("canAccessAdmin(role)")],
   ["Admin page evaluates User 360 authorization", admin.includes("canInspectUser360(role)")],
-  ["Detailed user summaries are only loaded when authorized", admin.includes("canInspectUsers ? getAdminUserSummaries() : Promise.resolve([])")],
+  ["User directory is only loaded when authorized", admin.includes("canInspectUsers ? getAdminUserDirectory() : Promise.resolve([])")],
   ["UserInspector is rendered conditionally", admin.includes("canInspectUsers ? (") && admin.includes("<UserInspector users={users} />")],
   ["Restricted roles receive an explicit privacy state", admin.includes("USER 360 · ACESSO RESTRITO")],
   ["Operational telemetry remains available separately", admin.includes("getAdminSystemSummary()")],
   ["Restricted User 360 is represented as restricted, not healthy", admin.includes('canInspectUsers ? (system?.activeWithoutSubscription') && admin.includes(': "Restrito"')],
+  ["User 360 detail is fetched on demand", inspector.includes("/api/admin/user360?id=") && inspector.includes("AbortController")],
+  ["User 360 detail API requires an active session", detailApi.includes("readActiveSession")],
+  ["User 360 detail API enforces least privilege", detailApi.includes("canInspectUser360(role)")],
+  ["User 360 detail API disables shared caching", detailApi.includes('Cache-Control') && detailApi.includes('no-store')],
 ];
 
 let failed = 0;
