@@ -105,8 +105,10 @@ export async function GET(request: Request) {
         : "AI persistence/runtime exists, but no complete production gateway configuration is detected.",
     },
     memory: {
-      stage: "functional",
-      evidence: "Authenticated Memory API and persisted AI-context memory foundation are implemented.",
+      stage: health.schema.memory === "ready" ? "functional" : "partial",
+      evidence: health.schema.memory === "ready"
+        ? "Authenticated Memory API and both required persisted Memory tables are present."
+        : "Memory runtime exists, but the required persistence schema is missing or could not be verified.",
     },
     studio: {
       stage: "partial",
