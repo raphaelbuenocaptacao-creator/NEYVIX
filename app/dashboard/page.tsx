@@ -6,7 +6,7 @@ import { readActiveSession } from "@/lib/session";
 import { getRecentActivity, getTrialStatus } from "@/lib/db";
 import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlements";
 import { canAccessAdmin, getUserRole } from "@/lib/user-role";
-import { getHealthStatus } from "@/lib/health";
+import { getHealthStatus, type HealthStatus } from "@/lib/health";
 
 const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar", "ai"],
@@ -31,6 +31,7 @@ const quickCommands = [
 ] as const;
 
 type ActivityRow = { source: string; kind: string; summary: string; created_at: string };
+type ModuleReadiness = { state: "ready" | "partial" | "unknown"; label: string; detail: string };
 
 const sourceMeta: Record<string, { icon: string; title: string }> = {
   ai: { icon: "AI", title: "NEYVIX AI" }, studio: { icon: "ST", title: "NEYVIX Studio" }, content: { icon: "CT", title: "NEYVIX Content" },
@@ -46,6 +47,45 @@ function relativeTime(value: string) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `há ${hours} h`;
   return `há ${Math.floor(hours / 24)} d`;
+}
+
+function moduleReadiness(name: (typeof modules)[number][0], health: HealthStatus): ModuleReadiness {
+  const shape = (state: "ready" | "partial" | "missing" | "unknown", label: string): ModuleReadiness => {
+    if (state === "ready") return { state: "ready", label: "Pronto", detail: `${label}: contrato estrutural verificado pelo health.` };
+    if (state === "partial") return { state: "partial", label: "Parcial", detail: `${label}: schema parcial; use com cautela.` };
+    if (state === "missing") return { state: "partial", label: "Indisponível", detail: `${label}: fundação necessária ausente.` };
+    return { state: "unknown", label: "Não verificado", detail: `${label}: disponibilidade ainda não comprovada pelo health.` };
+  };
+
+  switch (name) {
+    case "AI": {
+      if (health.schema.ai !== "ready") return shape(health.schema.ai, "NEYVIX AI");
+      return health.integrations.aiGateway
+        ? { state: "ready", label: "Pronto", detail: "Persistência AI e gateway externo verificados." }
+        : { state: "partial", label: "Parcial", detail: "Persistência AI pronta; gateway externo ainda não configurado." };
+    }
+    case "Studio": return shape(health.schema.studio, "Studio");
+    case "Content": return shape(health.schema.content, "Content");
+    case "Docs": return shape(health.schema.docs, "Docs");
+    case "Automation": return shape(health.schema.automation, "Automation");
+    case "Estate": return shape(health.estate, "Estate");
+    case "Mail": {
+      if (health.mail !== "ready") return shape(health.mail, "Mail");
+      return health.integrations.mailTransport && health.integrations.mailInbound
+        ? { state: "ready", label: "Pronto", detail: "Persistência, transporte e entrada de Mail verificados." }
+        : { state: "partial", label: "Parcial", detail: "Persistência de Mail pronta; integração externa ainda incompleta." };
+    }
+    case "Ecossistema": return shape(health.schema.ecosystem, "Ecossistema");
+    case "Admin": {
+      return health.auth.schema === "ready"
+        ? { state: "ready", label: "Núcleo pronto", detail: "Schema de identidade e sessão verificado; recursos administrativos seguem controles de função." }
+        : { state: "partial", label: "Indisponível", detail: "Admin depende do schema de identidade e sessão." };
+    }
+    case "Deploy":
+      return { state: "unknown", label: "Não verificado", detail: "O health ainda não possui um contrato específico para NEYVIX Deploy." };
+    default:
+      return { state: "unknown", label: "Não verificado", detail: "Disponibilidade técnica ainda não comprovada." };
+  }
 }
 
 export default async function DashboardPage() {
@@ -116,11 +156,13 @@ export default async function DashboardPage() {
           <div className="command-module-grid">
             {visibleModules.map(([name, href, description, action, feature], index) => {
               const allowed = name === "Admin" ? adminAllowed : (!feature || canUse(entitlements, feature as EntitlementFeature));
+              const readiness = moduleReadiness(name, health);
               const target = allowed ? href : "/plans";
+              const actionLabel = !allowed ? "Upgrade" : readiness.state === "ready" ? action : readiness.label;
               return (
-                <Link key={name} href={target} className="command-module-card">
-                  <div className="module-card-topline"><span>{String(index + 1).padStart(2, "0")}</span><em>{allowed ? action : "Upgrade"}</em></div>
-                  <div><h3>{name}</h3><p>{description}</p>{!allowed && <p><strong>Não incluído no plano {entitlements.plan}.</strong></p>}</div>
+                <Link key={name} href={target} className="command-module-card" aria-label={`${name}: ${allowed ? readiness.label : "Upgrade necessário"}`}>
+                  <div className="module-card-topline"><span>{String(index + 1).padStart(2, "0")} · {readiness.label}</span><em title={readiness.detail}>{actionLabel}</em></div>
+                  <div><h3>{name}</h3><p>{description}</p>{!allowed && <p><strong>Não incluído no plano {entitlements.plan}.</strong></p>}{allowed && readiness.state !== "ready" && <p><strong>{readiness.detail}</strong></p>}</div>
                   <span className="module-open">{allowed ? "↗" : "＋"}</span>
                 </Link>
               );
