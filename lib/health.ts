@@ -15,7 +15,7 @@ export type HealthStatus = {
   estate: "ready" | "missing" | "unknown";
   schema: {
     automation: "ready" | "missing" | "unknown";
-    memory: "ready" | "missing" | "unknown";
+    memory: "ready" | "partial" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
     drive: "ready" | "partial" | "missing" | "unknown";
     docs: "ready" | "partial" | "missing" | "unknown";
@@ -34,6 +34,12 @@ export type HealthStatus = {
   launchReady: boolean;
 };
 
+const MEMORY_REQUIRED_COLUMNS = [
+  "id", "user_id", "memory_key", "category", "value", "source", "confidence", "is_private", "last_used_at", "expires_at", "created_at", "updated_at",
+] as const;
+const MEMORY_EVENT_REQUIRED_COLUMNS = [
+  "id", "user_id", "memory_id", "action", "source", "metadata", "created_at",
+] as const;
 const DRIVE_REQUIRED_COLUMNS = [
   "id", "owner_user_id", "parent_id", "kind", "name", "mime_type", "size_bytes", "storage_key", "metadata", "created_at", "updated_at",
 ] as const;
@@ -183,7 +189,6 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const mailReady = Boolean(catalog.mailboxes_table) && Boolean(catalog.messages_table);
     const estateReady = Boolean(catalog.estate_sites_table) && Boolean(catalog.estate_properties_table);
     const automationReady = Boolean(catalog.automations_table) && Boolean(catalog.approval_requests_table);
-    const memoryReady = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
 
@@ -191,15 +196,23 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name IN ('drive_items', 'documents')
+        AND table_name IN ('neyvix_memories', 'neyvix_memory_events', 'drive_items', 'documents')
     ` as Array<{ table_name: string; column_name: string }>;
+    const memoryColumns = new Set(shapeRows.filter((column) => column.table_name === "neyvix_memories").map((column) => column.column_name));
+    const memoryEventColumns = new Set(shapeRows.filter((column) => column.table_name === "neyvix_memory_events").map((column) => column.column_name));
     const driveColumns = new Set(shapeRows.filter((column) => column.table_name === "drive_items").map((column) => column.column_name));
     const docsColumns = new Set(shapeRows.filter((column) => column.table_name === "documents").map((column) => column.column_name));
+    const memoryTablesExist = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
+    const memoryShapeReady = MEMORY_REQUIRED_COLUMNS.every((column) => memoryColumns.has(column))
+      && MEMORY_EVENT_REQUIRED_COLUMNS.every((column) => memoryEventColumns.has(column));
+    const memory = !memoryTablesExist ? "missing" as const : memoryShapeReady ? "ready" as const : "partial" as const;
+    const memoryReady = memory === "ready";
     const drive = shapeState(Boolean(catalog.drive_items_table), driveColumns, DRIVE_REQUIRED_COLUMNS);
     const docs = shapeState(Boolean(catalog.documents_table), docsColumns, DOCS_REQUIRED_COLUMNS);
     const driveReady = drive === "ready";
     const docsReady = docs === "ready";
     const repairRequired = [
+      !memoryReady ? "neyvix_memory" : null,
       !driveReady ? "drive_items" : null,
       !docsReady ? "documents" : null,
     ].filter((value): value is string => Boolean(value));
@@ -234,7 +247,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       estate: estateReady ? "ready" : "missing",
       schema: {
         automation: automationReady ? "ready" : "missing",
-        memory: memoryReady ? "ready" : "missing",
+        memory,
         productRecords,
         drive,
         docs,
