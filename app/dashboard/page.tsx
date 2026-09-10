@@ -6,6 +6,7 @@ import { readActiveSession } from "@/lib/session";
 import { getRecentActivity, getTrialStatus } from "@/lib/db";
 import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlements";
 import { canAccessAdmin, getUserRole } from "@/lib/user-role";
+import { getHealthStatus } from "@/lib/health";
 
 const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar", "ai"],
@@ -54,9 +55,10 @@ export default async function DashboardPage() {
 
   let activity: ActivityRow[] = [];
   let trial: { status?: string; trial_ends_at?: string } | null = null;
-  const [entitlements, role] = await Promise.all([
+  const [entitlements, role, health] = await Promise.all([
     getEntitlements(session.email),
     getUserRole(session.email),
+    getHealthStatus(),
   ]);
   const adminAllowed = canAccessAdmin(role);
 
@@ -75,6 +77,18 @@ export default async function DashboardPage() {
     ? `Trial Pro até ${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(trial.trial_ends_at))}`
     : `Plano: ${entitlements.plan.toUpperCase()}`;
   const aiAllowed = canUse(entitlements, "ai");
+  const coreOperational = health.ok && health.database === "connected" && health.auth.schema === "ready";
+  const systemLabel = health.launchReady
+    ? "NEYVIX PRONTA"
+    : coreOperational
+      ? "NÚCLEO OPERACIONAL"
+      : "ATENÇÃO NECESSÁRIA";
+  const systemBadge = health.launchReady ? "PRONTA" : coreOperational ? "OPERACIONAL" : "DEGRADADA";
+  const systemDetail = health.launchReady
+    ? "Núcleo, schemas e integrações essenciais verificados."
+    : coreOperational
+      ? "Núcleo disponível; há módulos ou integrações ainda não prontos para lançamento completo."
+      : "O health detectou uma indisponibilidade ou configuração essencial pendente.";
 
   return (
     <main className="command-shell">
@@ -84,7 +98,7 @@ export default async function DashboardPage() {
       </header>
 
       <section className="command-hero-card">
-        <div className="command-hero-copy"><div className="live-pill"><span /> NEYVIX PRONTA</div><h1>O que você quer fazer acontecer?</h1><p className="muted">Comece pela intenção. A NEYVIX conecta você à inteligência, ao workspace e à camada de execução certa.</p></div>
+        <div className="command-hero-copy"><div className="live-pill"><span /> {systemLabel}</div><h1>O que você quer fazer acontecer?</h1><p className="muted">Comece pela intenção. A NEYVIX conecta você à inteligência, ao workspace e à camada de execução certa.</p></div>
         <Link href={aiAllowed ? "/ai" : "/plans"} className="command-prompt-box"><span className="command-key">N</span><span className="command-placeholder">{aiAllowed ? "Peça para a NEYVIX criar, planejar, analisar ou automatizar…" : "NEYVIX AI não está incluída no seu acesso atual."}</span><span className="command-enter">{aiAllowed ? "Abrir AI ↗" : "Ver planos ＋"}</span></Link>
         <div className="quick-command-row">{quickCommands.map(([label, href, feature]) => { const allowed = !feature || canUse(entitlements, feature as EntitlementFeature); return <Link key={label} href={allowed ? href : "/plans"}>{allowed ? label : `${label} · Upgrade`}</Link>; })}</div>
       </section>
@@ -108,11 +122,11 @@ export default async function DashboardPage() {
         </div>
 
         <aside className="activity-panel">
-          <div className="activity-head"><div><p className="eyebrow">CENTRO DE ATIVIDADE</p><h2>Pulso do sistema</h2></div><span className="status-badge">AO VIVO</span></div>
+          <div className="activity-head"><div><p className="eyebrow">CENTRO DE ATIVIDADE</p><h2>Pulso do sistema</h2></div><span className="status-badge">{systemBadge}</span></div>
           <div className="activity-list">
             {activity.length > 0 ? activity.map((item, index) => { const meta = sourceMeta[item.source] ?? { icon: "NX", title: "NEYVIX" }; return <div className="activity-item" key={`${item.source}-${item.created_at}-${index}`}><span className="activity-icon">{meta.icon}</span><div><strong>{meta.title}</strong><p>{item.summary}</p></div><em>{relativeTime(item.created_at)}</em></div>; }) : <><div className="activity-item"><span className="activity-icon">ID</span><div><strong>NEYVIX ID ativo</strong><p>{session.email}</p></div><em>Agora</em></div><div className="activity-item"><span className="activity-icon">NX</span><div><strong>Seu histórico começa aqui</strong><p>Use os apps NEYVIX e suas atividades aparecerão nesta linha do tempo.</p></div><em>Pronto</em></div></>}
           </div>
-          <div className="activity-note"><span>Plano e ecossistema sincronizados</span><strong>{entitlements.plan.toUpperCase()} · {entitlements.features.length} recursos</strong><p>O Command Center consolida sua atividade e mostra automaticamente o que está disponível na sua assinatura.</p></div>
+          <div className="activity-note"><span>Estado verificado pelo health</span><strong>{entitlements.plan.toUpperCase()} · {entitlements.features.length} recursos</strong><p>{systemDetail}</p></div>
         </aside>
       </section>
     </main>
