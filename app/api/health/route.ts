@@ -17,6 +17,7 @@ export async function GET() {
   const authReady = health.database === "connected" && sessionKey.ready && authSchemaReady;
   const accessReady = authReady && health.project === "ready";
   const ecosystemReady = health.launchReady
+    && chat.ok
     && authReady
     && (!production || sessionKeyDedicated);
   const releaseSha = process.env.VERCEL_GIT_COMMIT_SHA
@@ -31,6 +32,7 @@ export async function GET() {
     !authSchemaReady ? `auth_schema:${health.auth.schema}` : null,
     !sessionKey.ready ? "auth_session_secret:not_configured" : null,
     production && !sessionKeyDedicated ? "auth_session_secret:dedicated_required" : null,
+    !chat.ok ? `chat:${chat.schema}:${chat.project}` : null,
     health.schema.automation !== "ready" ? `schema:automation:${health.schema.automation}` : null,
     health.schema.memory !== "ready" ? `schema:memory:${health.schema.memory}` : null,
     health.schema.productRecords !== "ready" ? `schema:product_records:${health.schema.productRecords}` : null,
