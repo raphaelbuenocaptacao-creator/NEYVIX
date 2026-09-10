@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { listContentItems, saveContentItem } from "@/lib/db";
-import { deleteContentItem, updateContentItem } from "@/lib/product-records";
+import { deleteContentItem, isProductRecordSchemaReady, updateContentItem } from "@/lib/product-records";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_KIND_LENGTH = 80;
@@ -25,12 +25,31 @@ async function ensureContentAccess(email: string) {
   );
 }
 
+async function ensureContentSchema() {
+  try {
+    return await isProductRecordSchemaReady("content")
+      ? null
+      : NextResponse.json(
+          { error: "NEYVIX Content está temporariamente indisponível", code: "schema_unavailable" },
+          { status: 503, headers: PRIVATE_HEADERS },
+        );
+  } catch (error) {
+    console.error("Falha ao validar schema do NEYVIX Content", error);
+    return NextResponse.json(
+      { error: "NEYVIX Content está temporariamente indisponível", code: "schema_unavailable" },
+      { status: 503, headers: PRIVATE_HEADERS },
+    );
+  }
+}
+
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: PRIVATE_HEADERS });
 
   const denied = await ensureContentAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureContentSchema();
+  if (unavailable) return unavailable;
 
   try {
     const items = await listContentItems(session.email, 10);
@@ -47,6 +66,8 @@ export async function POST(request: Request) {
 
   const denied = await ensureContentAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureContentSchema();
+  if (unavailable) return unavailable;
 
   const body = await request.json().catch(() => null) as { kind?: unknown; prompt?: unknown; content?: unknown } | null;
   const kind = typeof body?.kind === "string" ? body.kind.trim() : "";
@@ -76,6 +97,8 @@ export async function PUT(request: Request) {
 
   const denied = await ensureContentAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureContentSchema();
+  if (unavailable) return unavailable;
 
   const body = await request.json().catch(() => null) as { id?: unknown; content?: unknown } | null;
   const id = typeof body?.id === "string" ? body.id.trim() : "";
@@ -102,6 +125,8 @@ export async function DELETE(request: Request) {
 
   const denied = await ensureContentAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureContentSchema();
+  if (unavailable) return unavailable;
 
   const body = await request.json().catch(() => null) as { id?: unknown } | null;
   const id = typeof body?.id === "string" ? body.id.trim() : "";
