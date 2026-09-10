@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { listMemories, listMemoryEvents } from "@/lib/memory-db";
+import MemoryControls from "./memory-controls";
 import SmartMemoryClient from "./smart-memory-client";
 
 export const dynamic = "force-dynamic";
@@ -73,17 +74,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Promi
         <p>{memory.value}</p>
         <p>{memory.isPrivate ? "Privada · não enviada à AI" : "Autorizada para contexto da AI"}</p>
         <p>Origem: {memory.source} · Atualizada em {new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(memory.updatedAt))}</p>
-        <div className="actions">
-          <form action="/api/memory/privacy" method="post">
-            <input type="hidden" name="id" value={memory.id} />
-            <input type="hidden" name="mode" value={memory.isPrivate ? "shared" : "private"} />
-            <button className="secondary" type="submit">{memory.isPrivate ? "Permitir na AI" : "Tornar privada"}</button>
-          </form>
-          <form action="/api/memory/delete" method="post">
-            <input type="hidden" name="id" value={memory.id} />
-            <button className="secondary" type="submit">Apagar memória</button>
-          </form>
-        </div>
+        <MemoryControls id={memory.id} isPrivate={memory.isPrivate} memoryKey={memory.key} />
       </article>) : <article><span>MEMORY</span><h2>Nenhuma memória salva ainda.</h2><p>Adicione a primeira informação acima. O histórico de conversas da AI continua separado desta memória de longo prazo.</p></article>}
     </section>
 
