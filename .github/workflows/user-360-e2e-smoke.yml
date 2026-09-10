@@ -30,7 +30,7 @@ jobs:
           echo "::add-mask::$token"
           echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify self-scoped User 360 in production
+      - name: Verify User 360 isolation and session revocation in production
         shell: bash
         run: |
           set -euo pipefail
@@ -65,6 +65,10 @@ jobs:
 
           anonymous_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/user360-anon.json -w '%{http_code}' "$base/api/user/360")" || fail_stage anonymous-request
           [ "$anonymous_code" = "401" ] || fail_stage anonymous-isolation
+
+          admin_anon_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -D /tmp/admin-anon.headers -o /tmp/admin-anon.json -w '%{http_code}' "$base/api/admin/user360?id=00000000-0000-4000-8000-000000000000")" || fail_stage admin-anonymous-request
+          [ "$admin_anon_code" = "403" ] || fail_stage admin-anonymous-isolation
+          grep -Eiq '^cache-control: .*no-store' /tmp/admin-anon.headers || fail_stage admin-anonymous-private-cache
 
           release_ready=false
           for attempt in $(seq 1 24); do
@@ -106,15 +110,29 @@ jobs:
           fi
           grep -Eiq '^cache-control: .*no-store' /tmp/user360.headers || fail_stage private-cache-control
 
+          user_id="$(jq -r '.identity.id // empty' /tmp/user360.json)"
+          [ -n "$user_id" ] || fail_stage user360-user-id
+
+          admin_member_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -D /tmp/admin-member.headers -o /tmp/admin-member.json -w '%{http_code}' "$base/api/admin/user360?id=$user_id")" || fail_stage admin-member-request
+          [ "$admin_member_code" = "403" ] || fail_stage admin-member-isolation
+          grep -Eiq '^cache-control: .*no-store' /tmp/admin-member.headers || fail_stage admin-member-private-cache
+          jq -e '.error | type == "string"' /tmp/admin-member.json >/dev/null || fail_stage admin-member-error-payload
+
           cleanup_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -X DELETE -o /tmp/smoke-cleanup.json -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage smoke-account-cleanup-request
           [ "$cleanup_code" = "200" ] || fail_stage smoke-account-cleanup-status
           jq -e '.ok == true' /tmp/smoke-cleanup.json >/dev/null || fail_stage smoke-account-cleanup-payload
           account_registered=false
 
+          revoked_self_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/user360-revoked.json -w '%{http_code}' "$base/api/user/360")" || fail_stage revoked-self-request
+          [ "$revoked_self_code" = "401" ] || fail_stage revoked-self-session
+
+          revoked_admin_code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$cookies" -o /tmp/admin-revoked.json -w '%{http_code}' "$base/api/admin/user360?id=$user_id")" || fail_stage revoked-admin-request
+          [ "$revoked_admin_code" = "403" ] || fail_stage revoked-admin-session
+
           {
             echo "### User 360 E2E Smoke: PASS"
             echo
-            echo "Verified anonymous denial, production release SHA, NEYVIX ID/session, self-only User 360 identity/trial/activity payload, private caching headers, sensitive-field suppression, and ephemeral-account cleanup."
+            echo "Verified anonymous denial, production release SHA, NEYVIX ID/session, self-only User 360 identity/trial/activity payload, private caching headers, sensitive-field suppression, regular-member denial on Admin User 360, and immediate session revocation after ephemeral-account cleanup."
             echo "No privileged account, billing mutation, payment, mail, webhook, AI generation or destructive database operation is invoked by this smoke."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "PASS: self-scoped User 360 verified in production."
+          echo "PASS: User 360 isolation and session revocation verified in production."
