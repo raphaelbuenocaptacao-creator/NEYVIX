@@ -14,7 +14,7 @@ export type HealthStatus = {
   mail: "ready" | "missing" | "unknown";
   estate: "ready" | "missing" | "unknown";
   schema: {
-    automation: "ready" | "missing" | "unknown";
+    automation: "ready" | "partial" | "missing" | "unknown";
     ai: "ready" | "partial" | "missing" | "unknown";
     memory: "ready" | "partial" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
@@ -52,6 +52,12 @@ const MEMORY_REQUIRED_COLUMNS = [
 ] as const;
 const MEMORY_EVENT_REQUIRED_COLUMNS = [
   "id", "user_id", "memory_id", "action", "source", "metadata", "created_at",
+] as const;
+const AUTOMATION_REQUIRED_COLUMNS = [
+  "id", "user_id", "name", "description", "status", "trigger_type", "action_type", "configuration", "created_at", "updated_at",
+] as const;
+const APPROVAL_REQUIRED_COLUMNS = [
+  "id", "automation_id", "run_id", "requested_by", "assigned_to", "decided_by", "title", "status", "payload", "decision_note", "decided_at", "created_at",
 ] as const;
 const DRIVE_REQUIRED_COLUMNS = [
   "id", "owner_user_id", "parent_id", "kind", "name", "mime_type", "size_bytes", "storage_key", "metadata", "created_at", "updated_at",
@@ -182,7 +188,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_ai_messages', 'neyvix_memories', 'neyvix_memory_events', 'drive_items', 'documents')
+        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_ai_messages', 'neyvix_memories', 'neyvix_memory_events', 'neyvix_automations', 'neyvix_approval_requests', 'drive_items', 'documents')
     ` as Array<{ table_name: string; column_name: string }>;
     const columnsFor = (table: string) => new Set(shapeRows.filter((column) => column.table_name === table).map((column) => column.column_name));
     const userColumns = columnsFor("users");
@@ -213,10 +219,19 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       && Boolean(catalog.subscriptions_table);
     const mailReady = Boolean(catalog.mailboxes_table) && Boolean(catalog.messages_table);
     const estateReady = Boolean(catalog.estate_sites_table) && Boolean(catalog.estate_properties_table);
-    const automationReady = Boolean(catalog.automations_table) && Boolean(catalog.approval_requests_table);
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
 
+    const automationColumns = columnsFor("neyvix_automations");
+    const approvalColumns = columnsFor("neyvix_approval_requests");
+    const automationTableState = shapeState(Boolean(catalog.automations_table), automationColumns, AUTOMATION_REQUIRED_COLUMNS);
+    const approvalTableState = shapeState(Boolean(catalog.approval_requests_table), approvalColumns, APPROVAL_REQUIRED_COLUMNS);
+    const automation = automationTableState === "missing" && approvalTableState === "missing"
+      ? "missing" as const
+      : automationTableState === "ready" && approvalTableState === "ready"
+        ? "ready" as const
+        : "partial" as const;
+    const automationReady = automation === "ready";
     const aiColumns = columnsFor("neyvix_ai_messages");
     const memoryColumns = columnsFor("neyvix_memories");
     const memoryEventColumns = columnsFor("neyvix_memory_events");
@@ -235,6 +250,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const docsReady = docs === "ready";
     const repairRequired = [
       !authSchemaReady ? "auth" : null,
+      !automationReady ? "neyvix_automation" : null,
       !aiReady ? "neyvix_ai_messages" : null,
       !memoryReady ? "neyvix_memory" : null,
       !driveReady ? "drive_items" : null,
@@ -270,7 +286,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       mail: mailReady ? "ready" : "missing",
       estate: estateReady ? "ready" : "missing",
       schema: {
-        automation: automationReady ? "ready" : "missing",
+        automation,
         ai,
         memory,
         productRecords,
