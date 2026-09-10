@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { getSessionSecretStatus } from "@/lib/auth";
 import { getHealthStatus } from "@/lib/health";
+import { getChatReadiness } from "@/lib/chat-health";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const health = await getHealthStatus();
+  const [health, chat] = await Promise.all([
+    getHealthStatus(),
+    getChatReadiness(),
+  ]);
   const sessionKey = getSessionSecretStatus();
   const production = process.env.NODE_ENV === "production";
   const sessionKeyDedicated = sessionKey.source === "configured";
@@ -54,6 +58,7 @@ export async function GET() {
       readiness: {
         access: accessReady,
         ecosystem: ecosystemReady,
+        chat: chat.ok,
       },
       blockers,
       checks: {
@@ -67,6 +72,12 @@ export async function GET() {
         billing: health.billing,
         mail: health.mail,
         estate: health.estate,
+        chat: {
+          status: chat.ok ? "ready" : "unavailable",
+          database: chat.database,
+          schema: chat.schema,
+          project: chat.project,
+        },
         schema: health.schema,
         integrations: {
           sessionSecret: sessionKey.ready ? sessionKey.source : "not_configured",
