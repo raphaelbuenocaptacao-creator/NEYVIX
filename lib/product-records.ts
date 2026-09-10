@@ -1,5 +1,18 @@
 import { neon } from "@neondatabase/serverless";
 
+const PRODUCT_RECORD_SCHEMA = {
+  studio: {
+    table: "neyvix_studio_projects",
+    columns: ["id", "user_id", "title", "prompt", "blueprint", "status", "created_at", "updated_at"],
+  },
+  content: {
+    table: "neyvix_content_items",
+    columns: ["id", "user_id", "kind", "prompt", "content", "created_at"],
+  },
+} as const;
+
+export type ProductRecordKind = keyof typeof PRODUCT_RECORD_SCHEMA;
+
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   return url ? neon(url) : null;
@@ -7,6 +20,27 @@ function getSql() {
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+export async function isProductRecordSchemaReady(kind: ProductRecordKind) {
+  const sql = getSql();
+  if (!sql) return false;
+
+  const contract = PRODUCT_RECORD_SCHEMA[kind];
+  const rows = await sql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = ${contract.table}
+  ` as Array<{ column_name?: unknown }>;
+
+  const columns = new Set(
+    rows
+      .map((row) => typeof row.column_name === "string" ? row.column_name : "")
+      .filter(Boolean),
+  );
+
+  return contract.columns.every((column) => columns.has(column));
 }
 
 export async function deleteStudioProject(email: string, id: string) {
