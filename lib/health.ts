@@ -15,6 +15,7 @@ export type HealthStatus = {
   estate: "ready" | "missing" | "unknown";
   schema: {
     automation: "ready" | "missing" | "unknown";
+    ai: "ready" | "partial" | "missing" | "unknown";
     memory: "ready" | "partial" | "missing" | "unknown";
     productRecords: "ready" | "partial" | "missing" | "unknown";
     drive: "ready" | "partial" | "missing" | "unknown";
@@ -42,6 +43,9 @@ const SESSIONS_REQUIRED_COLUMNS = [
 ] as const;
 const PASSWORD_RESET_REQUIRED_COLUMNS = [
   "id", "user_id", "token_hash", "expires_at", "used_at", "created_at",
+] as const;
+const AI_MESSAGE_REQUIRED_COLUMNS = [
+  "id", "user_id", "role", "content", "created_at",
 ] as const;
 const MEMORY_REQUIRED_COLUMNS = [
   "id", "user_id", "memory_key", "category", "value", "source", "confidence", "is_private", "last_used_at", "expires_at", "created_at", "updated_at",
@@ -81,6 +85,7 @@ function integrationStatus() {
 function unavailableSchema() {
   return {
     automation: "unknown" as const,
+    ai: "unknown" as const,
     memory: "unknown" as const,
     productRecords: "unknown" as const,
     drive: "unknown" as const,
@@ -132,6 +137,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         to_regclass('public.users') IS NOT NULL AS users_table,
         to_regclass('public.sessions') IS NOT NULL AS sessions_table,
         to_regclass('public.password_reset_tokens') IS NOT NULL AS password_reset_tokens_table,
+        to_regclass('public.neyvix_ai_messages') IS NOT NULL AS ai_messages_table,
         to_regclass('public.neyvix_billing_events') IS NOT NULL AS billing_events_table,
         to_regclass('public.plans') IS NOT NULL AS plans_table,
         to_regclass('public.subscriptions') IS NOT NULL AS subscriptions_table,
@@ -176,7 +182,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_memories', 'neyvix_memory_events', 'drive_items', 'documents')
+        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_ai_messages', 'neyvix_memories', 'neyvix_memory_events', 'drive_items', 'documents')
     ` as Array<{ table_name: string; column_name: string }>;
     const columnsFor = (table: string) => new Set(shapeRows.filter((column) => column.table_name === table).map((column) => column.column_name));
     const userColumns = columnsFor("users");
@@ -211,10 +217,13 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
 
+    const aiColumns = columnsFor("neyvix_ai_messages");
     const memoryColumns = columnsFor("neyvix_memories");
     const memoryEventColumns = columnsFor("neyvix_memory_events");
     const driveColumns = columnsFor("drive_items");
     const docsColumns = columnsFor("documents");
+    const ai = shapeState(Boolean(catalog.ai_messages_table), aiColumns, AI_MESSAGE_REQUIRED_COLUMNS);
+    const aiReady = ai === "ready";
     const memoryTablesExist = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
     const memoryShapeReady = MEMORY_REQUIRED_COLUMNS.every((column) => memoryColumns.has(column))
       && MEMORY_EVENT_REQUIRED_COLUMNS.every((column) => memoryEventColumns.has(column));
@@ -226,6 +235,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const docsReady = docs === "ready";
     const repairRequired = [
       !authSchemaReady ? "auth" : null,
+      !aiReady ? "neyvix_ai_messages" : null,
       !memoryReady ? "neyvix_memory" : null,
       !driveReady ? "drive_items" : null,
       !docsReady ? "documents" : null,
@@ -261,6 +271,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       estate: estateReady ? "ready" : "missing",
       schema: {
         automation: automationReady ? "ready" : "missing",
+        ai,
         memory,
         productRecords,
         drive,
@@ -271,6 +282,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       integrations,
       launchReady: coreReady
         && automationReady
+        && aiReady
         && memoryReady
         && productRecords === "ready"
         && driveReady
