@@ -167,8 +167,6 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_events_table,
         to_regclass('public.neyvix_studio_projects') IS NOT NULL AS studio_projects_table,
         to_regclass('public.neyvix_content_items') IS NOT NULL AS content_items_table,
-        to_regclass('public.conversations') IS NOT NULL AS conversations_table,
-        to_regclass('public.chat_messages') IS NOT NULL AS chat_messages_table,
         to_regclass('public.social_profiles') IS NOT NULL AS social_profiles_table,
         to_regclass('public.drive_items') IS NOT NULL AS drive_items_table,
         to_regclass('public.documents') IS NOT NULL AS documents_table,
@@ -278,9 +276,10 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       !docsReady ? "documents" : null,
     ].filter((value): value is string => Boolean(value));
 
+    // Chat has its own canonical runtime/readiness contract (projects, users,
+    // project_users and realtime_events). Do not double-count obsolete
+    // conversations/chat_messages tables in this remaining ecosystem aggregate.
     const ecosystemTablesReady = [
-      catalog.conversations_table,
-      catalog.chat_messages_table,
       catalog.social_profiles_table,
       driveReady,
       docsReady,
@@ -290,7 +289,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       catalog.organizations_table,
       catalog.wallets_table,
     ].filter(Boolean).length;
-    const ecosystem = ecosystemTablesReady === 10 ? "ready" : ecosystemTablesReady > 0 ? "partial" : "missing";
+    const ecosystem = ecosystemTablesReady === 8 ? "ready" : ecosystemTablesReady > 0 ? "partial" : "missing";
     const authReady = authSchemaReady && Number(activeUsers ?? 0) > 0 && Number(usersWithoutPassword ?? 0) === 0;
     const coreReady = projectReady && authReady && billingReady && mailReady && estateReady;
 
