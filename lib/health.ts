@@ -46,7 +46,8 @@ function validHttps(value: string | undefined) {
 }
 
 function integrationStatus() {
-  const aiGateway = validHttps(process.env.NEYVIX_AI_GATEWAY_URL);
+  const aiGateway = validHttps(process.env.NEYVIX_AI_GATEWAY_URL)
+    && Boolean(process.env.NEYVIX_AI_GATEWAY_SECRET?.trim());
   const billingWebhook = Boolean(process.env.NEYVIX_BILLING_WEBHOOK_SECRET?.trim());
   const checkout = [
     process.env.NEYVIX_CHECKOUT_START_URL,
