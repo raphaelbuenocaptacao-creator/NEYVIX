@@ -1,5 +1,6 @@
 import { getSessionSecretStatus } from "@/lib/auth";
 import { getHealthStatus } from "@/lib/health";
+import { getMailTransportStatus } from "@/lib/mail-transport";
 
 const modules = {
   id: "beta",
@@ -52,12 +53,19 @@ export async function GET(request: Request) {
   const production = process.env.NODE_ENV === "production";
   const sessionKey = getSessionSecretStatus();
   const sessionKeyDedicated = sessionKey.source === "configured";
-  const aiGatewayConfigured = Boolean(process.env.NEYVIX_AI_GATEWAY_URL?.trim());
-  const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim());
-  const mailTransportConfigured = Boolean(process.env.NEYVIX_MAIL_TRANSPORT_URL?.trim());
+  const mailTransport = getMailTransportStatus();
+
+  // Integration readiness must come from the same canonical contract used by
+  // /api/health and the corresponding runtime implementations. Do not infer
+  // readiness from URL presence alone: authenticated gateways require their
+  // credentials too, and Mail may be backed by either webhook transport or Resend.
+  const aiGatewayConfigured = health.integrations.aiGateway;
+  const mailTransportConfigured = mailTransport.ready;
   const paymentProviderConfigured = Boolean(process.env.NEYVIX_PAYMENT_PROVIDER?.trim());
-  const billingWebhookConfigured = Boolean(process.env.NEYVIX_BILLING_WEBHOOK_SECRET?.trim());
-  const storageConfigured = Boolean(process.env.NEYVIX_STORAGE_UPLOAD_URL?.trim());
+  const billingWebhookConfigured = health.integrations.billingWebhook;
+  const externalStorageConfigured = health.integrations.storage;
+  const storagePersistenceReady = health.schema.drive === "ready";
+  const mailDomainConfigured = Boolean(process.env.MAIL_FROM_DOMAIN?.trim() || process.env.MAIL_FROM_ADDRESS?.trim());
   const runningOnVercel = Boolean(process.env.VERCEL);
 
   const productionUrl = toHttpsUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL);
@@ -93,8 +101,8 @@ export async function GET(request: Request) {
     ai: {
       stage: "partial",
       evidence: aiGatewayConfigured
-        ? "Gateway configuration is present, but provider reachability is not live-verified by status."
-        : "AI persistence/runtime exists, but no production gateway configuration is detected.",
+        ? "Authenticated AI gateway configuration is present, but provider reachability is not live-verified by status."
+        : "AI persistence/runtime exists, but no complete production gateway configuration is detected.",
     },
     memory: {
       stage: "functional",
@@ -123,8 +131,8 @@ export async function GET(request: Request) {
     mail: {
       stage: "partial",
       evidence: mailTransportConfigured
-        ? "Mail persistence and transport configuration are present; external delivery is not asserted without provider evidence."
-        : "Inbox/draft persistence exists, but no external mail transport is configured.",
+        ? `Mail persistence and ${mailTransport.provider ?? "external"} transport configuration are ready; external delivery is not asserted without provider evidence.`
+        : "Inbox/draft persistence exists, but no valid external mail transport is configured.",
     },
     billing: {
       stage: commercialReady ? "functional" : "partial",
@@ -133,12 +141,16 @@ export async function GET(request: Request) {
         : "Trial/entitlement foundation exists; production provider/webhook prerequisites are incomplete or unverified.",
     },
     storage: {
-      stage: "functional",
-      evidence: "Authenticated private upload/download/delete with bounded payloads and Drive-backed persistence is implemented.",
+      stage: storagePersistenceReady ? "functional" : "partial",
+      evidence: storagePersistenceReady
+        ? "Authenticated private upload/download/delete with bounded payloads and Drive-backed persistence is implemented."
+        : "Private Storage runtime exists, but its required Drive persistence schema is not currently ready.",
     },
     drive: {
-      stage: "functional",
-      evidence: "Authenticated folders plus private file upload/download/delete are implemented.",
+      stage: storagePersistenceReady ? "functional" : "partial",
+      evidence: storagePersistenceReady
+        ? "Authenticated folders plus private file upload/download/delete are implemented."
+        : "Drive routes exist, but the required persistence schema is not currently ready.",
     },
     docs: {
       stage: "partial",
@@ -218,9 +230,11 @@ export async function GET(request: Request) {
       aiGatewayConfigured,
       mailDomainConfigured,
       mailTransportConfigured,
+      mailTransportProvider: mailTransport.provider,
       paymentProviderConfigured,
       billingWebhookConfigured,
-      storageConfigured,
+      storagePersistenceReady,
+      externalStorageConfigured,
       commercialReady,
       runningOnVercel,
       productionUrlResolved: Boolean(productionUrl),
