@@ -16,6 +16,13 @@ export type ApprovalSummary = {
   createdAt: string;
 };
 
+const AUTOMATION_REQUIRED_COLUMNS = [
+  "id", "user_id", "name", "description", "status", "trigger_type", "action_type", "configuration", "created_at", "updated_at",
+] as const;
+const APPROVAL_REQUIRED_COLUMNS = [
+  "id", "automation_id", "run_id", "requested_by", "assigned_to", "decided_by", "title", "status", "payload", "decision_note", "decided_at", "created_at",
+] as const;
+
 function getSql() {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) return null;
@@ -25,13 +32,19 @@ function getSql() {
 type SqlClient = NonNullable<ReturnType<typeof getSql>>;
 
 async function schemaReady(sql: SqlClient) {
-  const registry = await sql`
-    SELECT
-      to_regclass('public.neyvix_automations')::text AS automations_table,
-      to_regclass('public.neyvix_approval_requests')::text AS approvals_table
-  `;
-  const row = registry[0] as { automations_table?: string | null; approvals_table?: string | null } | undefined;
-  return Boolean(row?.automations_table && row?.approvals_table);
+  const rows = await sql`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name IN ('neyvix_automations', 'neyvix_approval_requests')
+  ` as Array<{ table_name: string; column_name: string }>;
+  const columnsFor = (table: string) => new Set(
+    rows.filter((row) => row.table_name === table).map((row) => row.column_name),
+  );
+  const automationColumns = columnsFor("neyvix_automations");
+  const approvalColumns = columnsFor("neyvix_approval_requests");
+  return AUTOMATION_REQUIRED_COLUMNS.every((column) => automationColumns.has(column))
+    && APPROVAL_REQUIRED_COLUMNS.every((column) => approvalColumns.has(column));
 }
 
 export async function listAutomationWorkspace(email: string) {
