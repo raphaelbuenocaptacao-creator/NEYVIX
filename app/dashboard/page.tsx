@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { SESSION_COOKIE } from "@/lib/auth";
+import { SESSION_COOKIE, getSessionSecretStatus } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { getRecentActivity, getTrialStatus } from "@/lib/db";
 import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlements";
@@ -77,15 +77,22 @@ export default async function DashboardPage() {
     ? `Trial Pro até ${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(trial.trial_ends_at))}`
     : `Plano: ${entitlements.plan.toUpperCase()}`;
   const aiAllowed = canUse(entitlements, "ai");
-  const coreOperational = health.ok && health.database === "connected" && health.auth.schema === "ready";
-  const systemLabel = health.launchReady
+  const sessionKey = getSessionSecretStatus();
+  const production = process.env.NODE_ENV === "production";
+  const sessionSecurityReady = sessionKey.ready && (!production || sessionKey.source === "configured");
+  const launchReady = health.launchReady && sessionSecurityReady;
+  const coreOperational = health.ok
+    && health.database === "connected"
+    && health.auth.schema === "ready"
+    && sessionSecurityReady;
+  const systemLabel = launchReady
     ? "NEYVIX PRONTA"
     : coreOperational
       ? "NÚCLEO OPERACIONAL"
       : "ATENÇÃO NECESSÁRIA";
-  const systemBadge = health.launchReady ? "PRONTA" : coreOperational ? "OPERACIONAL" : "DEGRADADA";
-  const systemDetail = health.launchReady
-    ? "Núcleo, schemas e integrações essenciais verificados."
+  const systemBadge = launchReady ? "PRONTA" : coreOperational ? "OPERACIONAL" : "DEGRADADA";
+  const systemDetail = launchReady
+    ? "Núcleo, schemas, integrações e segurança de sessão verificados."
     : coreOperational
       ? "Núcleo disponível; há módulos ou integrações ainda não prontos para lançamento completo."
       : "O health detectou uma indisponibilidade ou configuração essencial pendente.";
