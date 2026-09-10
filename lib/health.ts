@@ -34,6 +34,15 @@ export type HealthStatus = {
   launchReady: boolean;
 };
 
+const USERS_REQUIRED_COLUMNS = [
+  "id", "email", "password_hash", "is_active", "is_superadmin", "created_at", "updated_at", "role",
+] as const;
+const SESSIONS_REQUIRED_COLUMNS = [
+  "id", "user_id", "refresh_token_hash", "expires_at", "revoked_at", "created_at",
+] as const;
+const PASSWORD_RESET_REQUIRED_COLUMNS = [
+  "id", "user_id", "token_hash", "expires_at", "used_at", "created_at",
+] as const;
 const MEMORY_REQUIRED_COLUMNS = [
   "id", "user_id", "memory_key", "category", "value", "source", "confidence", "is_private", "last_used_at", "expires_at", "created_at", "updated_at",
 ] as const;
@@ -62,10 +71,6 @@ function integrationStatus() {
     process.env.NEYVIX_CHECKOUT_BUSINESS_URL,
   ].every(validHttps);
   const planEnforcement = process.env.NEYVIX_ENFORCE_PLANS === "true";
-  // Keep health aligned with the runtime mail contract. Mail can be delivered
-  // through either the authenticated webhook transport or the validated Resend
-  // fallback; checking only MAIL_TRANSPORT_URL would incorrectly report Resend
-  // deployments as not ready.
   const mailTransport = getMailTransportStatus().ready;
   const mailInbound = Boolean(process.env.MAIL_WEBHOOK_SECRET?.trim());
   const storage = validHttps(process.env.STORAGE_UPLOAD_URL) && Boolean((process.env.STORAGE_UPLOAD_SECRET ?? process.env.STORAGE_TOKEN)?.trim());
@@ -155,9 +160,6 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const catalog = catalogRows[0] ?? {};
     const hasProjects = Boolean(catalog.projects_table);
     const hasUsers = Boolean(catalog.users_table);
-    const authSchemaReady = hasUsers
-      && Boolean(catalog.sessions_table)
-      && Boolean(catalog.password_reset_tokens_table);
 
     let projectReady = false;
     if (hasProjects) {
@@ -170,9 +172,26 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       projectReady = Boolean(projectRows[0]?.project_ready);
     }
 
+    const shapeRows = await sql`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN ('users', 'sessions', 'password_reset_tokens', 'neyvix_memories', 'neyvix_memory_events', 'drive_items', 'documents')
+    ` as Array<{ table_name: string; column_name: string }>;
+    const columnsFor = (table: string) => new Set(shapeRows.filter((column) => column.table_name === table).map((column) => column.column_name));
+    const userColumns = columnsFor("users");
+    const sessionColumns = columnsFor("sessions");
+    const passwordResetColumns = columnsFor("password_reset_tokens");
+    const authSchemaReady = hasUsers
+      && Boolean(catalog.sessions_table)
+      && Boolean(catalog.password_reset_tokens_table)
+      && USERS_REQUIRED_COLUMNS.every((column) => userColumns.has(column))
+      && SESSIONS_REQUIRED_COLUMNS.every((column) => sessionColumns.has(column))
+      && PASSWORD_RESET_REQUIRED_COLUMNS.every((column) => passwordResetColumns.has(column));
+
     let activeUsers: number | null = null;
     let usersWithoutPassword: number | null = null;
-    if (hasUsers) {
+    if (authSchemaReady) {
       const userRows = await sql`
         SELECT
           count(*) FILTER (WHERE is_active = true)::int AS active_users,
@@ -192,16 +211,10 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const productRecordTablesReady = [catalog.studio_projects_table, catalog.content_items_table].filter(Boolean).length;
     const productRecords = productRecordTablesReady === 2 ? "ready" : productRecordTablesReady > 0 ? "partial" : "missing";
 
-    const shapeRows = await sql`
-      SELECT table_name, column_name
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name IN ('neyvix_memories', 'neyvix_memory_events', 'drive_items', 'documents')
-    ` as Array<{ table_name: string; column_name: string }>;
-    const memoryColumns = new Set(shapeRows.filter((column) => column.table_name === "neyvix_memories").map((column) => column.column_name));
-    const memoryEventColumns = new Set(shapeRows.filter((column) => column.table_name === "neyvix_memory_events").map((column) => column.column_name));
-    const driveColumns = new Set(shapeRows.filter((column) => column.table_name === "drive_items").map((column) => column.column_name));
-    const docsColumns = new Set(shapeRows.filter((column) => column.table_name === "documents").map((column) => column.column_name));
+    const memoryColumns = columnsFor("neyvix_memories");
+    const memoryEventColumns = columnsFor("neyvix_memory_events");
+    const driveColumns = columnsFor("drive_items");
+    const docsColumns = columnsFor("documents");
     const memoryTablesExist = Boolean(catalog.memories_table) && Boolean(catalog.memory_events_table);
     const memoryShapeReady = MEMORY_REQUIRED_COLUMNS.every((column) => memoryColumns.has(column))
       && MEMORY_EVENT_REQUIRED_COLUMNS.every((column) => memoryEventColumns.has(column));
@@ -212,6 +225,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     const driveReady = drive === "ready";
     const docsReady = docs === "ready";
     const repairRequired = [
+      !authSchemaReady ? "auth" : null,
       !memoryReady ? "neyvix_memory" : null,
       !driveReady ? "drive_items" : null,
       !docsReady ? "documents" : null,
