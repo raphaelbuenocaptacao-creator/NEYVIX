@@ -4,7 +4,7 @@ import { SESSION_COOKIE } from "@/lib/auth";
 import { readActiveSession } from "@/lib/session";
 import { listStudioProjects } from "@/lib/db";
 import { saveStudioProjectTyped } from "@/lib/studio-persistence";
-import { deleteStudioProject, updateStudioProjectTitle } from "@/lib/product-records";
+import { deleteStudioProject, isProductRecordSchemaReady, updateStudioProjectTitle } from "@/lib/product-records";
 import { getProductAccess, upgradeRequiredPayload } from "@/lib/product-access";
 
 const MAX_PROMPT_LENGTH = 8_000;
@@ -26,12 +26,31 @@ async function ensureStudioAccess(email: string) {
   );
 }
 
+async function ensureStudioSchema() {
+  try {
+    return await isProductRecordSchemaReady("studio")
+      ? null
+      : NextResponse.json(
+          { error: "NEYVIX Studio está temporariamente indisponível", code: "schema_unavailable" },
+          { status: 503, headers: PRIVATE_HEADERS },
+        );
+  } catch (error) {
+    console.error("Falha ao validar schema do NEYVIX Studio", error);
+    return NextResponse.json(
+      { error: "NEYVIX Studio está temporariamente indisponível", code: "schema_unavailable" },
+      { status: 503, headers: PRIVATE_HEADERS },
+    );
+  }
+}
+
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Autenticação necessária ou conta inativa" }, { status: 401, headers: PRIVATE_HEADERS });
 
   const denied = await ensureStudioAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureStudioSchema();
+  if (unavailable) return unavailable;
 
   try {
     const items = await listStudioProjects(session.email, 10);
@@ -48,6 +67,8 @@ export async function POST(request: Request) {
 
   const denied = await ensureStudioAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureStudioSchema();
+  if (unavailable) return unavailable;
 
   const body = await request.json().catch(() => null) as { prompt?: unknown; blueprint?: unknown } | null;
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
@@ -76,6 +97,8 @@ export async function PUT(request: Request) {
 
   const denied = await ensureStudioAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureStudioSchema();
+  if (unavailable) return unavailable;
 
   const body = await request.json().catch(() => null) as { id?: unknown; title?: unknown } | null;
   const id = typeof body?.id === "string" ? body.id.trim() : "";
@@ -102,6 +125,8 @@ export async function DELETE(request: Request) {
 
   const denied = await ensureStudioAccess(session.email);
   if (denied) return denied;
+  const unavailable = await ensureStudioSchema();
+  if (unavailable) return unavailable;
 
   const body = await request.json().catch(() => null) as { id?: unknown } | null;
   const id = typeof body?.id === "string" ? body.id.trim() : "";
