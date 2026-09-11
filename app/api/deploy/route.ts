@@ -71,9 +71,7 @@ export async function POST(request: Request) {
 
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   const repository = typeof body?.repository === "string" ? body.repository.trim().toLowerCase() : "";
-  const productionBranch = typeof body?.productionBranch === "string" && body.productionBranch.trim()
-    ? body.productionBranch.trim()
-    : "main";
+  const productionBranch = typeof body?.productionBranch === "string" ? body.productionBranch.trim() : "";
   const framework = typeof body?.framework === "string" && body.framework.trim()
     ? body.framework.trim()
     : null;
