@@ -58,6 +58,7 @@ for (const contract of [
   "deleteDeployProject",
   "export async function DELETE",
   "SCHEMA_NOT_READY",
+  "DEPLOY_UNAVAILABLE",
   '"Cache-Control": "no-store"',
   '"Referrer-Policy": "no-referrer"',
   '"X-Content-Type-Options": "nosniff"',
@@ -81,6 +82,7 @@ for (const contract of [
   'status: "queued"',
   '"Cache-Control": "no-store"',
   "SCHEMA_NOT_READY",
+  "DEPLOY_UNAVAILABLE",
 ]) {
   if (!requestsRoute.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: internal deployment request contract missing: ${contract}`);
