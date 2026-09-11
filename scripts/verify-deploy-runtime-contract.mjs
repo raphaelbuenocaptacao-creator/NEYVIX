@@ -25,6 +25,8 @@ for (const contract of [
   "owner_user_id",
   "ON CONFLICT (owner_user_id, git_provider, git_repository) DO NOTHING",
   "finished_at",
+  "SELECT p.id, p.production_branch",
+  "CASE WHEN ${input.branch} = p.production_branch THEN 'production' ELSE 'preview' END",
 ]) {
   if (!deployDb.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: persistence contract missing: ${contract}`);
