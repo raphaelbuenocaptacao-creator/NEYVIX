@@ -40,12 +40,15 @@ async function requireDeployAccess() {
 }
 
 function unavailable(error: unknown) {
-  if (!(error instanceof DeploySchemaNotReadyError)) {
+  const schemaNotReady = error instanceof DeploySchemaNotReadyError;
+  if (!schemaNotReady) {
     console.error("Falha operacional na fila interna do NEYVIX Deploy", error);
   }
   return NextResponse.json({
-    error: "NEYVIX Deploy está temporariamente indisponível enquanto a persistência é preparada",
-    code: "SCHEMA_NOT_READY",
+    error: schemaNotReady
+      ? "NEYVIX Deploy está temporariamente indisponível enquanto a persistência é preparada"
+      : "NEYVIX Deploy está temporariamente indisponível por uma falha operacional",
+    code: schemaNotReady ? "SCHEMA_NOT_READY" : "DEPLOY_UNAVAILABLE",
     module: "deploy",
   }, { status: 503, headers: { ...PRIVATE_HEADERS, "Retry-After": "60" } });
 }
@@ -78,7 +81,7 @@ export async function POST(request: Request) {
   } | null;
 
   const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
-  const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "main";
+  const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "";
   const commitSha = typeof body?.commitSha === "string" && body.commitSha.trim()
     ? body.commitSha.trim().toLowerCase()
     : null;
