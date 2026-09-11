@@ -1,0 +1,52 @@
+name: NEYVIX PWA Audit
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pwa-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate PWA contract
+        run: |
+          node --check public/sw.js
+          node <<'NODE'
+          const fs = require('fs');
+          const sw = fs.readFileSync('public/sw.js', 'utf8');
+          const manifest = fs.readFileSync('app/manifest.ts', 'utf8');
+          const layout = fs.readFileSync('app/layout.tsx', 'utf8');
+          const requiredManifest = ['name:', 'short_name:', 'start_url:', 'scope:', 'display:', 'theme_color:', 'neyvix-icon-192.png', 'neyvix-icon-512.png', 'neyvix-maskable-512.png'];
+          for (const token of requiredManifest) {
+            if (!manifest.includes(token)) throw new Error(`manifest missing ${token}`);
+          }
+          for (const file of ['public/neyvix-icon-192.png','public/neyvix-icon-512.png','public/neyvix-maskable-512.png']) {
+            if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing icon ${file}`);
+          }
+          if (!/serviceWorker/i.test(layout)) throw new Error('layout does not register service worker');
+          if (!sw.includes('request.headers.has("authorization")')) throw new Error('authorization request guard missing');
+          if (!sw.includes('request.headers.has("cookie")')) throw new Error('cookie request guard missing');
+          if (!sw.includes('request.headers.has("range")')) throw new Error('range request guard missing');
+          if (!sw.includes('request.headers.has("if-range")')) throw new Error('if-range request guard missing');
+          if (!sw.includes('value === "range"')) throw new Error('Vary: Range response guard missing');
+          if (!sw.includes('value === "if-range"')) throw new Error('Vary: If-Range response guard missing');
+          if (!sw.includes('response.status === 206')) throw new Error('206 response guard missing');
+          if (!sw.includes('response.headers.has("set-cookie")')) throw new Error('Set-Cookie response guard missing');
+          if (!sw.includes('response.headers.has("content-range")')) throw new Error('Content-Range response guard missing');
+          if (!sw.includes('private|no-store')) throw new Error('private/no-store cache guard missing');
+          if (!sw.includes('request.mode === "navigate"')) throw new Error('navigation policy missing');
+          if (!sw.includes('cache: "no-store"')) throw new Error('network no-store policy missing');
+          console.log('NEYVIX PWA contract OK');
+          NODE
+      - name: Build
+        run: |
+          npm ci
+          npm run build
