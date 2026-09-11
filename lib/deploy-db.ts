@@ -105,7 +105,7 @@ export async function createDeployProject(
       ${input.framework},
       'active'
     FROM target_user u
-    ON CONFLICT (git_provider, git_repository) DO NOTHING
+    ON CONFLICT (owner_user_id, git_provider, git_repository) DO NOTHING
     RETURNING id, name, git_provider, git_repository, production_branch,
               framework, status, created_at, updated_at
   ` as Array<Record<string, unknown>>;
