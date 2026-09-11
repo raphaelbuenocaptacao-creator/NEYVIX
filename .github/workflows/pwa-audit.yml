@@ -24,6 +24,7 @@ jobs:
           const sw = fs.readFileSync('public/sw.js', 'utf8');
           const manifest = fs.readFileSync('app/manifest.ts', 'utf8');
           const layout = fs.readFileSync('app/layout.tsx', 'utf8');
+          const register = fs.readFileSync('components/pwa-register.tsx', 'utf8');
           const requiredManifest = ['name:', 'short_name:', 'start_url:', 'scope:', 'display:', 'theme_color:', 'neyvix-icon-192.png', 'neyvix-icon-512.png', 'neyvix-maskable-512.png'];
           for (const token of requiredManifest) {
             if (!manifest.includes(token)) throw new Error(`manifest missing ${token}`);
@@ -31,7 +32,9 @@ jobs:
           for (const file of ['public/neyvix-icon-192.png','public/neyvix-icon-512.png','public/neyvix-maskable-512.png']) {
             if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing icon ${file}`);
           }
-          if (!/serviceWorker/i.test(layout)) throw new Error('layout does not register service worker');
+          if (!layout.includes('PwaRegister')) throw new Error('layout does not mount PWA registration');
+          if (!/navigator\.serviceWorker\.register/.test(register)) throw new Error('service worker registration missing');
+          if (!register.includes('updateViaCache: "none"')) throw new Error('service worker updateViaCache protection missing');
           if (!sw.includes('request.headers.has("authorization")')) throw new Error('authorization request guard missing');
           if (!sw.includes('request.headers.has("cookie")')) throw new Error('cookie request guard missing');
           if (!sw.includes('request.headers.has("range")')) throw new Error('range request guard missing');
