@@ -50,7 +50,7 @@ export default function DeployProjectControls({ projects }: Props) {
         body: JSON.stringify({
           name: String(data.get("name") || ""),
           repository: String(data.get("repository") || ""),
-          productionBranch: String(data.get("productionBranch") || "main"),
+          productionBranch: String(data.get("productionBranch") || ""),
           framework: String(data.get("framework") || "") || null,
         }),
       });
