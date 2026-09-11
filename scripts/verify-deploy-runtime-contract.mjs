@@ -24,11 +24,16 @@ for (const contract of [
   "DELETE FROM public.deploy_projects p",
   "owner_user_id",
   "ON CONFLICT (owner_user_id, git_provider, git_repository) DO NOTHING",
+  "finished_at",
 ]) {
   if (!deployDb.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: persistence contract missing: ${contract}`);
     process.exit(1);
   }
+}
+if (deployDb.includes("completed_at")) {
+  console.error("NEYVIX Deploy runtime contract failed: deployments schema uses finished_at, not completed_at");
+  process.exit(1);
 }
 
 const ecosystemSql = readFileSync("database/002_ecosystem.sql", "utf8");
