@@ -122,7 +122,7 @@ create table if not exists deploy_projects (
   status text not null default 'active',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique(git_provider, git_repository)
+  unique(owner_user_id, git_provider, git_repository)
 );
 
 create table if not exists deployments (
