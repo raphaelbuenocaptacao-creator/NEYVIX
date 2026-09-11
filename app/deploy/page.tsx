@@ -9,6 +9,7 @@ import {
   listDeployProjects,
 } from "@/lib/deploy-db";
 import DeployProjectControls from "./deploy-project-controls";
+import DeployRequestControls from "./deploy-request-controls";
 
 export default async function DeployPage() {
   const store = await cookies();
@@ -52,6 +53,16 @@ export default async function DeployPage() {
               id: project.id,
               name: project.name,
               gitRepository: project.gitRepository,
+            }))}
+          />
+        )}
+
+        {allowed && persistenceReady && projects.length > 0 && (
+          <DeployRequestControls
+            projects={projects.map((project) => ({
+              id: project.id,
+              name: project.name,
+              productionBranch: project.productionBranch,
             }))}
           />
         )}
