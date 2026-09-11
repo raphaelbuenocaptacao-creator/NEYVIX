@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts", "app/deploy/page.tsx", "app/deploy/deploy-project-controls.tsx", "database/002_ecosystem.sql"];
+const requiredFiles = ["lib/deploy-db.ts", "lib/deploy-health.ts", "app/api/deploy/route.ts", "app/api/health/deploy/route.ts", "app/deploy/page.tsx", "app/deploy/deploy-project-controls.tsx", "database/002_ecosystem.sql"];
 const missing = requiredFiles.filter((file) => !existsSync(file));
 if (missing.length) {
   console.error(`NEYVIX Deploy runtime contract failed: missing ${missing.join(", ")}`);
@@ -56,6 +56,34 @@ for (const contract of [
 ]) {
   if (!route.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: API safety contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const deployHealth = readFileSync("lib/deploy-health.ts", "utf8");
+for (const contract of [
+  "export async function getDeployHealth",
+  "deploy_projects_owner_user_id_git_provider_git_repository_key",
+  "idx_deployments_project_created",
+  "deployments_project_id_fkey",
+  "information_schema.columns",
+  "pg_constraint",
+  "pg_indexes",
+]) {
+  if (!deployHealth.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: exact health contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const healthRoute = readFileSync("app/api/health/deploy/route.ts", "utf8");
+for (const contract of [
+  "getDeployHealth",
+  "health.ready",
+  "health.checks",
+]) {
+  if (!healthRoute.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: deploy health endpoint contract missing: ${contract}`);
     process.exit(1);
   }
 }
