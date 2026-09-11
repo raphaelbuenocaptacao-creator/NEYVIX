@@ -1,0 +1,54 @@
+import { existsSync, readFileSync } from "node:fs";
+
+const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts"];
+const missing = requiredFiles.filter((file) => !existsSync(file));
+if (missing.length) {
+  console.error(`NEYVIX Deploy runtime contract failed: missing ${missing.join(", ")}`);
+  process.exit(1);
+}
+
+const deployDb = readFileSync("lib/deploy-db.ts", "utf8");
+for (const contract of [
+  "export async function listDeployProjects",
+  "export async function createDeployProject",
+  "getEcosystemModuleReadiness",
+  'readiness.deploy !== "ready"',
+  "JOIN public.users u ON u.id = p.owner_user_id",
+  "lower(u.email) = ${normalizedEmail}",
+  "u.is_active = true",
+  "INSERT INTO public.deploy_projects",
+  "owner_user_id",
+]) {
+  if (!deployDb.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: persistence contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const route = readFileSync("app/api/deploy/route.ts", "utf8");
+for (const contract of [
+  "readActiveSession",
+  "getEntitlements",
+  'canUse(entitlements, "deploy")',
+  "listDeployProjects",
+  "createDeployProject",
+  "SCHEMA_NOT_READY",
+  '"Cache-Control": "no-store"',
+  '"Referrer-Policy": "no-referrer"',
+  '"X-Content-Type-Options": "nosniff"',
+  "Retry-After",
+]) {
+  if (!route.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: API safety contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+for (const forbidden of ["createDeployment(", "fetch(\"https://api.vercel.com", "VERCEL_TOKEN", "GITHUB_TOKEN"]) {
+  if (route.includes(forbidden) || deployDb.includes(forbidden)) {
+    console.error(`NEYVIX Deploy runtime contract failed: provider execution is not allowed in foundation runtime: ${forbidden}`);
+    process.exit(1);
+  }
+}
+
+console.log("NEYVIX Deploy runtime contract PASS");
