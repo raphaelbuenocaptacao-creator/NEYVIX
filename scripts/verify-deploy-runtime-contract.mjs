@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts", "database/002_ecosystem.sql"];
+const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts", "app/deploy/page.tsx", "database/002_ecosystem.sql"];
 const missing = requiredFiles.filter((file) => !existsSync(file));
 if (missing.length) {
   console.error(`NEYVIX Deploy runtime contract failed: missing ${missing.join(", ")}`);
@@ -55,6 +55,28 @@ for (const contract of [
 ]) {
   if (!route.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: API safety contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const page = readFileSync("app/deploy/page.tsx", "utf8");
+for (const contract of [
+  "listDeployProjects",
+  "DeploySchemaNotReadyError",
+  "session.email",
+]) {
+  if (!page.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: live page contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+for (const forbidden of [
+  "const projects = [",
+  "neyvix-web",
+  "mail.neyvix.app",
+]) {
+  if (page.includes(forbidden)) {
+    console.error(`NEYVIX Deploy runtime contract failed: static/fabricated project data forbidden: ${forbidden}`);
     process.exit(1);
   }
 }
