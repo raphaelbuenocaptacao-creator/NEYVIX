@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "neyvix-shell-";
-const CACHE = `${CACHE_PREFIX}v9-private-vary-star-safe-shell`;
+const CACHE = `${CACHE_PREFIX}v10-private-vary-range-safe-shell`;
 const SHELL = [
   "/manifest.webmanifest",
   "/neyvix-icon-192.png",
@@ -75,7 +75,7 @@ function hasUnsafeVary(response) {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean)
-    .some((value) => value === "*" || value === "cookie" || value === "authorization" || value === "range");
+    .some((value) => value === "*" || value === "cookie" || value === "authorization" || value === "range" || value === "if-range");
 }
 
 function isCacheableResponse(response) {
