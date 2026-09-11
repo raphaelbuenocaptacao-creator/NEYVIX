@@ -43,6 +43,7 @@ export default function DeployRequestControls({ projects }: Props) {
     [projectId, projects],
   );
   const [branch, setBranch] = useState(selectedProject?.productionBranch ?? "main");
+  const [commitSha, setCommitSha] = useState("");
   const [requests, setRequests] = useState<DeploymentRequest[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -51,6 +52,8 @@ export default function DeployRequestControls({ projects }: Props) {
 
   useEffect(() => {
     setBranch(selectedProject?.productionBranch ?? "main");
+    setCommitSha("");
+    setMessage("");
   }, [selectedProject]);
 
   useEffect(() => {
@@ -91,7 +94,6 @@ export default function DeployRequestControls({ projects }: Props) {
     event.preventDefault();
     if (!projectId || submitting) return;
 
-    const data = new FormData(event.currentTarget);
     setSubmitting(true);
     setMessage("");
     setError("");
@@ -102,8 +104,8 @@ export default function DeployRequestControls({ projects }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
-          branch: String(data.get("branch") || branch || "main"),
-          commitSha: String(data.get("commitSha") || "") || null,
+          branch,
+          commitSha: commitSha.trim() || null,
         }),
       });
       const payload = await response.json().catch(() => null) as RequestPayload | null;
@@ -122,9 +124,8 @@ export default function DeployRequestControls({ projects }: Props) {
       }
 
       setRequests((current) => [payload.request as DeploymentRequest, ...current.filter((item) => item.id !== payload.request?.id)]);
+      setCommitSha("");
       setMessage(payload.executionNote || "Solicitação registrada na fila interna. Nenhum deployment externo foi executado.");
-      const form = event.currentTarget;
-      form.elements.namedItem("commitSha") instanceof HTMLInputElement && (form.elements.namedItem("commitSha") as HTMLInputElement).value === "";
     } catch {
       setError("Falha de rede ao registrar a solicitação. Tente novamente.");
     } finally {
@@ -155,7 +156,7 @@ export default function DeployRequestControls({ projects }: Props) {
         </label>
         <label>
           Commit SHA opcional
-          <input name="commitSha" maxLength={64} autoComplete="off" placeholder="7+ caracteres hexadecimais" />
+          <input name="commitSha" value={commitSha} onChange={(event) => setCommitSha(event.target.value)} maxLength={64} autoComplete="off" placeholder="7+ caracteres hexadecimais" />
         </label>
         <button className="primary" type="submit" disabled={submitting || !projectId}>
           {submitting ? "Registrando…" : "Solicitar deploy interno"}
