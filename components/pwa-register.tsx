@@ -12,7 +12,7 @@ export default function PwaRegister() {
     const register = async () => {
       try {
         const registration = await navigator.serviceWorker.register(
-          "/sw.js?v=9-private-vary-star-safe-shell",
+          "/sw.js?v=10-private-vary-range-safe-shell",
           {
             scope: "/",
             updateViaCache: "none",
