@@ -203,7 +203,7 @@ export async function createDeploymentRequest(
 
   const rows = await sql`
     WITH owned_project AS (
-      SELECT p.id
+      SELECT p.id, p.production_branch
       FROM public.deploy_projects p
       JOIN public.users u ON u.id = p.owner_user_id
       WHERE p.id = ${input.projectId}::uuid
@@ -223,7 +223,7 @@ export async function createDeploymentRequest(
       p.id,
       ${input.commitSha},
       ${input.branch},
-      'preview',
+      CASE WHEN ${input.branch} = p.production_branch THEN 'production' ELSE 'preview' END,
       'queued'
     FROM owned_project p
     RETURNING id, project_id, commit_sha, branch, environment, status,
