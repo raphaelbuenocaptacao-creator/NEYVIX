@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/verify-readiness.mjs && node scripts/verify-deploy-runtime-contract.mjs"
+    "smoke": "node scripts/verify-readiness.mjs && node scripts/verify-deploy-runtime-contract.mjs && node scripts/verify-deploy-request-ui-contract.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
