@@ -8,6 +8,7 @@ import {
   DeploySchemaNotReadyError,
   listDeployProjects,
 } from "@/lib/deploy-db";
+import DeployProjectControls from "./deploy-project-controls";
 
 export default async function DeployPage() {
   const store = await cookies();
@@ -37,7 +38,7 @@ export default async function DeployPage() {
         <h1>Do Git para o mundo.</h1>
         <p className="lead">Conecte um repositório, acompanhe versões e publique projetos dentro do mesmo ecossistema NEYVIX.</p>
         <div className="actions">
-          {allowed && persistenceReady ? <a className="primary" href="#projects">Importar repositório Git</a> : allowed ? <span className="primary" aria-disabled="true">Persistência em preparação</span> : <Link className="primary" href="/plans">Fazer upgrade</Link>}
+          {allowed && persistenceReady ? <a className="primary" href="#projects">Registrar repositório Git</a> : allowed ? <span className="primary" aria-disabled="true">Persistência em preparação</span> : <Link className="primary" href="/plans">Fazer upgrade</Link>}
           <Link className="secondary" href="/dashboard">Central de Comando</Link>
         </div>
         {!allowed && <p className="lead">Seu plano atual ({entitlements.plan}) não inclui Deploy. O recurso é liberado no Pro e Business quando a aplicação de planos estiver ativa.</p>}
@@ -45,6 +46,16 @@ export default async function DeployPage() {
       </section>
 
       <section id="projects" className="grid" aria-live="polite">
+        {allowed && persistenceReady && (
+          <DeployProjectControls
+            projects={projects.map((project) => ({
+              id: project.id,
+              name: project.name,
+              gitRepository: project.gitRepository,
+            }))}
+          />
+        )}
+
         {allowed && persistenceReady && projects.map((project, index) => (
           <article key={project.id}>
             <span>{String(index + 1).padStart(2, "0")}</span>
@@ -59,7 +70,7 @@ export default async function DeployPage() {
           <article>
             <span>00</span>
             <h2>Nenhum projeto ainda</h2>
-            <p>Quando você importar um repositório, ele aparecerá aqui com dados persistidos da sua conta.</p>
+            <p>Registre um repositório acima. O NEYVIX salva apenas a referência nesta etapa e não executa deployment externo automaticamente.</p>
           </article>
         )}
 

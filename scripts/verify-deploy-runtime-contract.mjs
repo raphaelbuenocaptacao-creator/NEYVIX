@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts", "app/deploy/page.tsx", "database/002_ecosystem.sql"];
+const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts", "app/deploy/page.tsx", "app/deploy/deploy-project-controls.tsx", "database/002_ecosystem.sql"];
 const missing = requiredFiles.filter((file) => !existsSync(file));
 if (missing.length) {
   console.error(`NEYVIX Deploy runtime contract failed: missing ${missing.join(", ")}`);
@@ -64,6 +64,7 @@ for (const contract of [
   "listDeployProjects",
   "DeploySchemaNotReadyError",
   "session.email",
+  "DeployProjectControls",
 ]) {
   if (!page.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: live page contract missing: ${contract}`);
@@ -81,8 +82,24 @@ for (const forbidden of [
   }
 }
 
+const controls = readFileSync("app/deploy/deploy-project-controls.tsx", "utf8");
+for (const contract of [
+  '"use client"',
+  'fetch("/api/deploy"',
+  'method: "POST"',
+  'method: "DELETE"',
+  "router.refresh()",
+  "aria-live=\"polite\"",
+  "SCHEMA_NOT_READY",
+]) {
+  if (!controls.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: project controls contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
 for (const forbidden of ["createDeployment(", "fetch(\"https://api.vercel.com", "VERCEL_TOKEN", "GITHUB_TOKEN"]) {
-  if (route.includes(forbidden) || deployDb.includes(forbidden)) {
+  if (route.includes(forbidden) || deployDb.includes(forbidden) || controls.includes(forbidden)) {
     console.error(`NEYVIX Deploy runtime contract failed: provider execution is not allowed in foundation runtime: ${forbidden}`);
     process.exit(1);
   }
