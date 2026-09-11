@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   } | null;
 
   const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
-  const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "main";
+  const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "";
   const commitSha = typeof body?.commitSha === "string" && body.commitSha.trim()
     ? body.commitSha.trim().toLowerCase()
     : null;
