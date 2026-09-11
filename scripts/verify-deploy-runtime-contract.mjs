@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts"];
+const requiredFiles = ["lib/deploy-db.ts", "app/api/deploy/route.ts", "database/002_ecosystem.sql"];
 const missing = requiredFiles.filter((file) => !existsSync(file));
 if (missing.length) {
   console.error(`NEYVIX Deploy runtime contract failed: missing ${missing.join(", ")}`);
@@ -18,11 +18,22 @@ for (const contract of [
   "u.is_active = true",
   "INSERT INTO public.deploy_projects",
   "owner_user_id",
+  "ON CONFLICT (owner_user_id, git_provider, git_repository) DO NOTHING",
 ]) {
   if (!deployDb.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: persistence contract missing: ${contract}`);
     process.exit(1);
   }
+}
+
+const ecosystemSql = readFileSync("database/002_ecosystem.sql", "utf8");
+if (!ecosystemSql.includes("unique(owner_user_id, git_provider, git_repository)")) {
+  console.error("NEYVIX Deploy runtime contract failed: repository uniqueness must be scoped to owner_user_id");
+  process.exit(1);
+}
+if (ecosystemSql.includes("unique(git_provider, git_repository)")) {
+  console.error("NEYVIX Deploy runtime contract failed: global repository uniqueness is not multi-user safe");
+  process.exit(1);
 }
 
 const route = readFileSync("app/api/deploy/route.ts", "utf8");
