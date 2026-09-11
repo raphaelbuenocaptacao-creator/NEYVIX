@@ -32,7 +32,7 @@ export type DeploymentRequest = {
   deploymentUrl: string | null;
   createdAt: string;
   startedAt: string | null;
-  completedAt: string | null;
+  finishedAt: string | null;
 };
 
 export type CreateDeploymentRequestInput = {
@@ -87,7 +87,7 @@ function mapDeploymentRequest(row: Record<string, unknown>): DeploymentRequest {
     deploymentUrl: row.deployment_url ? String(row.deployment_url) : null,
     createdAt: String(row.created_at),
     startedAt: row.started_at ? String(row.started_at) : null,
-    completedAt: row.completed_at ? String(row.completed_at) : null,
+    finishedAt: row.finished_at ? String(row.finished_at) : null,
   };
 }
 
@@ -180,7 +180,7 @@ export async function listDeploymentRequests(
   const rows = await sql`
     SELECT d.id, d.project_id, d.commit_sha, d.branch, d.environment, d.status,
            d.provider, d.provider_deployment_id, d.deployment_url,
-           d.created_at, d.started_at, d.completed_at
+           d.created_at, d.started_at, d.finished_at
     FROM public.deployments d
     JOIN public.deploy_projects p ON p.id = d.project_id
     JOIN public.users u ON u.id = p.owner_user_id
@@ -228,7 +228,7 @@ export async function createDeploymentRequest(
     FROM owned_project p
     RETURNING id, project_id, commit_sha, branch, environment, status,
               provider, provider_deployment_id, deployment_url,
-              created_at, started_at, completed_at
+              created_at, started_at, finished_at
   ` as Array<Record<string, unknown>>;
 
   return rows[0] ? mapDeploymentRequest(rows[0]) : null;
