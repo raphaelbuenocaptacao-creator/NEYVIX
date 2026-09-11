@@ -42,11 +42,6 @@ const CONTRACTS: Record<Exclude<keyof EcosystemModuleReadiness, "database">, Tab
   },
 };
 
-const MODULES = Object.keys(CONTRACTS) as Array<keyof typeof CONTRACTS>;
-const CONTRACT_TABLES = Array.from(
-  new Set(MODULES.flatMap((module) => Object.keys(CONTRACTS[module]))),
-);
-
 function unavailable(database: EcosystemModuleReadiness["database"]): EcosystemModuleReadiness {
   return {
     database,
@@ -82,14 +77,20 @@ export async function getEcosystemModuleReadiness(): Promise<EcosystemModuleRead
 
   try {
     const sql = neon(databaseUrl);
-    const rows = await sql.query(
-      `SELECT table_name, column_name
-       FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = ANY($1::text[])
-       ORDER BY table_name, ordinal_position`,
-      [CONTRACT_TABLES],
-    ) as Array<{ table_name: string; column_name: string }>;
+    const rows = await sql`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN (
+          'social_profiles', 'social_posts', 'social_follows',
+          'meetings',
+          'deploy_projects', 'deployments',
+          'cloud_resources',
+          'organizations', 'organization_members',
+          'wallets', 'ledger_accounts', 'ledger_transactions', 'ledger_entries'
+        )
+      ORDER BY table_name, ordinal_position
+    ` as Array<{ table_name: string; column_name: string }>;
 
     const columnsByTable = new Map<string, Set<string>>();
     for (const row of rows) {
