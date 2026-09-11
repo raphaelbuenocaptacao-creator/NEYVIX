@@ -52,6 +52,7 @@ for (const contract of [
   '"Referrer-Policy": "no-referrer"',
   '"X-Content-Type-Options": "nosniff"',
   "Retry-After",
+  "repository.trim().toLowerCase()",
 ]) {
   if (!route.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: API safety contract missing: ${contract}`);
