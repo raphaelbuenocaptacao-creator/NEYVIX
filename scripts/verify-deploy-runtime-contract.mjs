@@ -70,6 +70,10 @@ for (const contract of [
     process.exit(1);
   }
 }
+if (/const productionBranch[\s\S]{0,220}:\s*"main";/.test(route)) {
+  console.error("NEYVIX Deploy runtime contract failed: API must not silently invent main as the production branch");
+  process.exit(1);
+}
 
 const requestsRoute = readFileSync("app/api/deploy/requests/route.ts", "utf8");
 for (const contract of [
@@ -158,6 +162,10 @@ for (const contract of [
     console.error(`NEYVIX Deploy runtime contract failed: project controls contract missing: ${contract}`);
     process.exit(1);
   }
+}
+if (controls.includes('String(data.get("productionBranch") || "main")')) {
+  console.error("NEYVIX Deploy runtime contract failed: project controls must send the branch value explicitly");
+  process.exit(1);
 }
 
 for (const forbidden of ["createDeployment(", "fetch(\"https://api.vercel.com", "VERCEL_TOKEN", "GITHUB_TOKEN"]) {
