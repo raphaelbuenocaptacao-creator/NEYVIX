@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { getSessionSecretStatus } from "@/lib/auth";
 import { getHealthStatus } from "@/lib/health";
 import { getChatReadiness } from "@/lib/chat-health";
+import { getEcosystemModuleReadiness } from "@/lib/ecosystem-health";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const [health, chat] = await Promise.all([
+  const [health, chat, ecosystemModules] = await Promise.all([
     getHealthStatus(),
     getChatReadiness(),
+    getEcosystemModuleReadiness(),
   ]);
   const sessionKey = getSessionSecretStatus();
   const production = process.env.NODE_ENV === "production";
@@ -16,8 +18,17 @@ export async function GET() {
   const authSchemaReady = health.auth.schema === "ready";
   const authReady = health.database === "connected" && sessionKey.ready && authSchemaReady;
   const accessReady = authReady && health.project === "ready";
+  const ecosystemModulesReady = [
+    ecosystemModules.social,
+    ecosystemModules.meet,
+    ecosystemModules.deploy,
+    ecosystemModules.cloud,
+    ecosystemModules.business,
+    ecosystemModules.pay,
+  ].every((state) => state === "ready");
   const ecosystemReady = health.launchReady
     && chat.ok
+    && ecosystemModulesReady
     && authReady
     && (!production || sessionKeyDedicated);
   const releaseSha = process.env.VERCEL_GIT_COMMIT_SHA
@@ -38,7 +49,12 @@ export async function GET() {
     health.schema.productRecords !== "ready" ? `schema:product_records:${health.schema.productRecords}` : null,
     health.schema.drive !== "ready" ? `schema:drive:${health.schema.drive}` : null,
     health.schema.docs !== "ready" ? `schema:docs:${health.schema.docs}` : null,
-    health.schema.ecosystem !== "ready" ? `schema:ecosystem:${health.schema.ecosystem}` : null,
+    ecosystemModules.social !== "ready" ? `schema:social:${ecosystemModules.social}` : null,
+    ecosystemModules.meet !== "ready" ? `schema:meet:${ecosystemModules.meet}` : null,
+    ecosystemModules.deploy !== "ready" ? `schema:deploy:${ecosystemModules.deploy}` : null,
+    ecosystemModules.cloud !== "ready" ? `schema:cloud:${ecosystemModules.cloud}` : null,
+    ecosystemModules.business !== "ready" ? `schema:business:${ecosystemModules.business}` : null,
+    ecosystemModules.pay !== "ready" ? `schema:pay:${ecosystemModules.pay}` : null,
     ...health.schema.repairRequired.map((table) => `schema_repair:${table}`),
     !health.integrations.aiGateway ? "integration:ai_gateway" : null,
     !health.integrations.billingWebhook ? "integration:billing_webhook" : null,
@@ -61,6 +77,12 @@ export async function GET() {
         access: accessReady,
         ecosystem: ecosystemReady,
         chat: chat.ok,
+        social: ecosystemModules.social === "ready",
+        meet: ecosystemModules.meet === "ready",
+        deploy: ecosystemModules.deploy === "ready",
+        cloud: ecosystemModules.cloud === "ready",
+        business: ecosystemModules.business === "ready",
+        pay: ecosystemModules.pay === "ready",
       },
       blockers,
       checks: {
@@ -80,6 +102,7 @@ export async function GET() {
           schema: chat.schema,
           project: chat.project,
         },
+        ecosystemModules,
         schema: health.schema,
         integrations: {
           sessionSecret: sessionKey.ready ? sessionKey.source : "not_configured",
