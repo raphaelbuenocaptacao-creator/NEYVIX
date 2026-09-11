@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getEcosystemModuleReadiness } from "@/lib/ecosystem-health";
+import { getDeployHealth } from "@/lib/deploy-health";
 
 export const dynamic = "force-dynamic";
 
@@ -15,14 +15,13 @@ function json(body: unknown, status = 200) {
 }
 
 export async function GET() {
-  const readiness = await getEcosystemModuleReadiness();
-  const ready = readiness.database === "connected" && readiness.deploy === "ready";
+  const health = await getDeployHealth();
 
   return json({
-    ok: ready,
+    ok: health.ready,
     service: "neyvix-deploy",
-    status: ready ? "ready" : "unavailable",
-    database: readiness.database,
-    schema: readiness.deploy,
-  }, ready ? 200 : 503);
+    status: health.ready ? "ready" : "unavailable",
+    database: health.database,
+    checks: health.checks,
+  }, health.ready ? 200 : 503);
 }
