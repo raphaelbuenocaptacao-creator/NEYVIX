@@ -11,12 +11,14 @@ const deployDb = readFileSync("lib/deploy-db.ts", "utf8");
 for (const contract of [
   "export async function listDeployProjects",
   "export async function createDeployProject",
+  "export async function deleteDeployProject",
   "getEcosystemModuleReadiness",
   'readiness.deploy !== "ready"',
   "JOIN public.users u ON u.id = p.owner_user_id",
   "lower(u.email) = ${normalizedEmail}",
   "u.is_active = true",
   "INSERT INTO public.deploy_projects",
+  "DELETE FROM public.deploy_projects p",
   "owner_user_id",
   "ON CONFLICT (owner_user_id, git_provider, git_repository) DO NOTHING",
 ]) {
@@ -43,6 +45,8 @@ for (const contract of [
   'canUse(entitlements, "deploy")',
   "listDeployProjects",
   "createDeployProject",
+  "deleteDeployProject",
+  "export async function DELETE",
   "SCHEMA_NOT_READY",
   '"Cache-Control": "no-store"',
   '"Referrer-Policy": "no-referrer"',

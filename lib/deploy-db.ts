@@ -112,3 +112,20 @@ export async function createDeployProject(
 
   return rows[0] ? mapProject(rows[0]) : null;
 }
+
+export async function deleteDeployProject(email: string, projectId: string): Promise<boolean> {
+  const sql = await getReadySql();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const rows = await sql`
+    DELETE FROM public.deploy_projects p
+    USING public.users u
+    WHERE p.id = ${projectId}::uuid
+      AND u.id = p.owner_user_id
+      AND lower(u.email) = ${normalizedEmail}
+      AND u.is_active = true
+    RETURNING p.id
+  ` as Array<{ id: string }>;
+
+  return rows.length === 1;
+}

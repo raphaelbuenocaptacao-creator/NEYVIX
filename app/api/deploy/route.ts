@@ -5,6 +5,7 @@ import { readActiveSession } from "@/lib/session";
 import { getEntitlements, canUse } from "@/lib/entitlements";
 import {
   createDeployProject,
+  deleteDeployProject,
   DeploySchemaNotReadyError,
   listDeployProjects,
 } from "@/lib/deploy-db";
@@ -16,6 +17,7 @@ const PRIVATE_HEADERS = {
 };
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_RE = /^(?!.*\.\.)(?!\/)[A-Za-z0-9._/-]+(?<!\/)$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function requireDeployAccess() {
   const store = await cookies();
@@ -100,6 +102,28 @@ export async function POST(request: Request) {
       }, { status: 409, headers: PRIVATE_HEADERS });
     }
     return NextResponse.json({ project }, { status: 201, headers: PRIVATE_HEADERS });
+  } catch (error) {
+    return unavailable(error);
+  }
+}
+
+export async function DELETE(request: Request) {
+  const access = await requireDeployAccess();
+  if ("response" in access) return access.response;
+
+  const body = await request.json().catch(() => null) as { projectId?: unknown } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
+
+  if (!UUID_RE.test(projectId)) {
+    return NextResponse.json({ error: "Projeto inválido" }, { status: 400, headers: PRIVATE_HEADERS });
+  }
+
+  try {
+    const deleted = await deleteDeployProject(access.session.email, projectId);
+    if (!deleted) {
+      return NextResponse.json({ error: "Projeto não encontrado" }, { status: 404, headers: PRIVATE_HEADERS });
+    }
+    return NextResponse.json({ deleted: true, projectId }, { headers: PRIVATE_HEADERS });
   } catch (error) {
     return unavailable(error);
   }
