@@ -67,7 +67,7 @@ export async function POST(request: Request) {
   } | null;
 
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const repository = typeof body?.repository === "string" ? body.repository.trim() : "";
+  const repository = typeof body?.repository === "string" ? body.repository.trim().toLowerCase() : "";
   const productionBranch = typeof body?.productionBranch === "string" && body.productionBranch.trim()
     ? body.productionBranch.trim()
     : "main";
