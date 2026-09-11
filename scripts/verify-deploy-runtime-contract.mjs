@@ -97,6 +97,9 @@ for (const contract of [
   "information_schema.columns",
   "pg_constraint",
   "pg_indexes",
+  "pg_get_constraintdef",
+  "UNIQUE (owner_user_id, git_provider, git_repository)",
+  "FOREIGN KEY (project_id) REFERENCES deploy_projects(id) ON DELETE CASCADE",
 ]) {
   if (!deployHealth.includes(contract)) {
     console.error(`NEYVIX Deploy runtime contract failed: exact health contract missing: ${contract}`);

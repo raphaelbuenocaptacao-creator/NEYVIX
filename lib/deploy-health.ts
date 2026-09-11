@@ -28,6 +28,9 @@ const DEPLOYMENT_COLUMNS = [
   "created_at",
 ] as const;
 
+const OWNER_REPOSITORY_UNIQUE = "UNIQUE (owner_user_id, git_provider, git_repository)";
+const PROJECT_FOREIGN_KEY = "FOREIGN KEY (project_id) REFERENCES deploy_projects(id) ON DELETE CASCADE";
+
 type DeployHealthChecks = {
   deployProjectsTable: boolean;
   deploymentsTable: boolean;
@@ -56,6 +59,10 @@ function emptyChecks(): DeployHealthChecks {
   };
 }
 
+function normalizeConstraintDefinition(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 export async function getDeployHealth(): Promise<DeployHealth> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
@@ -73,13 +80,21 @@ export async function getDeployHealth(): Promise<DeployHealth> {
     `) as Array<{ table_name: string; column_name: string }>;
 
     const constraints = (await sql`
-      SELECT conname
-      FROM pg_constraint
-      WHERE conname IN (
-        'deploy_projects_owner_user_id_git_provider_git_repository_key',
-        'deployments_project_id_fkey'
-      )
-    `) as Array<{ conname: string }>;
+      SELECT c.conname,
+             rel.relname AS table_name,
+             pg_get_constraintdef(c.oid) AS definition
+      FROM pg_constraint c
+      JOIN pg_class rel ON rel.oid = c.conrelid
+      JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+      WHERE ns.nspname = 'public'
+        AND (
+          (rel.relname = 'deploy_projects'
+            AND c.conname = 'deploy_projects_owner_user_id_git_provider_git_repository_key')
+          OR
+          (rel.relname = 'deployments'
+            AND c.conname = 'deployments_project_id_fkey')
+        )
+    `) as Array<{ conname: string; table_name: string; definition: string }>;
 
     const indexes = (await sql`
       SELECT indexname
@@ -94,7 +109,12 @@ export async function getDeployHealth(): Promise<DeployHealth> {
     const deploymentColumns = new Set(
       columns.filter((row) => row.table_name === "deployments").map((row) => row.column_name),
     );
-    const constraintNames = new Set(constraints.map((row) => row.conname));
+    const constraintDefinitions = new Map(
+      constraints.map((row) => [
+        `${row.table_name}:${row.conname}`,
+        normalizeConstraintDefinition(row.definition),
+      ]),
+    );
     const indexNames = new Set(indexes.map((row) => row.indexname));
 
     const checks: DeployHealthChecks = {
@@ -102,10 +122,12 @@ export async function getDeployHealth(): Promise<DeployHealth> {
       deploymentsTable: deploymentColumns.size > 0,
       deployProjectsColumns: PROJECT_COLUMNS.every((column) => projectColumns.has(column)),
       deploymentsColumns: DEPLOYMENT_COLUMNS.every((column) => deploymentColumns.has(column)),
-      ownerRepositoryUnique: constraintNames.has(
-        "deploy_projects_owner_user_id_git_provider_git_repository_key",
-      ),
-      projectForeignKey: constraintNames.has("deployments_project_id_fkey"),
+      ownerRepositoryUnique: constraintDefinitions.get(
+        "deploy_projects:deploy_projects_owner_user_id_git_provider_git_repository_key",
+      ) === OWNER_REPOSITORY_UNIQUE,
+      projectForeignKey: constraintDefinitions.get(
+        "deployments:deployments_project_id_fkey",
+      ) === PROJECT_FOREIGN_KEY,
       historyIndex: indexNames.has("idx_deployments_project_created"),
     };
 
