@@ -1,5 +1,5 @@
 import { neon } from "@neondatabase/serverless";
-import { getEcosystemModuleReadiness } from "@/lib/ecosystem-health";
+import { getDeployHealth } from "@/lib/deploy-health";
 
 export type DeployProject = {
   id: string;
@@ -52,8 +52,8 @@ async function getReadySql() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new DeploySchemaNotReadyError();
 
-  const readiness = await getEcosystemModuleReadiness();
-  if (readiness.database !== "connected" || readiness.deploy !== "ready") {
+  const health = await getDeployHealth();
+  if (!health.ready) {
     throw new DeploySchemaNotReadyError();
   }
 
