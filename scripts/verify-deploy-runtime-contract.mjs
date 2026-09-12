@@ -98,6 +98,7 @@ const deployHealth = readFileSync("lib/deploy-health.ts", "utf8");
 for (const contract of [
   "export async function getDeployHealth",
   "deploy_projects_owner_user_id_git_provider_git_repository_key",
+  "deploy_projects_owner_user_id_fkey",
   "idx_deployments_project_created",
   "deployments_project_id_fkey",
   "information_schema.columns",
@@ -105,6 +106,7 @@ for (const contract of [
   "pg_indexes",
   "pg_get_constraintdef",
   "UNIQUE (owner_user_id, git_provider, git_repository)",
+  "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL",
   "FOREIGN KEY (project_id) REFERENCES deploy_projects(id) ON DELETE CASCADE",
 ]) {
   if (!deployHealth.includes(contract)) {
