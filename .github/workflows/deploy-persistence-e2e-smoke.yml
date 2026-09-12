@@ -1,0 +1,220 @@
+name: NEYVIX Deploy Persistence E2E Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  deployment_status:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-persistence-e2e:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEYVIX_PRODUCTION_URL: https://neyvix.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Acquire GitHub OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel"
+          token="$(curl --silent --show-error --fail -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | jq -r '.value // empty')"
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "VERCEL_OIDC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify authenticated Deploy persistence, classification and isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${NEYVIX_PRODUCTION_URL%/}"
+          jar_a=/tmp/neyvix-deploy-a.cookies
+          jar_b=/tmp/neyvix-deploy-b.cookies
+          headers=(
+            -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_OIDC_TOKEN}"
+            -H "x-neyvix-github-oidc: ${VERCEL_OIDC_TOKEN}"
+          )
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+
+          fail_stage() {
+            echo "::error title=NEYVIX Deploy Persistence E2E::$1"
+            exit 1
+          }
+
+          fail_http_stage() {
+            local stage="$1" code="$2" body_file="$3"
+            local safe_error safe_code
+            safe_error="$(jq -r '.error // empty' "$body_file" 2>/dev/null || true)"
+            safe_code="$(jq -r '.code // empty' "$body_file" 2>/dev/null || true)"
+            echo "::error title=NEYVIX Deploy Persistence E2E::${stage} http=${code} error=${safe_error:-unknown} code=${safe_code:-none}"
+            exit 1
+          }
+
+          registered_a=false
+          registered_b=false
+          project_id=""
+          cleanup() {
+            set +e
+            if [ -n "$project_id" ] && [ -s "$jar_a" ]; then
+              cleanup_code="$(curl --silent --max-time 15 "${headers[@]}" -b "$jar_a" -X DELETE \
+                -H 'content-type: application/json' \
+                --data "$(jq -nc --arg projectId "$project_id" '{projectId:$projectId}')" \
+                -o /tmp/deploy-project-trap-cleanup.json -w '%{http_code}' "$base/api/deploy" 2>/dev/null || true)"
+              if [ "$cleanup_code" = "200" ] || [ "$cleanup_code" = "404" ]; then
+                project_id=""
+              fi
+            fi
+            if [ "$registered_a" = true ] && [ -s "$jar_a" ] && [ -z "$project_id" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar_a" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+            if [ "$registered_b" = true ] && [ -s "$jar_b" ]; then
+              curl --silent --max-time 15 "${headers[@]}" -b "$jar_b" -X DELETE "$base/api/auth/smoke-cleanup" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          release_ready=false
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/health.json -w '%{http_code}' "$base/api/health" || true)"
+            served_sha="$(jq -r '.release.sha // empty' /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && { [ "$served_sha" = "$GITHUB_SHA" ] || [[ "$GITHUB_SHA" == "$served_sha"* ]]; }; then
+              release_ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$release_ready" = true ] || fail_stage production-release-sha-timeout
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -o /tmp/deploy-health.json -w '%{http_code}' "$base/api/health/deploy")" || fail_stage deploy-health-request
+          [ "$code" = "200" ] || fail_http_stage deploy-health-status "$code" /tmp/deploy-health.json
+          jq -e '.ok == true and .service == "neyvix-deploy" and .status == "ready" and .database == "connected" and (.checks | to_entries | all(.value == true))' /tmp/deploy-health.json >/dev/null || fail_stage deploy-health-contract
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          handle_a="e2e-deploy-a-${suffix}"
+          handle_b="e2e-deploy-b-${suffix}"
+          email_a="${handle_a}@neyvix.com"
+          email_b="${handle_b}@neyvix.com"
+          password_a="$(openssl rand -base64 30 | tr -d '\n')"
+          password_b="$(openssl rand -base64 30 | tr -d '\n')"
+          for secret in "$email_a" "$email_b" "$password_a" "$password_b"; do echo "::add-mask::$secret"; done
+
+          register_account() {
+            local handle="$1" password="$2" jar="$3" body="$4" headers_file="$5"
+            rm -f "$jar" "$body" "$headers_file"
+            curl --silent --show-error --max-time 20 "${headers[@]}" \
+              -H 'content-type: application/x-www-form-urlencoded' \
+              -c "$jar" -D "$headers_file" -o "$body" \
+              --data-urlencode 'name=NEYVIX Deploy Smoke' \
+              --data-urlencode "handle=$handle" \
+              --data-urlencode "password=$password" \
+              --data-urlencode 'plan=pro' \
+              "$base/api/auth/register" >/dev/null
+            awk 'toupper($1) ~ /^HTTP\// {code=$2} END{print code}' "$headers_file"
+          }
+
+          status="$(register_account "$handle_a" "$password_a" "$jar_a" /tmp/register-a.body /tmp/register-a.headers)" || fail_stage register-a-request
+          [ "$status" = "303" ] || fail_stage register-a-status
+          grep -Eq 'neyvix_session' "$jar_a" || fail_stage register-a-session-cookie
+          registered_a=true
+
+          status="$(register_account "$handle_b" "$password_b" "$jar_b" /tmp/register-b.body /tmp/register-b.headers)" || fail_stage register-b-request
+          [ "$status" = "303" ] || fail_stage register-b-status
+          grep -Eq 'neyvix_session' "$jar_b" || fail_stage register-b-session-cookie
+          registered_b=true
+
+          for who in a b; do
+            jar_var="jar_${who}"; email_var="email_${who}"
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -o "/tmp/me-${who}.json" -w '%{http_code}' "$base/api/auth/me")" || fail_stage "identity-${who}-request"
+            [ "$code" = "200" ] || fail_http_stage "identity-${who}-status" "$code" "/tmp/me-${who}.json"
+            jq -e --arg expected "${!email_var}" '.user.email == $expected and .authenticated == true' "/tmp/me-${who}.json" >/dev/null || fail_stage "identity-${who}-contract"
+          done
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/projects-a-before.json -w '%{http_code}' "$base/api/deploy")" || fail_stage projects-a-before-request
+          [ "$code" = "200" ] || fail_http_stage projects-a-before-status "$code" /tmp/projects-a-before.json
+          jq -e '.projects == []' /tmp/projects-a-before.json >/dev/null || fail_stage projects-a-before-not-empty
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/project-create.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            --data "$(jq -nc --arg name "Deploy E2E ${suffix}" --arg repository 'raphaelbuenocaptacao-creator/NEYVIX' --arg productionBranch 'main' --arg framework 'nextjs' '{name:$name,repository:$repository,productionBranch:$productionBranch,framework:$framework}')" \
+            "$base/api/deploy")" || fail_stage project-create-request
+          [ "$code" = "201" ] || fail_http_stage project-create-status "$code" /tmp/project-create.json
+          project_id="$(jq -r '.project.id // empty' /tmp/project-create.json)"
+          test -n "$project_id" || fail_stage project-create-id
+          jq -e '.project.gitRepository == "raphaelbuenocaptacao-creator/neyvix" and .project.productionBranch == "main" and .project.status == "active"' /tmp/project-create.json >/dev/null || fail_stage project-create-contract
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/projects-a-after.json -w '%{http_code}' "$base/api/deploy")" || fail_stage projects-a-after-request
+          [ "$code" = "200" ] || fail_http_stage projects-a-after-status "$code" /tmp/projects-a-after.json
+          jq -e --arg id "$project_id" '.projects | length == 1 and .[0].id == $id' /tmp/projects-a-after.json >/dev/null || fail_stage project-persistence-readback
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/projects-b.json -w '%{http_code}' "$base/api/deploy")" || fail_stage projects-b-request
+          [ "$code" = "200" ] || fail_http_stage projects-b-status "$code" /tmp/projects-b.json
+          jq -e '.projects == []' /tmp/projects-b.json >/dev/null || fail_stage project-cross-account-leak
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/request-production.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            --data "$(jq -nc --arg projectId "$project_id" --arg branch 'main' --arg commitSha "$GITHUB_SHA" '{projectId:$projectId,branch:$branch,commitSha:$commitSha}')" \
+            "$base/api/deploy/requests")" || fail_stage request-production-request
+          [ "$code" = "201" ] || fail_http_stage request-production-status "$code" /tmp/request-production.json
+          jq -e '.status == "queued" and .providerExecution == false and .request.environment == "production" and .request.branch == "main" and .request.status == "queued"' /tmp/request-production.json >/dev/null || fail_stage request-production-contract
+
+          preview_branch="e2e-preview-${suffix}"
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/request-preview.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            --data "$(jq -nc --arg projectId "$project_id" --arg branch "$preview_branch" --arg commitSha "$GITHUB_SHA" '{projectId:$projectId,branch:$branch,commitSha:$commitSha}')" \
+            "$base/api/deploy/requests")" || fail_stage request-preview-request
+          [ "$code" = "201" ] || fail_http_stage request-preview-status "$code" /tmp/request-preview.json
+          jq -e --arg branch "$preview_branch" '.status == "queued" and .providerExecution == false and .request.environment == "preview" and .request.branch == $branch and .request.status == "queued"' /tmp/request-preview.json >/dev/null || fail_stage request-preview-contract
+
+          encoded_project_id="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$project_id")"
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/request-history.json -w '%{http_code}' "$base/api/deploy/requests?projectId=${encoded_project_id}")" || fail_stage request-history-request
+          [ "$code" = "200" ] || fail_http_stage request-history-status "$code" /tmp/request-history.json
+          jq -e '.providerExecution == false and (.requests | length == 2) and ([.requests[].environment] | sort) == ["preview","production"] and ([.requests[].status] | all(. == "queued"))' /tmp/request-history.json >/dev/null || fail_stage request-history-contract
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/request-b-history.json -w '%{http_code}' "$base/api/deploy/requests?projectId=${encoded_project_id}")" || fail_stage request-b-history-request
+          [ "$code" = "200" ] || fail_http_stage request-b-history-status "$code" /tmp/request-b-history.json
+          jq -e '.requests == [] and .providerExecution == false' /tmp/request-b-history.json >/dev/null || fail_stage request-history-cross-account-leak
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_b" -o /tmp/request-b-create.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            --data "$(jq -nc --arg projectId "$project_id" --arg branch 'main' '{projectId:$projectId,branch:$branch}')" \
+            "$base/api/deploy/requests")" || fail_stage request-b-create-request
+          [ "$code" = "404" ] || fail_http_stage request-b-create-status "$code" /tmp/request-b-create.json
+          jq -e '.code == "PROJECT_NOT_FOUND"' /tmp/request-b-create.json >/dev/null || fail_stage request-b-create-contract
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -X DELETE -o /tmp/project-delete.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            --data "$(jq -nc --arg projectId "$project_id" '{projectId:$projectId}')" \
+            "$base/api/deploy")" || fail_stage project-delete-request
+          [ "$code" = "200" ] || fail_http_stage project-delete-status "$code" /tmp/project-delete.json
+          jq -e --arg id "$project_id" '.deleted == true and .projectId == $id' /tmp/project-delete.json >/dev/null || fail_stage project-delete-contract
+          project_id=""
+
+          code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "$jar_a" -o /tmp/projects-a-clean.json -w '%{http_code}' "$base/api/deploy")" || fail_stage projects-a-clean-request
+          [ "$code" = "200" ] || fail_http_stage projects-a-clean-status "$code" /tmp/projects-a-clean.json
+          jq -e '.projects == []' /tmp/projects-a-clean.json >/dev/null || fail_stage project-cleanup-readback
+
+          for who in a b; do
+            jar_var="jar_${who}"
+            code="$(curl --silent --show-error --max-time 20 "${headers[@]}" -b "${!jar_var}" -X DELETE -o "/tmp/account-cleanup-${who}.json" -w '%{http_code}' "$base/api/auth/smoke-cleanup")" || fail_stage "account-cleanup-${who}-request"
+            [ "$code" = "200" ] || fail_http_stage "account-cleanup-${who}-status" "$code" "/tmp/account-cleanup-${who}.json"
+            eval "registered_${who}=false"
+          done
+
+          {
+            echo "### Deploy Persistence E2E Smoke: PASS"
+            echo
+            echo "Verified exact production release, semantic Deploy health, two authenticated Pro trial sessions, project persistence/readback, production and preview classification, request history, cross-account isolation, project deletion cascade, and account cleanup."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "PASS: authenticated NEYVIX Deploy persistence, classification, isolation and cleanup verified in production."
