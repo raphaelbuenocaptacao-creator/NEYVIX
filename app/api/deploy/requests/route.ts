@@ -67,7 +67,7 @@ export async function GET(request: Request) {
 
   try {
     const requests = await listDeploymentRequests(access.session.email, projectId);
-    return NextResponse.json({ requests }, { headers: PRIVATE_HEADERS });
+    return NextResponse.json({ requests, providerExecution: false }, { headers: PRIVATE_HEADERS });
   } catch (error) {
     return unavailable(error);
   }
