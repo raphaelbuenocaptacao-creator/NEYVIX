@@ -43,7 +43,7 @@ export type CreateDeploymentRequestInput = {
 
 export type UpdateDeploymentProviderResultInput = {
   deploymentId: string;
-  status: "building" | "failed";
+  status: "building" | "ready" | "failed";
   provider: "vercel";
   providerDeploymentId: string | null;
   deploymentUrl: string | null;
@@ -222,6 +222,29 @@ export async function listDeploymentRequests(
   return rows.map(mapDeploymentRequest);
 }
 
+export async function getDeploymentRequest(
+  email: string,
+  deploymentId: string,
+): Promise<DeploymentRequest | null> {
+  const sql = await getReadySql();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const rows = await sql`
+    SELECT d.id, d.project_id, d.commit_sha, d.branch, d.environment, d.status,
+           d.provider, d.provider_deployment_id, d.deployment_url,
+           d.created_at, d.started_at, d.finished_at
+    FROM public.deployments d
+    JOIN public.deploy_projects p ON p.id = d.project_id
+    JOIN public.users u ON u.id = p.owner_user_id
+    WHERE d.id = ${deploymentId}::uuid
+      AND lower(u.email) = ${normalizedEmail}
+      AND u.is_active = true
+    LIMIT 1
+  ` as Array<Record<string, unknown>>;
+
+  return rows[0] ? mapDeploymentRequest(rows[0]) : null;
+}
+
 export async function createDeploymentRequest(
   email: string,
   input: CreateDeploymentRequestInput,
@@ -276,7 +299,7 @@ export async function updateDeploymentProviderResult(
         provider_deployment_id = ${input.providerDeploymentId},
         deployment_url = ${input.deploymentUrl},
         started_at = COALESCE(d.started_at, now()),
-        finished_at = CASE WHEN ${input.finished} THEN now() ELSE NULL END
+        finished_at = CASE WHEN ${input.finished} THEN COALESCE(d.finished_at, now()) ELSE NULL END
     FROM public.deploy_projects p
     JOIN public.users u ON u.id = p.owner_user_id
     WHERE d.id = ${input.deploymentId}::uuid
