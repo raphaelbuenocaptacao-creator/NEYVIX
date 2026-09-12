@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 const requiredFiles = [
   "lib/deploy-provider-readiness.ts",
   "app/api/health/deploy/provider/route.ts",
+  ".env.example",
 ];
 const missing = requiredFiles.filter((file) => !existsSync(file));
 if (missing.length) {
@@ -40,6 +41,19 @@ for (const contract of [
 ]) {
   if (!route.includes(contract)) {
     console.error(`NEYVIX Deploy provider readiness contract failed: health route contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+
+const envExample = readFileSync(".env.example", "utf8");
+for (const contract of [
+  "NEYVIX_DEPLOY_VERCEL_TOKEN=",
+  "NEYVIX_DEPLOY_VERCEL_PROJECT_ID=",
+  "NEYVIX_DEPLOY_VERCEL_TEAM_ID=",
+  "NEYVIX_DEPLOY_EXECUTION_ENABLED=false",
+]) {
+  if (!envExample.includes(contract)) {
+    console.error(`NEYVIX Deploy provider readiness contract failed: env example missing safe default: ${contract}`);
     process.exit(1);
   }
 }
