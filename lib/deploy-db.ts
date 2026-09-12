@@ -41,6 +41,15 @@ export type CreateDeploymentRequestInput = {
   commitSha: string | null;
 };
 
+export type UpdateDeploymentProviderResultInput = {
+  deploymentId: string;
+  status: "building" | "failed";
+  provider: "vercel";
+  providerDeploymentId: string | null;
+  deploymentUrl: string | null;
+  finished: boolean;
+};
+
 export class DeploySchemaNotReadyError extends Error {
   constructor() {
     super("NEYVIX Deploy persistence schema is not ready");
@@ -108,6 +117,25 @@ export async function listDeployProjects(email: string, limit = 50): Promise<Dep
   ` as Array<Record<string, unknown>>;
 
   return rows.map(mapProject);
+}
+
+export async function getDeployProject(email: string, projectId: string): Promise<DeployProject | null> {
+  const sql = await getReadySql();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const rows = await sql`
+    SELECT p.id, p.name, p.git_provider, p.git_repository, p.production_branch,
+           p.framework, p.status, p.created_at, p.updated_at
+    FROM public.deploy_projects p
+    JOIN public.users u ON u.id = p.owner_user_id
+    WHERE p.id = ${projectId}::uuid
+      AND lower(u.email) = ${normalizedEmail}
+      AND u.is_active = true
+      AND p.status = 'active'
+    LIMIT 1
+  ` as Array<Record<string, unknown>>;
+
+  return rows[0] ? mapProject(rows[0]) : null;
 }
 
 export async function createDeployProject(
@@ -229,6 +257,35 @@ export async function createDeploymentRequest(
     RETURNING id, project_id, commit_sha, branch, environment, status,
               provider, provider_deployment_id, deployment_url,
               created_at, started_at, finished_at
+  ` as Array<Record<string, unknown>>;
+
+  return rows[0] ? mapDeploymentRequest(rows[0]) : null;
+}
+
+export async function updateDeploymentProviderResult(
+  email: string,
+  input: UpdateDeploymentProviderResultInput,
+): Promise<DeploymentRequest | null> {
+  const sql = await getReadySql();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const rows = await sql`
+    UPDATE public.deployments d
+    SET status = ${input.status},
+        provider = ${input.provider},
+        provider_deployment_id = ${input.providerDeploymentId},
+        deployment_url = ${input.deploymentUrl},
+        started_at = COALESCE(d.started_at, now()),
+        finished_at = CASE WHEN ${input.finished} THEN now() ELSE NULL END
+    FROM public.deploy_projects p
+    JOIN public.users u ON u.id = p.owner_user_id
+    WHERE d.id = ${input.deploymentId}::uuid
+      AND d.project_id = p.id
+      AND lower(u.email) = ${normalizedEmail}
+      AND u.is_active = true
+    RETURNING d.id, d.project_id, d.commit_sha, d.branch, d.environment, d.status,
+              d.provider, d.provider_deployment_id, d.deployment_url,
+              d.created_at, d.started_at, d.finished_at
   ` as Array<Record<string, unknown>>;
 
   return rows[0] ? mapDeploymentRequest(rows[0]) : null;
