@@ -15,6 +15,7 @@ function requireMatch(source, pattern, message) {
 const statusSource = read("lib/deploy-vercel-status.ts");
 const dbSource = read("lib/deploy-db.ts");
 const routeSource = read("app/api/deploy/requests/reconcile/route.ts");
+const uiSource = read("app/deploy/deploy-request-controls.tsx");
 
 requireMatch(statusSource, /getDeployProviderReadiness/, "provider status reader must reuse fail-closed readiness");
 requireMatch(statusSource, /readVercelDeploymentStatus/, "provider status reader export is missing");
@@ -38,7 +39,14 @@ requireMatch(routeSource, /updateDeploymentProviderResult/, "reconciliation rout
 requireMatch(routeSource, /providerDeploymentId/, "reconciliation route must rely on persisted provider deployment id");
 requireMatch(routeSource, /status\s*!==\s*["']building["']/, "reconciliation route must avoid reprocessing terminal requests");
 
-for (const source of [statusSource, routeSource]) {
+requireMatch(uiSource, /fetch\(["']\/api\/deploy\/requests\/reconcile["']/, "deploy UI must call the owned reconciliation endpoint");
+requireMatch(uiSource, /Atualizar status/, "deploy UI must expose an explicit status refresh for building deployments");
+requireMatch(uiSource, /providerAccepted/, "deploy UI must handle an accepted provider execution response");
+if (/payload\.providerExecution\s*!==\s*false/.test(uiSource)) {
+  throw new Error("deploy UI must not reject legitimate provider execution responses");
+}
+
+for (const source of [statusSource, routeSource, uiSource]) {
   if (/NEYVIX_DEPLOY_VERCEL_TOKEN[^\n]*(NextResponse|JSON\.stringify|console\.)/.test(source)) {
     throw new Error("provider token must never be exposed in response or logs");
   }
