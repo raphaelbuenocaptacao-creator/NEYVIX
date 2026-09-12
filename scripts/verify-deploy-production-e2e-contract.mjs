@@ -23,6 +23,7 @@ const requiredSignals = [
   "providerExecution",
   "-X DELETE",
   "/api/auth/smoke-cleanup",
+  "github.event.deployment.environment == 'Production'",
 ];
 
 for (const signal of requiredSignals) {
@@ -32,4 +33,4 @@ for (const signal of requiredSignals) {
   }
 }
 
-console.log("Deploy production E2E contract PASS: authenticated persistence, classification, isolation and cleanup smoke is wired.");
+console.log("Deploy production E2E contract PASS: authenticated persistence, classification, isolation, cleanup, and production-only deployment-status triggering are wired.");
