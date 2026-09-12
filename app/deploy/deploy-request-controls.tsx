@@ -27,6 +27,11 @@ type RequestPayload = {
   requests?: DeploymentRequest[];
   request?: DeploymentRequest;
   providerExecution?: boolean;
+  providerAccepted?: boolean;
+  providerChecked?: boolean;
+  providerState?: string | null;
+  providerReason?: string;
+  providerHttpStatus?: number | null;
   executionNote?: string;
   error?: string;
   code?: string;
@@ -35,6 +40,16 @@ type RequestPayload = {
 type Props = {
   projects: ProjectSummary[];
 };
+
+function statusLabel(status: string) {
+  switch (status) {
+    case "queued": return "na fila";
+    case "building": return "construindo";
+    case "ready": return "pronto";
+    case "failed": return "falhou";
+    default: return status;
+  }
+}
 
 export default function DeployRequestControls({ projects }: Props) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
@@ -47,6 +62,7 @@ export default function DeployRequestControls({ projects }: Props) {
   const [requests, setRequests] = useState<DeploymentRequest[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [reconcilingId, setReconcilingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -73,10 +89,7 @@ export default function DeployRequestControls({ projects }: Props) {
       .then(async (response) => {
         const payload = await response.json().catch(() => null) as RequestPayload | null;
         if (!response.ok) throw new Error(payload?.error || "Não foi possível carregar o histórico.");
-        if (payload?.providerExecution !== false) {
-          throw new Error("Estado de execução externa inesperado. A operação foi interrompida por segurança.");
-        }
-        setRequests(payload.requests ?? []);
+        setRequests(payload?.requests ?? []);
       })
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
@@ -118,18 +131,64 @@ export default function DeployRequestControls({ projects }: Props) {
         }
         return;
       }
-      if (!payload?.request || payload.providerExecution !== false) {
-        setError("Resposta inválida da fila interna. Nenhuma execução externa foi iniciada.");
+      if (!payload?.request) {
+        setError("Resposta inválida do NEYVIX Deploy.");
         return;
       }
 
       setRequests((current) => [payload.request as DeploymentRequest, ...current.filter((item) => item.id !== payload.request?.id)]);
       setCommitSha("");
-      setMessage(payload.executionNote || "Solicitação registrada na fila interna. Nenhum deployment externo foi executado.");
+
+      if (payload.providerExecution && payload.providerAccepted) {
+        setMessage(payload.executionNote || "Deployment aceito pelo provider e acompanhado pelo NEYVIX.");
+      } else if (payload.providerExecution) {
+        setMessage(payload.executionNote || "O provider foi consultado, mas não aceitou o deployment.");
+      } else {
+        setMessage(payload.executionNote || "Solicitação registrada com segurança na fila do NEYVIX.");
+      }
     } catch {
       setError("Falha de rede ao registrar a solicitação. Tente novamente.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleReconcile(deploymentId: string) {
+    if (reconcilingId) return;
+    setReconcilingId(deploymentId);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await fetch("/api/deploy/requests/reconcile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deploymentId }),
+      });
+      const payload = await response.json().catch(() => null) as RequestPayload | null;
+      if (!response.ok) {
+        setError(payload?.error || "Não foi possível atualizar o status do deployment.");
+        return;
+      }
+      if (!payload?.request) {
+        setError("Resposta inválida ao atualizar o deployment.");
+        return;
+      }
+
+      setRequests((current) => current.map((item) => item.id === payload.request?.id ? payload.request as DeploymentRequest : item));
+      if (payload.request.status === "ready") {
+        setMessage("Deployment concluído e confirmado pelo provider.");
+      } else if (payload.request.status === "failed") {
+        setMessage("O provider confirmou que o deployment falhou ou foi cancelado.");
+      } else if (payload.providerChecked) {
+        setMessage("Status consultado no provider. O deployment ainda está em andamento.");
+      } else {
+        setMessage("Status mantido. A consulta externa continua bloqueada até configuração e opt-in seguros.");
+      }
+    } catch {
+      setError("Falha de rede ao atualizar o status do deployment.");
+    } finally {
+      setReconcilingId(null);
     }
   }
 
@@ -138,8 +197,8 @@ export default function DeployRequestControls({ projects }: Props) {
   return (
     <article aria-live="polite">
       <span>→</span>
-      <h2>Solicitar deploy interno</h2>
-      <p>Registre uma solicitação rastreável na fila do NEYVIX. Esta etapa ainda não executa Vercel ou GitHub externamente.</p>
+      <h2>Solicitar deploy</h2>
+      <p>Registre uma solicitação rastreável. Quando o provider estiver configurado e habilitado com opt-in explícito, o NEYVIX executa e acompanha o deployment; caso contrário, mantém a fila interna fail-closed.</p>
 
       <form onSubmit={handleSubmit}>
         <label>
@@ -159,7 +218,7 @@ export default function DeployRequestControls({ projects }: Props) {
           <input name="commitSha" value={commitSha} onChange={(event) => setCommitSha(event.target.value)} maxLength={64} autoComplete="off" placeholder="7+ caracteres hexadecimais" />
         </label>
         <button className="primary" type="submit" disabled={submitting || !projectId}>
-          {submitting ? "Registrando…" : "Solicitar deploy interno"}
+          {submitting ? "Enviando…" : "Solicitar deploy"}
         </button>
       </form>
 
@@ -175,10 +234,24 @@ export default function DeployRequestControls({ projects }: Props) {
         <ul>
           {requests.map((request) => (
             <li key={request.id}>
-              <strong>{request.status}</strong> · {request.branch}
+              <strong>{statusLabel(request.status)}</strong> · {request.branch}
               {request.commitSha ? ` · ${request.commitSha.slice(0, 12)}` : ""}
               <br />
               <small>{new Date(request.createdAt).toLocaleString("pt-BR")}</small>
+              {request.deploymentUrl && (
+                <>
+                  <br />
+                  <a href={request.deploymentUrl} target="_blank" rel="noreferrer">Abrir deployment</a>
+                </>
+              )}
+              {request.status === "building" && request.provider === "vercel" && request.providerDeploymentId && (
+                <>
+                  <br />
+                  <button type="button" onClick={() => handleReconcile(request.id)} disabled={reconcilingId !== null}>
+                    {reconcilingId === request.id ? "Atualizando…" : "Atualizar status"}
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>

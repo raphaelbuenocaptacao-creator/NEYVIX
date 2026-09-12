@@ -11,11 +11,14 @@ for (const contract of [
   '"use client"',
   'fetch(`/api/deploy/requests?projectId=${encodeURIComponent(projectId)}`',
   'fetch("/api/deploy/requests"',
+  'fetch("/api/deploy/requests/reconcile"',
   'method: "POST"',
   "providerExecution",
+  "providerAccepted",
   "executionNote",
   "aria-live=\"polite\"",
-  "Solicitar deploy interno",
+  "Solicitar deploy",
+  "Atualizar status",
   "Histórico de solicitações",
 ]) {
   if (!controls.includes(contract)) {
