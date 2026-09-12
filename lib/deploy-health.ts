@@ -29,6 +29,7 @@ const DEPLOYMENT_COLUMNS = [
 ] as const;
 
 const OWNER_REPOSITORY_UNIQUE = "UNIQUE (owner_user_id, git_provider, git_repository)";
+const OWNER_USER_FOREIGN_KEY = "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL";
 const PROJECT_FOREIGN_KEY = "FOREIGN KEY (project_id) REFERENCES deploy_projects(id) ON DELETE CASCADE";
 
 type DeployHealthChecks = {
@@ -37,6 +38,7 @@ type DeployHealthChecks = {
   deployProjectsColumns: boolean;
   deploymentsColumns: boolean;
   ownerRepositoryUnique: boolean;
+  ownerUserForeignKey: boolean;
   projectForeignKey: boolean;
   historyIndex: boolean;
 };
@@ -54,6 +56,7 @@ function emptyChecks(): DeployHealthChecks {
     deployProjectsColumns: false,
     deploymentsColumns: false,
     ownerRepositoryUnique: false,
+    ownerUserForeignKey: false,
     projectForeignKey: false,
     historyIndex: false,
   };
@@ -89,7 +92,10 @@ export async function getDeployHealth(): Promise<DeployHealth> {
       WHERE ns.nspname = 'public'
         AND (
           (rel.relname = 'deploy_projects'
-            AND c.conname = 'deploy_projects_owner_user_id_git_provider_git_repository_key')
+            AND c.conname IN (
+              'deploy_projects_owner_user_id_git_provider_git_repository_key',
+              'deploy_projects_owner_user_id_fkey'
+            ))
           OR
           (rel.relname = 'deployments'
             AND c.conname = 'deployments_project_id_fkey')
@@ -125,6 +131,9 @@ export async function getDeployHealth(): Promise<DeployHealth> {
       ownerRepositoryUnique: constraintDefinitions.get(
         "deploy_projects:deploy_projects_owner_user_id_git_provider_git_repository_key",
       ) === OWNER_REPOSITORY_UNIQUE,
+      ownerUserForeignKey: constraintDefinitions.get(
+        "deploy_projects:deploy_projects_owner_user_id_fkey",
+      ) === OWNER_USER_FOREIGN_KEY,
       projectForeignKey: constraintDefinitions.get(
         "deployments:deployments_project_id_fkey",
       ) === PROJECT_FOREIGN_KEY,
