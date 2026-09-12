@@ -14,8 +14,8 @@ for (const contract of [
   "export async function deleteDeployProject",
   "export async function listDeploymentRequests",
   "export async function createDeploymentRequest",
-  "getEcosystemModuleReadiness",
-  'readiness.deploy !== "ready"',
+  "getDeployHealth",
+  "!health.ready",
   "JOIN public.users u ON u.id = p.owner_user_id",
   "lower(u.email) = ${normalizedEmail}",
   "u.is_active = true",
@@ -32,6 +32,10 @@ for (const contract of [
     console.error(`NEYVIX Deploy runtime contract failed: persistence contract missing: ${contract}`);
     process.exit(1);
   }
+}
+if (deployDb.includes("getEcosystemModuleReadiness")) {
+  console.error("NEYVIX Deploy runtime contract failed: persistence must use the semantic deploy health gate");
+  process.exit(1);
 }
 if (deployDb.includes("completed_at")) {
   console.error("NEYVIX Deploy runtime contract failed: deployments schema uses finished_at, not completed_at");
