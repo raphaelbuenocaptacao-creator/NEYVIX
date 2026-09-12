@@ -6,8 +6,11 @@ import { getEntitlements, canUse } from "@/lib/entitlements";
 import {
   createDeploymentRequest,
   DeploySchemaNotReadyError,
+  getDeployProject,
   listDeploymentRequests,
+  updateDeploymentProviderResult,
 } from "@/lib/deploy-db";
+import { executeVercelDeployment } from "@/lib/deploy-vercel-executor";
 
 const PRIVATE_HEADERS = {
   "Cache-Control": "no-store",
@@ -64,7 +67,7 @@ export async function GET(request: Request) {
 
   try {
     const requests = await listDeploymentRequests(access.session.email, projectId);
-    return NextResponse.json({ requests, providerExecution: false }, { headers: PRIVATE_HEADERS });
+    return NextResponse.json({ requests }, { headers: PRIVATE_HEADERS });
   } catch (error) {
     return unavailable(error);
   }
@@ -97,6 +100,14 @@ export async function POST(request: Request) {
   }
 
   try {
+    const project = await getDeployProject(access.session.email, projectId);
+    if (!project) {
+      return NextResponse.json({
+        error: "Projeto não encontrado ou não pertence ao usuário autenticado",
+        code: "PROJECT_NOT_FOUND",
+      }, { status: 404, headers: PRIVATE_HEADERS });
+    }
+
     const deploymentRequest = await createDeploymentRequest(access.session.email, {
       projectId,
       branch,
@@ -109,11 +120,39 @@ export async function POST(request: Request) {
       }, { status: 404, headers: PRIVATE_HEADERS });
     }
 
+    const execution = await executeVercelDeployment({
+      gitRepository: project.gitRepository,
+      branch,
+      commitSha,
+      environment: deploymentRequest.environment,
+    });
+
+    let persistedRequest = deploymentRequest;
+    if (execution.attempted) {
+      persistedRequest = await updateDeploymentProviderResult(access.session.email, {
+        deploymentId: deploymentRequest.id,
+        status: execution.accepted ? "building" : "failed",
+        provider: "vercel",
+        providerDeploymentId: execution.providerDeploymentId,
+        deploymentUrl: execution.deploymentUrl,
+        finished: !execution.accepted,
+      }) ?? deploymentRequest;
+    }
+
+    const executionNote = execution.accepted
+      ? "Solicitação aceita pelo provider externo e persistida como building."
+      : execution.attempted
+        ? "Solicitação externa tentada, mas o provider não aceitou o deployment."
+        : "Solicitação registrada na fila interna; executor externo permanece fail-closed até configuração e opt-in explícitos.";
+
     return NextResponse.json({
-      request: deploymentRequest,
-      status: "queued",
-      providerExecution: false,
-      executionNote: "Solicitação registrada na fila interna; executor externo ainda não está conectado.",
+      request: persistedRequest,
+      status: persistedRequest.status,
+      providerExecution: execution.attempted,
+      providerAccepted: execution.accepted,
+      provider: execution.provider,
+      providerReason: execution.reason,
+      executionNote,
     }, { status: 201, headers: PRIVATE_HEADERS });
   } catch (error) {
     return unavailable(error);
