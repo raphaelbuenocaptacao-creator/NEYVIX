@@ -1,6 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const requiredFiles = ["lib/deploy-db.ts", "lib/deploy-health.ts", "app/api/deploy/route.ts", "app/api/deploy/requests/route.ts", "app/api/health/deploy/route.ts", "app/deploy/page.tsx", "app/deploy/deploy-project-controls.tsx", "database/002_ecosystem.sql"];
+const requiredFiles = [
+  "lib/deploy-db.ts",
+  "lib/deploy-health.ts",
+  "lib/deploy-vercel-executor.ts",
+  "app/api/deploy/route.ts",
+  "app/api/deploy/requests/route.ts",
+  "app/api/health/deploy/route.ts",
+  "app/deploy/page.tsx",
+  "app/deploy/deploy-project-controls.tsx",
+  "database/002_ecosystem.sql",
+];
 const missing = requiredFiles.filter((file) => !existsSync(file));
 if (missing.length) {
   console.error(`NEYVIX Deploy runtime contract failed: missing ${missing.join(", ")}`);
@@ -14,6 +24,8 @@ for (const contract of [
   "export async function deleteDeployProject",
   "export async function listDeploymentRequests",
   "export async function createDeploymentRequest",
+  "export async function getDeployProject",
+  "export async function updateDeploymentProviderResult",
   "getDeployHealth",
   "!health.ready",
   "JOIN public.users u ON u.id = p.owner_user_id",
@@ -24,6 +36,8 @@ for (const contract of [
   "DELETE FROM public.deploy_projects p",
   "owner_user_id",
   "ON CONFLICT (owner_user_id, git_provider, git_repository) DO NOTHING",
+  "provider_deployment_id",
+  "deployment_url",
   "finished_at",
   "SELECT p.id, p.production_branch",
   "CASE WHEN ${input.branch} = p.production_branch THEN 'production' ELSE 'preview' END",
@@ -86,16 +100,38 @@ for (const contract of [
   'canUse(entitlements, "deploy")',
   "listDeploymentRequests",
   "createDeploymentRequest",
-  "providerExecution: false",
-  'status: "queued"',
+  "getDeployProject",
+  "executeVercelDeployment",
+  "updateDeploymentProviderResult",
+  "providerExecution: execution.attempted",
+  "providerAccepted: execution.accepted",
   '"Cache-Control": "no-store"',
   "SCHEMA_NOT_READY",
   "DEPLOY_UNAVAILABLE",
 ]) {
   if (!requestsRoute.includes(contract)) {
-    console.error(`NEYVIX Deploy runtime contract failed: internal deployment request contract missing: ${contract}`);
+    console.error(`NEYVIX Deploy runtime contract failed: deployment request contract missing: ${contract}`);
     process.exit(1);
   }
+}
+
+const executor = readFileSync("lib/deploy-vercel-executor.ts", "utf8");
+for (const contract of [
+  "getDeployProviderReadiness",
+  "if (!readiness.executionEnabled)",
+  "https://api.vercel.com/v13/deployments",
+  "AbortSignal.timeout",
+  "attempted: false",
+  "attempted: true",
+]) {
+  if (!executor.includes(contract)) {
+    console.error(`NEYVIX Deploy runtime contract failed: provider executor safety contract missing: ${contract}`);
+    process.exit(1);
+  }
+}
+if (/console\.(log|error|warn)\([^\n]*(TOKEN|token)/.test(executor)) {
+  console.error("NEYVIX Deploy runtime contract failed: provider executor must never log provider tokens");
+  process.exit(1);
 }
 
 const deployHealth = readFileSync("lib/deploy-health.ts", "utf8");
@@ -174,9 +210,9 @@ if (controls.includes('String(data.get("productionBranch") || "main")')) {
   process.exit(1);
 }
 
-for (const forbidden of ["createDeployment(", "fetch(\"https://api.vercel.com", "VERCEL_TOKEN", "GITHUB_TOKEN"]) {
+for (const forbidden of ["fetch(\"https://api.vercel.com", "VERCEL_TOKEN", "GITHUB_TOKEN"]) {
   if (route.includes(forbidden) || requestsRoute.includes(forbidden) || deployDb.includes(forbidden) || controls.includes(forbidden)) {
-    console.error(`NEYVIX Deploy runtime contract failed: provider execution is not allowed in foundation runtime: ${forbidden}`);
+    console.error(`NEYVIX Deploy runtime contract failed: direct provider access is forbidden outside the dedicated executor: ${forbidden}`);
     process.exit(1);
   }
 }
