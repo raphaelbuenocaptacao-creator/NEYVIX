@@ -7,6 +7,7 @@ import { getRecentActivity, getTrialStatus } from "@/lib/db";
 import { getEntitlements, canUse, type EntitlementFeature } from "@/lib/entitlements";
 import { canAccessAdmin, getUserRole } from "@/lib/user-role";
 import { getHealthStatus, type HealthStatus } from "@/lib/health";
+import { getEcosystemModuleReadiness, type EcosystemModuleReadiness } from "@/lib/ecosystem-health";
 
 const modules = [
   ["AI", "/ai", "Pense, planeje e execute com a inteligência NEYVIX", "Perguntar", "ai"],
@@ -49,7 +50,11 @@ function relativeTime(value: string) {
   return `há ${Math.floor(hours / 24)} d`;
 }
 
-function moduleReadiness(name: (typeof modules)[number][0], health: HealthStatus): ModuleReadiness {
+function moduleReadiness(
+  name: (typeof modules)[number][0],
+  health: HealthStatus,
+  ecosystemModules: EcosystemModuleReadiness,
+): ModuleReadiness {
   const shape = (state: "ready" | "partial" | "missing" | "unknown", label: string): ModuleReadiness => {
     if (state === "ready") return { state: "ready", label: "Pronto", detail: `${label}: contrato estrutural verificado pelo health.` };
     if (state === "partial") return { state: "partial", label: "Parcial", detail: `${label}: schema parcial; use com cautela.` };
@@ -81,8 +86,7 @@ function moduleReadiness(name: (typeof modules)[number][0], health: HealthStatus
         ? { state: "ready", label: "Núcleo pronto", detail: "Schema de identidade e sessão verificado; recursos administrativos seguem controles de função." }
         : { state: "partial", label: "Indisponível", detail: "Admin depende do schema de identidade e sessão." };
     }
-    case "Deploy":
-      return { state: "unknown", label: "Não verificado", detail: "O health ainda não possui um contrato específico para NEYVIX Deploy." };
+    case "Deploy": return shape(ecosystemModules.deploy, "Deploy");
     default:
       return { state: "unknown", label: "Não verificado", detail: "Disponibilidade técnica ainda não comprovada." };
   }
@@ -95,10 +99,11 @@ export default async function DashboardPage() {
 
   let activity: ActivityRow[] = [];
   let trial: { status?: string; trial_ends_at?: string } | null = null;
-  const [entitlements, role, health] = await Promise.all([
+  const [entitlements, role, health, ecosystemModules] = await Promise.all([
     getEntitlements(session.email),
     getUserRole(session.email),
     getHealthStatus(),
+    getEcosystemModuleReadiness(),
   ]);
   const adminAllowed = canAccessAdmin(role);
 
@@ -156,7 +161,7 @@ export default async function DashboardPage() {
           <div className="command-module-grid">
             {visibleModules.map(([name, href, description, action, feature], index) => {
               const allowed = name === "Admin" ? adminAllowed : (!feature || canUse(entitlements, feature as EntitlementFeature));
-              const readiness = moduleReadiness(name, health);
+              const readiness = moduleReadiness(name, health, ecosystemModules);
               const target = allowed ? href : "/plans";
               const actionLabel = !allowed ? "Upgrade" : readiness.state === "ready" ? action : readiness.label;
               return (
