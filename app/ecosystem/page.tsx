@@ -11,7 +11,7 @@ const modules = [
   { name: "NEYVIX Admin", status: "Beta", detail: "User 360, operação, acesso, atividade e visibilidade administrativa.", href: "/admin" },
   { name: "NEYVIX Deploy", status: "MVP", detail: "Superfície de publicação e acompanhamento da camada de deploy.", href: "/deploy" },
   { name: "NEYVIX PWA", status: "Installable-ready", detail: "Manifest, service worker, modo standalone e atalhos do ecossistema.", href: "/dashboard" },
-  { name: "NEYVIX Drive", status: "MVP", detail: "Pastas privadas persistidas com navegação, renomeação e exclusão segura; upload de arquivos ainda não está habilitado.", href: "/drive" },
+  { name: "NEYVIX Drive", status: "Funcional", detail: "Pastas e arquivos privados persistidos com upload, download, navegação, renomeação e exclusão segura.", href: "/drive" },
   { name: "NEYVIX Docs", status: "MVP", detail: "Documentos privados persistidos, editáveis e versionados com proteção contra sobrescrita concorrente.", href: "/docs" },
   { name: "NEYVIX Calendar", status: "Planejado", detail: "Agenda compartilhada para pessoas, equipes e automações." },
   { name: "NEYVIX Meet", status: "Planejado", detail: "Reuniões e salas conectadas ao NEYVIX ID e Calendar." },
