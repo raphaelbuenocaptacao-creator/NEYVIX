@@ -1,24 +1,28 @@
 import { readFileSync } from "node:fs";
 
-const health = readFileSync("lib/health.ts", "utf8");
+const ecosystemHealth = readFileSync("lib/ecosystem-health.ts", "utf8");
 const dashboard = readFileSync("app/dashboard/page.tsx", "utf8");
 
 for (const required of [
-  'deploy: "ready" | "partial" | "missing" | "unknown"',
-  'DEPLOY_PROJECT_REQUIRED_COLUMNS',
-  'DEPLOYMENT_REQUIRED_COLUMNS',
   'deploy_projects',
   'deployments',
+  'deploy: moduleState(CONTRACTS.deploy, columnsByTable)',
 ]) {
-  if (!health.includes(required)) {
-    console.error(`Deploy health contract failed: missing ${required}`);
+  if (!ecosystemHealth.includes(required)) {
+    console.error(`Deploy health contract failed: canonical ecosystem health is missing ${required}`);
     process.exit(1);
   }
 }
 
-if (!dashboard.includes('case "Deploy": return shape(health.schema.deploy, "Deploy")')) {
-  console.error("Deploy health contract failed: dashboard must derive Deploy readiness from health.schema.deploy.");
-  process.exit(1);
+for (const required of [
+  'getEcosystemModuleReadiness',
+  'ecosystemModules.deploy',
+  'case "Deploy": return shape(ecosystemModules.deploy, "Deploy")',
+]) {
+  if (!dashboard.includes(required)) {
+    console.error(`Deploy health contract failed: Command Center is missing ${required}`);
+    process.exit(1);
+  }
 }
 
 if (dashboard.includes('O health ainda não possui um contrato específico para NEYVIX Deploy.')) {
@@ -26,4 +30,4 @@ if (dashboard.includes('O health ainda não possui um contrato específico para 
   process.exit(1);
 }
 
-console.log("Deploy health contract PASS: schema readiness is wired into the Command Center.");
+console.log("Deploy health contract PASS: canonical Deploy readiness is wired into the Command Center.");
