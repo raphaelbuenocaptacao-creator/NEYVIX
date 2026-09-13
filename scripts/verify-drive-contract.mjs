@@ -39,7 +39,7 @@ const checks = [
   ["drive UI exposes accessible error feedback", /role="alert"[\s\S]*aria-live="assertive"/.test(files.page)],
   ["drive UI exposes accessible success feedback", /role="status"[\s\S]*aria-live="polite"/.test(files.page)],
   ["drive UI exposes empty state", /styles\.emptyState/.test(files.page)],
-  ["ecosystem exposes Drive as MVP with live route", /NEYVIX Drive", status: "MVP"[\s\S]*href: "\/drive"/m.test(files.ecosystem)],
+  ["ecosystem exposes Drive as functional with live route", /NEYVIX Drive", status: "Funcional"[\s\S]*href: "\/drive"/m.test(files.ecosystem)],
   ["storage upload API requires active session", /export async function POST[\s\S]*getSession\(\)[\s\S]*status: 401/m.test(files.storageApi)],
   ["storage upload API enforces 1 MiB limit", /MAX_FILE_BYTES = 1024 \* 1024/.test(files.storageApi) && /status: 413/.test(files.storageApi)],
   ["storage item API supports authenticated download", /export async function GET[\s\S]*getSession\(\)[\s\S]*readPrivateDriveFile/m.test(files.storageItemApi)],
