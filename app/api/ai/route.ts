@@ -211,7 +211,7 @@ export async function POST(request: Request) {
   let memory: Array<{ key: string; category: string; value: string }> = [];
   try {
     if (smokeMemoryFailure) throw new Error("provider-free memory failure probe");
-    memory = await loadAiMemoryContext(session.email, useMemory, 8);
+    memory = await loadAiMemoryContext(session.email, useMemory, prompt, 8);
   } catch (memoryError) {
     console.error("Unable to load requested NEYVIX Memory context", memoryError);
     if (useMemory) {

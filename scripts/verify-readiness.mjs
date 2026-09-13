@@ -238,12 +238,12 @@ const aiRoute = readFileSync("app/api/ai/route.ts", "utf8");
 const aiMemoryContext = readFileSync("lib/ai-memory-context.ts", "utf8");
 if (
   !aiRoute.includes("loadAiMemoryContext") ||
-  !aiRoute.includes("loadAiMemoryContext(session.email, useMemory, 8)") ||
+  !aiRoute.includes("loadAiMemoryContext(session.email, useMemory, prompt, 8)") ||
   !aiMemoryContext.includes('process.env.NEYVIX_MEMORY_AI_CONTEXT === "true"') ||
-  !aiMemoryContext.includes("getMemoryContext") ||
+  !aiMemoryContext.includes("getRelevantMemoryContext(email, query, limit)") ||
   !aiMemoryContext.includes("if (!useMemory || !isAiMemoryContextEnabled()) return [];")
 ) {
-  console.error("NEYVIX readiness failed: AI/Memory integration contract is missing.");
+  console.error("NEYVIX readiness failed: prompt-aware AI/Memory integration contract is missing.");
   process.exit(1);
 }
 

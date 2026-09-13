@@ -26,7 +26,8 @@ export async function GET(request: Request) {
   const useMemory = new URL(request.url).searchParams.get("useMemory") === "true";
 
   try {
-    const memory = await loadAiMemoryContext(session.email, useMemory, 8);
+    // This endpoint probes availability only; it has no user prompt to rank against.
+    const memory = await loadAiMemoryContext(session.email, useMemory, "", 8);
     return privateJson({
       ok: true,
       memoryContextEnabled: isAiMemoryContextEnabled(),

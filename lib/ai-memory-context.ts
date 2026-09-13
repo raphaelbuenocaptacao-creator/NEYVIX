@@ -1,4 +1,4 @@
-import { getMemoryContext } from "@/lib/memory-db";
+import { getRelevantMemoryContext } from "@/lib/memory-db";
 
 export type AiMemoryContextItem = {
   key: string;
@@ -16,11 +16,12 @@ export function isAiMemoryContextEnabled() {
 export async function loadAiMemoryContext(
   email: string,
   useMemory: boolean,
+  query: string,
   limit = DEFAULT_MEMORY_LIMIT,
 ): Promise<AiMemoryContextItem[]> {
   if (!useMemory || !isAiMemoryContextEnabled()) return [];
 
-  const recalled = await getMemoryContext(email, limit);
+  const recalled = await getRelevantMemoryContext(email, query, limit);
   return recalled.map((item) => ({
     key: item.key,
     category: item.category,
