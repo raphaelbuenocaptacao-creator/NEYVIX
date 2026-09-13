@@ -33,6 +33,36 @@ async function schemaReady(sql: NonNullable<ReturnType<typeof getSql>>) {
   return Boolean(rows[0]?.memories && rows[0]?.events);
 }
 
+function normalizeMemoryTerms(input: string) {
+  return new Set(
+    input
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .split(/[^a-z0-9]+/)
+      .filter((term) => term.length >= 3),
+  );
+}
+
+function memoryRelevanceScore(
+  memory: { key: string; category: string; value: string; confidence: number; lastUsedAt: string | null },
+  queryTerms: Set<string>,
+) {
+  const keyTerms = normalizeMemoryTerms(memory.key);
+  const categoryTerms = normalizeMemoryTerms(memory.category);
+  const valueTerms = normalizeMemoryTerms(memory.value);
+  let score = Math.max(0, Math.min(memory.confidence || 0, 1));
+
+  for (const term of queryTerms) {
+    if (keyTerms.has(term)) score += 4;
+    if (categoryTerms.has(term)) score += 3;
+    if (valueTerms.has(term)) score += 1;
+  }
+
+  if (memory.lastUsedAt) score += 0.15;
+  return score;
+}
+
 export async function listMemories(email: string, limit = 50): Promise<NeyvixMemory[]> {
   const sql = getSql();
   if (!sql || !(await schemaReady(sql))) return [];
@@ -163,12 +193,12 @@ export async function setMemoryPrivacy(email: string, id: string, isPrivate: boo
   return rows.length === 1;
 }
 
-export async function getMemoryContext(email: string, limit = 12) {
+export async function getRelevantMemoryContext(email: string, query: string, limit = 8) {
   const sql = getSql();
   if (!sql || !(await schemaReady(sql))) return [];
 
   const rows = await sql`
-    SELECT m.id, m.user_id, m.memory_key, m.category, m.value
+    SELECT m.id, m.user_id, m.memory_key, m.category, m.value, m.confidence, m.last_used_at, m.updated_at
     FROM public.neyvix_memories m
     JOIN public.users u ON u.id = m.user_id
     WHERE lower(u.email) = ${email.trim().toLowerCase()}
@@ -176,11 +206,37 @@ export async function getMemoryContext(email: string, limit = 12) {
       AND m.is_private = false
       AND (m.expires_at IS NULL OR m.expires_at > now())
     ORDER BY m.updated_at DESC
-    LIMIT ${Math.max(1, Math.min(limit, 50))}
-  ` as Array<{ id: string; user_id: string; memory_key: string; category: string; value: string }>;
+    LIMIT 100
+  ` as Array<{
+    id: string;
+    user_id: string;
+    memory_key: string;
+    category: string;
+    value: string;
+    confidence: number | string | null;
+    last_used_at: string | null;
+    updated_at: string;
+  }>;
 
   if (rows.length === 0) return [];
-  const ids = rows.map((row) => row.id);
+
+  const queryTerms = normalizeMemoryTerms(query);
+  const ranked = rows
+    .map((row) => ({
+      row,
+      score: memoryRelevanceScore({
+        key: String(row.memory_key),
+        category: String(row.category),
+        value: String(row.value),
+        confidence: Number(row.confidence ?? 1),
+        lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+      }, queryTerms),
+    }))
+    .sort((a, b) => b.score - a.score || String(b.row.updated_at).localeCompare(String(a.row.updated_at)))
+    .slice(0, Math.max(1, Math.min(limit, 12)))
+    .map(({ row }) => row);
+
+  const ids = ranked.map((row) => row.id);
   try {
     await sql`
       WITH touched AS (
@@ -199,5 +255,9 @@ export async function getMemoryContext(email: string, limit = 12) {
     // Memory context should never break the calling product.
   }
 
-  return rows.map((row) => ({ key: String(row.memory_key), category: String(row.category), value: String(row.value) }));
+  return ranked.map((row) => ({ key: String(row.memory_key), category: String(row.category), value: String(row.value) }));
+}
+
+export async function getMemoryContext(email: string, limit = 12) {
+  return getRelevantMemoryContext(email, "", limit);
 }
