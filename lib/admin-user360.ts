@@ -47,30 +47,58 @@ function mapSummary(row: Record<string, unknown>): AdminUserSummary {
   };
 }
 
-export async function getAdminUserDirectory(limit = 24): Promise<AdminUserSummary[]> {
+export async function getAdminUserDirectory(query = "", limit = 24): Promise<AdminUserSummary[]> {
   const sql = getSql();
   if (!sql) return [];
 
-  const rows = await sql`
-    SELECT
-      u.id,
-      COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
-      u.email,
-      u.is_active,
-      u.is_superadmin,
-      u.created_at,
-      s.status AS subscription_status,
-      s.trial_ends_at,
-      (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages,
-      (SELECT count(*)::int FROM public.neyvix_studio_projects p WHERE p.user_id = u.id) AS studio_projects,
-      (SELECT count(*)::int FROM public.neyvix_content_items c WHERE c.user_id = u.id) AS content_items
-    FROM public.users u
-    LEFT JOIN public.subscriptions s
-      ON s.user_id = u.id
-     AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
-    ORDER BY u.created_at DESC
-    LIMIT ${Math.max(1, Math.min(limit, 100))}
-  `;
+  const normalizedQuery = query.trim().slice(0, 120);
+  const boundedLimit = Math.max(1, Math.min(limit, 100));
+  const pattern = `%${normalizedQuery}%`;
+
+  const rows = normalizedQuery
+    ? await sql`
+        SELECT
+          u.id,
+          COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
+          u.email,
+          u.is_active,
+          u.is_superadmin,
+          u.created_at,
+          s.status AS subscription_status,
+          s.trial_ends_at,
+          (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages,
+          (SELECT count(*)::int FROM public.neyvix_studio_projects p WHERE p.user_id = u.id) AS studio_projects,
+          (SELECT count(*)::int FROM public.neyvix_content_items c WHERE c.user_id = u.id) AS content_items
+        FROM public.users u
+        LEFT JOIN public.subscriptions s
+          ON s.user_id = u.id
+         AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
+        WHERE COALESCE(u.name, '') ILIKE ${pattern}
+           OR u.email ILIKE ${pattern}
+           OR u.id::text = ${normalizedQuery}
+        ORDER BY u.created_at DESC
+        LIMIT ${boundedLimit}
+      `
+    : await sql`
+        SELECT
+          u.id,
+          COALESCE(NULLIF(u.name, ''), split_part(u.email, '@', 1)) AS name,
+          u.email,
+          u.is_active,
+          u.is_superadmin,
+          u.created_at,
+          s.status AS subscription_status,
+          s.trial_ends_at,
+          (SELECT count(*)::int FROM public.neyvix_ai_messages m WHERE m.user_id = u.id) AS ai_messages,
+          (SELECT count(*)::int FROM public.neyvix_studio_projects p WHERE p.user_id = u.id) AS studio_projects,
+          (SELECT count(*)::int FROM public.neyvix_content_items c WHERE c.user_id = u.id) AS content_items
+        FROM public.users u
+        LEFT JOIN public.subscriptions s
+          ON s.user_id = u.id
+         AND s.project_id = (SELECT id FROM public.projects WHERE slug = 'neyvix' LIMIT 1)
+        ORDER BY u.created_at DESC
+        LIMIT ${boundedLimit}
+      `;
 
   return rows.map((row) => mapSummary(row as Record<string, unknown>));
 }
