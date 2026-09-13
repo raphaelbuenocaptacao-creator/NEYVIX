@@ -30,9 +30,10 @@ jobs:
           test -f "$context_assembler"
           test -f "$memory_db"
 
-          # The production AI route and provider-free readiness probe must use the same assembler.
-          grep -F 'loadAiMemoryContext(session.email, useMemory, 8)' "$ai_route" >/dev/null
-          grep -F 'loadAiMemoryContext(session.email, useMemory, 8)' "$context_route" >/dev/null
+          # The production AI route and provider-free readiness probe use the same assembler,
+          # but only the real AI request supplies a user prompt for ranking.
+          grep -F 'loadAiMemoryContext(session.email, useMemory, prompt, 8)' "$ai_route" >/dev/null
+          grep -F 'loadAiMemoryContext(session.email, useMemory, "", 8)' "$context_route" >/dev/null
           grep -F 'searchParams.get("useMemory") === "true"' "$context_route" >/dev/null
           grep -F 'requestMemoryOptIn: useMemory' "$context_route" >/dev/null
 
@@ -43,7 +44,7 @@ jobs:
             echo 'AI memory context must not default to enabled when the feature flag is absent.' >&2
             exit 1
           fi
-          grep -F 'getMemoryContext(email, limit)' "$context_assembler" >/dev/null
+          grep -F 'getRelevantMemoryContext(email, query, limit)' "$context_assembler" >/dev/null
 
           # Memory values supplied to AI remain bounded even if a stored memory is larger.
           grep -F 'value: item.value.slice(0, MAX_MEMORY_VALUE_LENGTH)' "$context_assembler" >/dev/null
@@ -74,4 +75,4 @@ jobs:
             exit 1
           fi
 
-          echo 'PASS: dual explicit opt-in, ownership, privacy, expiration, bounded context and pseudonymous AI contract verified.'
+          echo 'PASS: dual explicit opt-in, ownership, privacy, expiration, prompt-scoped recall, bounded context and pseudonymous AI contract verified.'
