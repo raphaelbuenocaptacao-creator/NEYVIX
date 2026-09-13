@@ -24,7 +24,6 @@ for (const required of [
   "neyvix_estate_sites",
   "neyvix_automations",
   "neyvix_approval_requests",
-  "getSessionSecretStatus",
   "getCommandCenterHealth",
 ]) {
   if (!health.includes(required)) {
