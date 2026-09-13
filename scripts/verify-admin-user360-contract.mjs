@@ -4,6 +4,7 @@ const role = readFileSync("lib/user-role.ts", "utf8");
 const admin = readFileSync("app/admin/page.tsx", "utf8");
 const inspector = readFileSync("app/admin/UserInspector.tsx", "utf8");
 const detailApi = readFileSync("app/api/admin/user360/route.ts", "utf8");
+const directory = readFileSync("lib/admin-user360.ts", "utf8");
 
 const checks = [
   ["User 360 has a dedicated least-privilege gate", role.includes("export function canInspectUser360")],
@@ -11,7 +12,7 @@ const checks = [
   ["Admin page uses active sessions", admin.includes("readActiveSession")],
   ["Admin page still checks admin-area authorization", admin.includes("canAccessAdmin(role)")],
   ["Admin page evaluates User 360 authorization", admin.includes("canInspectUser360(role)")],
-  ["User directory is only loaded when authorized", admin.includes("canInspectUsers ? getAdminUserDirectory() : Promise.resolve([])")],
+  ["User directory is only loaded when authorized", admin.includes("canInspectUsers ? getAdminUserDirectory(")],
   ["UserInspector is rendered conditionally", admin.includes("canInspectUsers ? (") && admin.includes("<UserInspector users={users} />")],
   ["Restricted roles receive an explicit privacy state", admin.includes("USER 360 · ACESSO RESTRITO")],
   ["Operational telemetry remains available separately", admin.includes("getAdminSystemSummary()")],
@@ -20,6 +21,10 @@ const checks = [
   ["User 360 detail API requires an active session", detailApi.includes("readActiveSession")],
   ["User 360 detail API enforces least privilege", detailApi.includes("canInspectUser360(role)")],
   ["User 360 detail API disables shared caching", detailApi.includes('Cache-Control') && detailApi.includes('no-store')],
+  ["User directory accepts a bounded server-side search query", directory.includes("query = \"\"") && directory.includes("normalizedQuery")],
+  ["User directory searches name, email and exact ID without loading the full base", directory.includes("ILIKE") && directory.includes("u.email") && directory.includes("u.id::text") && directory.includes("LIMIT ${boundedLimit}")],
+  ["Admin page passes the search term only through the authorized directory path", admin.includes("searchParams") && admin.includes("getAdminUserDirectory(userQuery)")],
+  ["Admin User 360 exposes a GET search form with a named q field", admin.includes('method="get"') && admin.includes('name="q"') && admin.includes("Buscar usuário")],
 ];
 
 let failed = 0;
