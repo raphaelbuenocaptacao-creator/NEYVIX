@@ -62,11 +62,11 @@ export async function GET() {
         to_regclass('public.neyvix_memories') IS NOT NULL AS memories,
         to_regclass('public.neyvix_memory_events') IS NOT NULL AS memory_events,
         (
-          SELECT count(*) = 4
+          SELECT count(*) = 5
           FROM information_schema.columns
           WHERE table_schema = 'public'
             AND table_name = 'neyvix_ai_messages'
-            AND column_name = ANY (ARRAY['user_id', 'role', 'content', 'created_at'])
+            AND column_name = ANY (ARRAY['id', 'user_id', 'role', 'content', 'created_at'])
         ) AS ai_messages_columns,
         (
           SELECT count(*) = 7
