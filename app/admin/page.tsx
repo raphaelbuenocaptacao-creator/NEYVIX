@@ -10,7 +10,11 @@ import { getAdminSystemSummary, type AdminSystemSummary } from "@/lib/admin-syst
 import { readActiveSession } from "@/lib/session";
 import { canAccessAdmin, canInspectUser360, getUserRole, roleLabel } from "@/lib/user-role";
 
-export default async function AdminPage() {
+type AdminPageProps = {
+  searchParams?: Promise<{ q?: string | string[] }>;
+};
+
+export default async function AdminPage({ searchParams }: AdminPageProps) {
   const store = await cookies();
   const session = await readActiveSession(store.get(SESSION_COOKIE)?.value);
   if (!session) redirect("/login?next=/admin");
@@ -18,12 +22,15 @@ export default async function AdminPage() {
   const role = await getUserRole(session.email);
   if (!canAccessAdmin(role)) redirect("/dashboard?error=admin_access");
   const canInspectUsers = canInspectUser360(role);
+  const params = searchParams ? await searchParams : {};
+  const rawQuery = Array.isArray(params.q) ? params.q[0] : params.q;
+  const userQuery = (rawQuery ?? "").trim().slice(0, 120);
 
   let users: AdminUserSummary[] = [];
   let system: AdminSystemSummary | null = null;
   try {
     [users, system] = await Promise.all([
-      canInspectUsers ? getAdminUserDirectory() : Promise.resolve([]),
+      canInspectUsers ? getAdminUserDirectory(userQuery) : Promise.resolve([]),
       getAdminSystemSummary(),
     ]);
   } catch (error) {
@@ -100,7 +107,30 @@ export default async function AdminPage() {
       {role === "superadmin" ? <SchemaRepairPanel /> : null}
 
       {canInspectUsers ? (
-        <UserInspector users={users} />
+        <>
+          <section className={styles.user360Empty}>
+            <p className="eyebrow">USER 360 · DIRETÓRIO</p>
+            <h2>Encontre qualquer identidade sem carregar a base inteira</h2>
+            <form method="get" action="/admin">
+              <label htmlFor="user360-query">Buscar usuário</label>
+              <div>
+                <input
+                  id="user360-query"
+                  name="q"
+                  type="search"
+                  defaultValue={userQuery}
+                  placeholder="Nome, e-mail ou ID"
+                  maxLength={120}
+                  autoComplete="off"
+                />
+                <button type="submit">Buscar</button>
+                {userQuery ? <Link href="/admin">Limpar</Link> : null}
+              </div>
+            </form>
+            <p>{userQuery ? `${users.length} resultado(s) para “${userQuery}”.` : "Mostrando as identidades mais recentes. Use a busca para localizar usuários antigos."}</p>
+          </section>
+          <UserInspector users={users} />
+        </>
       ) : (
         <section className={styles.user360Empty}>
           <p className="eyebrow">USER 360 · ACESSO RESTRITO</p>
