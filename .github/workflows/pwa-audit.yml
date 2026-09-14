@@ -35,6 +35,11 @@ jobs:
           if (!layout.includes('PwaRegister')) throw new Error('layout does not mount PWA registration');
           if (!/navigator\.serviceWorker\.register/.test(register)) throw new Error('service worker registration missing');
           if (!register.includes('updateViaCache: "none"')) throw new Error('service worker updateViaCache protection missing');
+          if (!register.includes('window.location.protocol !== "https:"')) throw new Error('secure-context registration guard missing');
+          if (!register.includes('visibilitychange')) throw new Error('service worker refresh-on-resume missing');
+          if (!register.includes('document.visibilityState === "visible"')) throw new Error('visible-state refresh guard missing');
+          if (!register.includes('controllerchange')) throw new Error('service worker controller handoff missing');
+          if (!register.includes('window.location.reload()')) throw new Error('controlled reload after service worker handoff missing');
           if (!sw.includes('request.headers.has("authorization")')) throw new Error('authorization request guard missing');
           if (!sw.includes('request.headers.has("cookie")')) throw new Error('cookie request guard missing');
           if (!sw.includes('request.headers.has("range")')) throw new Error('range request guard missing');
